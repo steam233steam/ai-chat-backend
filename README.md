@@ -1,6 +1,10 @@
+[![Backend CI](https://github.com/steam233steam/ai-chat-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/steam233steam/ai-chat-backend/actions/workflows/ci.yml)
+
 # AI Chat 后端
 
 基于 Spring Boot 3 + Spring AI 的智能对话后端，接入 Ollama 本地模型，支持同步/流式两种响应模式。
+
+> 前端仓库：[ai-chat-frontend](https://github.com/steam233steam/ai-chat-frontend)
 
 ## 技术栈
 
@@ -102,6 +106,12 @@ com.aichat/
 ├── Service/         # 业务逻辑（用户认证、对话流程）
 └── utils/           # ThreadLocal、加密、正则、Redis 常量
 ```
+
+## CI
+
+GitHub Actions 在每次 push 时执行单元测试与打包（`.github/workflows/ci.yml`）。
+
+`AichatApplicationTests` 是 `@SpringBootTest`，启动需要真实的 Redis / MySQL / Ollama，因此未纳入 CI；CI 只跑不依赖外部服务的单元测试。
 
 ## 文档
 
