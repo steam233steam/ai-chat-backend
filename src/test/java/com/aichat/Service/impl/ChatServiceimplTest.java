@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClient.CallResponseSpec;
 import org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec;
@@ -81,5 +83,17 @@ class ChatServiceimplTest {
         verify(requestSpec).user("新问题");
         verify(repository).save(eq("u1"), eq("s1"), eq(new UserMessage("新问题")));
         verify(repository).save("u1", "s1", new AssistantMessage("你好"));
+    }
+
+    @Test
+    void shouldCreateTitleBeforeSavingFirstUserMessage() {
+        when(repository.getHistory("u1", "s1")).thenReturn(List.of());
+
+        service.SendSession("s1", new UserMessage("新问题"));
+
+        InOrder order = inOrder(repository);
+        order.verify(repository).saveTitle("u1", "s1", "新问题");
+        order.verify(repository).save(eq("u1"), eq("s1"), eq(new UserMessage("新问题")));
+        order.verify(repository).save("u1", "s1", new AssistantMessage("你好"));
     }
 }

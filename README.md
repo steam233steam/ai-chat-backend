@@ -14,8 +14,9 @@ Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama) · MySQL · MyBatis · Redis ·
 
 - **双方式登录**：手机验证码登录 + 密码登录（BCrypt 加密）
 - **新用户引导**：首次登录自动标记，需完善密码/昵称
-- **多轮对话**：Redis 管理会话上下文，支持流式 SSE 输出
+- **多轮对话**：Redis 缓存会话上下文，MySQL 持久化，支持流式 SSE 输出
 - **多用户隔离**：会话数据按 userId 隔离，含越权校验
+- **数据可恢复**：Redis 7 天 TTL 到期后，历史消息、会话列表和标题可从 MySQL 回源
 - **工程化**：三层架构 + 全局异常处理 + 拦截器链 + 参数校验
 
 ## 快速启动
@@ -69,9 +70,26 @@ Controller  →  Service  →  Repository / Mapper  →  Redis / MySQL
 
 - **Controller**：接收请求、参数校验、路由
 - **Service**：业务逻辑（用户认证、对话流程、越权校验）
-- **Repository**：Redis 数据访问（会话、Token、验证码、新用户标记）
-- **Mapper**：MyBatis 数据库访问（用户表）
+- **Repository**：会话存储门面，负责 Redis 缓存与 MySQL 回源（Service 不感知存储细节）
+- **Persistence Service**：聊天数据的 MySQL 事务边界（接口 + impl）
+- **Mapper**：MyBatis 数据库访问（用户、会话、消息）
 - **拦截器链**：自动解析 Token → 填充 UserHolder → 校验登录态
+
+## 聊天数据持久化
+
+MySQL 是聊天数据的持久化主存储，Redis 只做 7 天热缓存：
+
+```
+写：MySQL（消息 + 会话元数据，事务）→ Redis（List / ZSet / Hash）
+读：Redis 命中直接返回；未命中查 MySQL 并回填 Redis
+```
+
+- 表：`tb_chat_session`、`tb_chat_message`
+- 消息按自增 `id` 升序，避免同一秒内顺序不稳定
+- 缓存写失败只记录日志并删除可能不完整的缓存，读请求会回源 MySQL
+- 清空会话时先删 MySQL，再删 Redis
+
+详细设计见 `docs/聊天持久化设计.md`。
 
 ## 安全设计
 
@@ -93,17 +111,20 @@ Controller  →  Service  →  Repository / Mapper  →  Redis / MySQL
 | `aichat:chat:title:{userId}:{sessionId}` | Hash | 7 天 | 会话标题 |
 | `aichat:user:new:{uid}` | String | 365 天 | 新用户标记 |
 
+> 聊天相关 key 都只是缓存：缓存未命中会回源 MySQL，过期不会丢数据。
+
 ## 项目结构
 
 ```
 com.aichat/
 ├── Config/          # 拦截器、CORS、ChatClient、Redis 配置
 ├── Controller/      # 用户 + 聊天接口
-├── Dto/             # 实体、DTO、统一返回
+├── Dto/             # 接口 DTO、Redis 消息对象、统一返回
+├── Entity/          # 数据库实体（ChatMessage、ChatSession）
 ├── Exception/       # 业务异常 + 全局异常处理器
-├── Mapper/          # MyBatis 用户表操作
-├── Repository/      # Redis 数据访问（会话、用户）
-├── Service/         # 业务逻辑（用户认证、对话流程）
+├── Mapper/          # MyBatis：用户、会话、消息
+├── Repository/      # 会话缓存门面（Redis + MySQL 回源）、用户仓储
+├── Service/         # 业务逻辑 + 聊天持久化事务
 └── utils/           # ThreadLocal、加密、正则、Redis 常量
 ```
 
@@ -117,6 +138,8 @@ GitHub Actions 在每次 push 时执行单元测试与打包（`.github/workflow
 
 - `docs/API.md` — 接口文档
 - `docs/schema.sql` — 数据库脚本
+- `docs/聊天持久化设计.md` — 持久化、缓存一致性与面试讲点
+- `docs/DEVELOPMENT_PLAN.md` — 后续开发与求职准备计划
 - `docs/本地启动.md` — 本地运行指南
 - `docs/学习笔记.md` — 开发笔记
 - `PROJECT_STATUS.md` — 开发状态记录

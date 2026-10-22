@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: 用户认证系统 + 聊天功能 + 全局异常处理 + 安全加固完成 ✅
+- **当前阶段**: 用户认证 + 聊天功能 + 安全加固 + 聊天数据 MySQL 持久化完成 ✅
 
 ## 架构分层
 
@@ -28,22 +28,29 @@ com.aichat/
 │   ├── User.java                   # 用户实体
 │   ├── UserDto.java               # 用户 DTO（含 isNewUser 字段）
 │   └── LoginFormDTO.java          # 登录表单 DTO
+├── Entity/
+│   ├── ChatMessage.java            # 聊天消息数据库实体
+│   └── ChatSession.java            # 会话元数据数据库实体
 ├── Exception/
 │   ├── BusinessException.java      # 业务异常（含错误码）
 │   └── GlobalExceptionHandler.java # 全局异常处理器
 ├── Mapper/
-│   └── UserMapper.java             # MyBatis Mapper
+│   ├── UserMapper.java             # 用户表 Mapper
+│   ├── ChatMessageMapper.java      # 消息表 Mapper
+│   └── ChatSessionMapper.java      # 会话表 Mapper
 ├── Repository/
 │   ├── ChatSessionRepository.java  # 会话仓储接口（用户隔离）
 │   ├── UserRepository.java         # 用户仓储接口
 │   └── impl/
-│       ├── ChatSessionRepositoryimpl.java
+│       ├── ChatSessionRepositoryimpl.java  # Redis 缓存 + MySQL 回源
 │       └── UserRepositoryimpl.java
 ├── Service/
 │   ├── ChatService.java            # 聊天服务接口
+│   ├── ChatPersistenceService.java # 聊天数据持久化接口
 │   ├── UserService.java            # 用户服务接口
 │   └── impl/
-│       ├── ChatServiceImpl.java
+│       ├── ChatServiceimpl.java
+│       ├── ChatPersistenceServiceimpl.java # MySQL 事务实现
 │       └── UserServiceimpl.java
 └── Utils/
     ├── UserHolder.java             # 用户上下文（ThreadLocal）
@@ -53,7 +60,7 @@ com.aichat/
     └── RedisConstants.java         # Redis Key 常量
 ```
 
-## 当前状态（2026-10-17 15:01 更新）
+## 当前状态（2026-10-22 16:15 更新）
 
 ### ✅ 已完成功能
 #### 用户认证系统
@@ -73,6 +80,9 @@ com.aichat/
 - [x] 获取会话列表（GET /chat/sessions）
 - [x] 更新会话标题（PUT /chat/title）+ 长度限制
 - [x] 清空会话（DELETE /chat/clear-session）
+- [x] 聊天消息和会话元数据写入 MySQL（`tb_chat_message`、`tb_chat_session`）
+- [x] Redis 缓存未命中时从 MySQL 回源并回填（历史、会话列表、标题）
+- [x] 清空会话同时清理 MySQL 与 Redis
 
 #### 安全与工具
 - [x] Token 拦截器（RefreshTokenInterceptor）
@@ -103,6 +113,26 @@ com.aichat/
 14. **新用户标记策略调整** - 只在设置密码时清除，改昵称不清除
 15. **application.properties 优化** - 使用环境变量 + local profile
 16. **SMessage 去 Lombok** - 避免 IDE 未开启注解处理时批量报错
+
+### 🆕 2026-10-22 聊天数据持久化
+
+**目标**：Redis 只做 7 天缓存，MySQL 成为聊天数据的持久化主存储。
+
+**实现**：
+- 新增 `Entity/ChatMessage`、`Entity/ChatSession`
+- 新增 `Mapper/ChatMessageMapper`、`Mapper/ChatSessionMapper`
+- 新增 `Service/ChatPersistenceService` 接口与 `Service/impl/ChatPersistenceServiceimpl`，用 `@Transactional` 保证消息和会话元数据一起提交
+- `ChatSessionRepositoryimpl` 作为缓存门面统一接线（Service 不直接操作 Mapper）：
+  - 写：先写 MySQL，再更新 Redis
+  - 读：先读 Redis，未命中查 MySQL 并回填
+  - 清空：先删 MySQL，再删 Redis
+- Redis 写失败只记日志并删除可能不完整的缓存，不影响数据库正确性
+- 新增 `ChatSessionRepositoryimplTest`，覆盖缓存未命中回源、标题回源、会话列表回源、
+  先落库后写缓存、清空会话
+
+**验证**：
+- `./mvnw -Dtest='!AichatApplicationTests' test` 通过
+- 本地 MySQL + Redis 集成验证：删除 Redis key 后，历史消息、标题、会话列表均可从 MySQL 恢复
 
 ### API 接口总览
 
@@ -140,6 +170,7 @@ com.aichat/
 9. 全局异常处理：BusinessException 携带错误码，统一 JSON 响应
 10. 双拦截器：Token 刷新 + 登录校验，CORS 预检放行
 11. 参数校验：长度限制 + 格式校验 + 归属校验
+12. 聊天持久化：MySQL 主存储 + Redis 缓存，缓存未命中自动回源 MySQL
 
 ## 数据库表结构
 
@@ -152,6 +183,33 @@ CREATE TABLE tb_user (
   password VARCHAR(128) COMMENT '密码（BCrypt 加密，首次为 NULL）',
   create_time DATETIME COMMENT '创建时间',
   update_time DATETIME COMMENT '更新时间'
+);
+```
+
+### tb_chat_session 表
+```sql
+CREATE TABLE tb_chat_session (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(32) NOT NULL,
+  session_id VARCHAR(64) NOT NULL,
+  title VARCHAR(100),
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_user_session (user_id, session_id),
+  KEY idx_user_update (user_id, update_time)
+);
+```
+
+### tb_chat_message 表
+```sql
+CREATE TABLE tb_chat_message (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(32) NOT NULL,
+  session_id VARCHAR(64) NOT NULL,
+  role VARCHAR(16) NOT NULL,
+  content TEXT NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_user_session (user_id, session_id, id)
 );
 ```
 
@@ -194,21 +252,23 @@ app.sms.dev-mode=${APP_SMS_DEV_MODE:true}
 
 ## 文档
 - `docs/API.md` - 后端接口文档（供前端使用）
+- `docs/聊天持久化设计.md` - 持久化与缓存一致性设计
+- `docs/DEVELOPMENT_PLAN.md` - 后续开发与求职准备计划
 - `docs/学习笔记.md` - 项目学习笔记
 - `docs/备注.md` - 开发备注
 - `PROJECT_STATUS.md` - 项目状态记录
 
-## 下一步计划（前端开发）
-- [ ] 创建登录页面（验证码 + 密码两种方式）
-- [ ] 创建新用户引导页面（设置密码）
-- [ ] 创建聊天主页面（会话列表 + 聊天窗口）
-- [ ] 实现流式输出展示（打字机效果）
-- [ ] 实现用户资料修改
-- [ ] 添加响应式设计
-- [ ] 接入短信服务（替换 dev-mode）
+## 下一步计划
+
+完整路线见 **`docs/DEVELOPMENT_PLAN.md`**。近期优先级：
+- [ ] 为聊天持久化补分页、上下文裁剪
+- [ ] 加强测试（Testcontainers / API 集成测试）
+- [ ] 安全加固（接口限流、JWT/Token 策略评估）
+- [ ] RAG 知识库（文档上传、切分、向量检索、引用）
+- [ ] 可观测性与 Docker Compose 部署
 
 ---
-*最后更新: 2026-10-17 15:01*
+*最后更新: 2026-10-22 16:15*
 
 
 ---

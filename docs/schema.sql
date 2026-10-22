@@ -15,3 +15,27 @@ CREATE TABLE IF NOT EXISTS tb_user (
   create_time DATETIME COMMENT '创建时间',
   update_time DATETIME COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 会话元数据：MySQL 为主存储，Redis 只做缓存
+CREATE TABLE IF NOT EXISTS tb_chat_session (
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+  user_id     VARCHAR(32) NOT NULL COMMENT '用户 uid',
+  session_id  VARCHAR(64) NOT NULL COMMENT '会话标识',
+  title       VARCHAR(100) DEFAULT NULL COMMENT '会话标题',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+              ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间',
+  UNIQUE KEY uk_user_session (user_id, session_id),
+  KEY idx_user_update (user_id, update_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 聊天消息：一条消息一行，id 保证稳定排序（不依赖时间精度）
+CREATE TABLE IF NOT EXISTS tb_chat_message (
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+  user_id     VARCHAR(32) NOT NULL COMMENT '用户 uid',
+  session_id  VARCHAR(64) NOT NULL COMMENT '所属会话',
+  role        VARCHAR(16) NOT NULL COMMENT 'user/assistant/system',
+  content     TEXT NOT NULL COMMENT '消息内容',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间',
+  KEY idx_user_session (user_id, session_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

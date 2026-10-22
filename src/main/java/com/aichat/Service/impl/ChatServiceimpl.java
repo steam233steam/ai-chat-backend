@@ -45,10 +45,11 @@ public class ChatServiceimpl implements ChatService {
 
         // 先读历史、再落库：当前问题只通过下面的 .user(question) 进入上下文，避免重复发送
         List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
-        chatSessionRepository.save(userId, sessionid, userMessage);
         if (history.isEmpty()) {
+            // 先建会话标题，再写消息，避免会话元数据出现 title=null 的中间状态
             chatSessionRepository.saveTitle(userId, sessionid, buildTitle(question));
         }
+        chatSessionRepository.save(userId, sessionid, userMessage);
 
         try {
             String response = chatClient.prompt()
@@ -109,10 +110,10 @@ public class ChatServiceimpl implements ChatService {
 
         // 与同步接口保持一致：历史先读出来，再把当前问题落库，避免问题重复进入上下文
         List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
-        chatSessionRepository.save(userId, sessionid, new UserMessage(question));
         if (history.isEmpty()) {
             chatSessionRepository.saveTitle(userId, sessionid, buildTitle(question));
         }
+        chatSessionRepository.save(userId, sessionid, new UserMessage(question));
 
         StringBuilder fullResponse = new StringBuilder();
 
