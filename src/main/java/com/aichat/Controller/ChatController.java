@@ -35,7 +35,7 @@ public class ChatController {
     public Result<String> chat(@RequestParam String sessionid, @RequestParam String question) {
         validateSessionId(sessionid);
         validateQuestion(question);
-        return Result.success(chatService.SendSession(sessionid, new UserMessage(question)));
+        return Result.success(chatService.sendSession(sessionid, new UserMessage(question)));
     }
 
     // 流式输出（SSE）
@@ -49,7 +49,7 @@ public class ChatController {
     @DeleteMapping("/clear-session")
     public Result<String> clearSession(@RequestParam String sessionid) {
         validateSessionId(sessionid);
-        boolean cleared = chatService.ClearSession(sessionid);
+        boolean cleared = chatService.clearSession(sessionid);
         if (!cleared) {
             return Result.error("删除失败，会话不存在或已过期");
         }

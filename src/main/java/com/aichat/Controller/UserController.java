@@ -4,8 +4,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -16,6 +16,8 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Service.UserService;
 import com.aichat.utils.UserHolder;
+
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/user")
@@ -29,18 +31,18 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public Result<String> login(@RequestBody LoginFormDTO loginForm) {
+    public Result<String> login(@Valid LoginFormDTO loginForm) {
         return userService.login(loginForm);
     }
 
     @PostMapping("/login/password")
-    public Result<String> loginByPassword(@RequestBody LoginFormDTO loginForm) {
+    public Result<String> loginByPassword(@Valid LoginFormDTO loginForm) {
         return userService.loginByPassword(loginForm);
     }
 
     // 设置密码（新用户首次设置，或登录后重置）
     @PutMapping("/set-password")
-    public Result<String> setPassword(@RequestBody LoginFormDTO loginForm) {
+    public Result<String> setPassword(@Valid LoginFormDTO loginForm) {
         return userService.setPassword(loginForm);
     }
 

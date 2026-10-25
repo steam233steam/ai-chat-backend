@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import com.aichat.Dto.UserDto;
+import com.aichat.Exception.BusinessException;
 import com.aichat.utils.UserHolder;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,12 +28,9 @@ public class LoginInterceptor implements HandlerInterceptor {
         // 1. 从 UserHolder 获取用户
         UserDto user = UserHolder.getUser();
 
-        // 2. 用户不存在，返回 401
+        // 2. 用户不存在，交给全局异常处理器统一返回 401 + Result JSON
         if (user == null) {
-            response.setStatus(401);
-            response.setContentType("application/json;charset=UTF-8");
-            response.getWriter().write("{\"code\":401,\"message\":\"请先登录\",\"data\":null}");
-            return false;
+            throw new BusinessException(401, "请先登录");
         }
 
         // 3. 用户存在，放行

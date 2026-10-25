@@ -1,8 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v5.0  
-> 最后更新：2026-10-17  
-> 基础路径：`http://localhost:8080`
+> 文档版本：v5.1  
+> 最后更新：2026-10-25  
+> 基础路径：`http://localhost:8080`  
+> 变更记录：v5.1 - 聊天数据持久化改造（MySQL 主存储 + Redis 缓存），接口行为不变，新增数据存储说明
 
 ---
 
@@ -11,7 +12,7 @@
 2. [用户接口](#2-用户接口)
 3. [聊天接口](#3-聊天接口)
 4. [错误码说明](#4-错误码说明)
-5. [Redis 数据结构](#5-redis-数据结构)
+5. [数据存储说明](#5-数据存储说明)
 6. [前端使用示例](#6-前端使用示例)
 7. [认证说明](#7-认证说明)
 8. [CORS 说明](#8-cors-说明)
@@ -108,18 +109,6 @@ POST /user/code?phone=13800138000
 }
 ```
 
-#### 请求示例
-
-```bash
-POST /user/login
-Content-Type: application/json
-
-{
-  "phone": "13800138000",
-  "code": "123456"
-}
-```
-
 #### 响应示例
 
 ```json
@@ -165,18 +154,6 @@ Content-Type: application/json
 }
 ```
 
-#### 请求示例
-
-```bash
-POST /user/login/password
-Content-Type: application/json
-
-{
-  "phone": "13800138000",
-  "password": "xxxxxx"
-}
-```
-
 #### 响应示例
 
 ```json
@@ -197,7 +174,9 @@ Content-Type: application/json
 }
 ```
 
-**说明**：为避免暴露手机号是否已注册，统一提示"手机号或密码错误"。
+**说明**：
+- 为避免暴露手机号是否已注册，统一提示"手机号或密码错误"
+- 未设置密码的新用户无法使用密码登录（password 为 NULL）
 
 ---
 
@@ -212,20 +191,6 @@ Content-Type: application/json
 #### 请求参数
 
 ```json
-{
-  "phone": "13800138000",
-  "code": "123456",
-  "password": "newpassword123"
-}
-```
-
-#### 请求示例
-
-```bash
-PUT /user/set-password
-Content-Type: application/json
-Authorization: 550e8400-e29b-41d4-a716-446655440000
-
 {
   "phone": "13800138000",
   "code": "123456",
@@ -333,18 +298,6 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
-#### 请求示例
-
-```bash
-PUT /user/profile
-Content-Type: application/json
-Authorization: 550e8400-e29b-41d4-a716-446655440000
-
-{
-  "name": "我的新昵称"
-}
-```
-
 #### 响应示例
 
 ```json
@@ -376,13 +329,6 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - **接口地址**：`POST /user/logout`
 - **请求头**：`Authorization: {token}`
 
-#### 请求示例
-
-```bash
-POST /user/logout
-Authorization: 550e8400-e29b-41d4-a716-446655440000
-```
-
 #### 响应示例
 
 ```json
@@ -401,7 +347,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 
 ### 3.1 发送消息（同步）
 
-获取 AI 回复，同时保存对话历史。
+获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。
 
 - **接口地址**：`POST /chat/ask`
 - **Content-Type**：`application/x-www-form-urlencoded`
@@ -439,6 +385,10 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
   "data": null
 }
 ```
+
+**说明**：
+- 首次发消息时自动创建会话并生成默认标题（取问题前 20 个字符）
+- 会话列表按最近活跃时间倒序排列
 
 ---
 
@@ -483,13 +433,15 @@ data: ```
 data: [DONE]
 ```
 
-**说明**：客户端主动断开时，已生成的部分也会被保存，避免上下文丢失。
+**说明**：
+- 客户端主动断开时，已生成的部分也会保存（避免上下文丢失）
+- 每条 AI 回复完整后落库（MySQL + Redis）
 
 ---
 
 ### 3.3 获取会话列表
 
-获取当前用户的所有会话列表。
+获取当前用户的所有会话列表（按最近活跃时间倒序）。
 
 - **接口地址**：`GET /chat/sessions`
 - **请求头**：`Authorization: {token}`
@@ -512,6 +464,8 @@ data: [DONE]
   ]
 }
 ```
+
+**说明**：Redis 缓存过期后会话列表自动从 MySQL 恢复，数据不会丢失。
 
 ---
 
@@ -542,7 +496,7 @@ data: [DONE]
     },
     {
       "role": "assistant",
-      "content": "你好！我是一个基于 Qwen2.5-Coder 的 AI 助手...",
+      "content": "你好！我是一个乐于助人的 AI 助手...",
       "timestamp": 1727356805000
     }
   ]
@@ -553,6 +507,7 @@ data: [DONE]
 - `role`: 消息角色（user/assistant）
 - `content`: 消息内容
 - `timestamp`: 时间戳（毫秒）
+- Redis 缓存未命中时自动从 MySQL 回源（按自增 id 稳定排序）
 
 ---
 
@@ -590,11 +545,13 @@ data: [DONE]
 }
 ```
 
+**说明**：会话不存在时会自动创建一条会话记录（title 不会被空标题覆盖已有标题）。
+
 ---
 
 ### 3.6 清空会话历史
 
-删除指定会话的所有历史记录。
+删除指定会话的所有历史记录（MySQL + Redis）。
 
 - **接口地址**：`DELETE /chat/clear-session`
 - **请求头**：`Authorization: {token}`
@@ -615,6 +572,18 @@ data: [DONE]
 }
 ```
 
+#### 错误响应（会话不存在或仅有 Redis 缓存已过期）
+
+```json
+{
+  "code": 400,
+  "message": "删除失败，会话不存在或已过期",
+  "data": null
+}
+```
+
+**说明**：先删 MySQL（消息 + 会话元数据），再清 Redis 缓存。
+
 ---
 
 ## 4. 错误码说明
@@ -628,9 +597,58 @@ data: [DONE]
 
 ---
 
-## 5. Redis 数据结构
+## 5. 数据存储说明 ⭐ 2026-10-22 更新
 
-### 5.1 用户认证
+### 5.1 存储职责
+
+| 存储 | 角色 | 内容 |
+|------|------|------|
+| MySQL | 持久化主存储 | `tb_user`、`tb_chat_session`、`tb_chat_message` |
+| Redis | 7 天热缓存 | 消息 List、会话 ZSet、标题 Hash、Token、验证码 |
+
+**原则**：先写 MySQL，再更新 Redis；读 Redis 未命中时回源 MySQL 并回填。  
+Redis 故障或过期不影响数据正确性，只影响性能。
+
+### 5.2 数据库表结构
+
+```sql
+-- 用户表
+CREATE TABLE tb_user (
+  uid VARCHAR(32) PRIMARY KEY,
+  name VARCHAR(64),
+  phone VARCHAR(20) UNIQUE,
+  password VARCHAR(255) NULL,
+  create_time DATETIME,
+  update_time DATETIME
+);
+
+-- 会话表（唯一键 user_id + session_id）
+CREATE TABLE tb_chat_session (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(32) NOT NULL,
+  session_id VARCHAR(64) NOT NULL,
+  title VARCHAR(100) DEFAULT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_user_session (user_id, session_id),
+  KEY idx_user_update (user_id, update_time)
+);
+
+-- 消息表（自增 id 保证稳定排序）
+CREATE TABLE tb_chat_message (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(32) NOT NULL,
+  session_id VARCHAR(64) NOT NULL,
+  role VARCHAR(16) NOT NULL,
+  content TEXT NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_user_session (user_id, session_id, id)
+);
+```
+
+完整脚本见 `docs/schema.sql`。
+
+### 5.3 Redis 缓存结构
 
 | Key | 类型 | 说明 | TTL |
 |-----|------|------|-----|
@@ -638,12 +656,7 @@ data: [DONE]
 | `aichat:login:code:cooldown:{phone}` | String | 验证码发送冷却 | 60 秒 |
 | `aichat:login:token:{token}` | Hash | 用户信息 | 7 天 |
 | `aichat:user:new:{uid}` | String | 新用户标记 | 365 天 |
-
-### 5.2 会话管理（按用户隔离）
-
-| Key | 类型 | 说明 | TTL |
-|-----|------|------|-----|
-| `aichat:chat:sessions:{userId}` | ZSet | 会话列表（按时间排序） | 7 天 |
+| `aichat:chat:sessions:{userId}` | ZSet | 会话列表（按更新时间排序） | 7 天 |
 | `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含时间戳） | 7 天 |
 | `aichat:chat:title:{userId}:{sessionId}` | Hash | 会话标题 | 7 天 |
 
@@ -655,6 +668,16 @@ data: [DONE]
   "timestamp": 1727356800000
 }
 ```
+
+### 5.4 缓存一致性策略
+
+| 场景 | 处理 |
+|------|------|
+| Redis 缓存未命中 | 回源 MySQL 并回填缓存 |
+| Redis 写入失败 | 主动失效相关缓存，降级使用 MySQL |
+| 缓存回填失败 | 删除不完整缓存，避免脏数据 |
+| 会话列表缓存过期 | 从 MySQL 整体重建（避免列表不完整） |
+| 清空会话 | 先删 MySQL 再清 Redis |
 
 ---
 
@@ -696,7 +719,7 @@ async function loginByPassword(phone, password) {
   });
   const result = await response.json();
   if (result.code === 200) {
-    localStorage.setItem('token', result.data);
+    localStorage.getItem('token', result.data);
   }
   return result;
 }
@@ -764,8 +787,7 @@ async function checkAndGuideNewUser() {
 async function setupPassword(phone, code, password) {
   const result = await setPassword(phone, code, password);
   if (result.code === 200) {
-    // 设置成功，刷新用户信息
-    await getMe();
+    await getMe(); // 刷新用户信息
   }
   return result;
 }
@@ -892,6 +914,9 @@ api.interceptors.response.use(
 export default api;
 ```
 
+**说明**：使用 axios 时注意，后端错误响应（400/500）也会进入响应拦截器的 error 分支，
+`error.response.data` 中即为 `Result` 格式的错误体。
+
 ---
 
 ## 7. 认证说明
@@ -908,7 +933,7 @@ export default api;
 
 1. 首次通过验证码登录的用户会被标记为"新用户"
 2. 新用户标记存储在 Redis，有效期 365 天
-3. 新用户需要设置密码后才能正常使用密码登录
+3. 新用户需要设置密码后才能使用密码登录
 4. 设置密码后，新用户标记自动取消
 5. 前端可通过 `GET /user/me` 的 `isNewUser` 字段或 `GET /user/is-new-user` 检查
 
@@ -949,7 +974,41 @@ export default api;
 | 允许凭证 | true |
 | 最大有效期 | 3600 秒 |
 
-**说明**：前端开发时直接使用 `http://localhost:3000` 等端口访问 `http://localhost:8080` 即可，无需额外处理 CORS。
+**说明**：前端开发时直接使用 `http://localhost:5173` 等端口访问 `http://localhost:8080` 即可，无需额外处理 CORS。
+
+---
+
+## 9. 本地开发说明
+
+### 9.1 环境架构
+
+```
+Windows 宿主
+├── 前端 Vite            http://localhost:5173
+├── 后端 Spring Boot     http://localhost:8080
+├── Ollama               127.0.0.1:11434   (qwen2.5-coder:7b)
+└── VirtualBox 虚拟机 studybox (Ubuntu 22.10)
+    ├── MySQL   guest 3306  ── NAT 转发 ──> 宿主 13306
+    ├── Redis   guest 6379  ── NAT 转发 ──> 宿主 16379
+    ├── SSH     guest 22    ── NAT 转发 ──> 宿主 2222
+    └── nginx   guest 80    ── NAT 转发 ──> 宿主 8082
+```
+
+### 9.2 启动步骤
+
+1. 启动虚拟机（必须先启动）
+2. 初始化数据库：`mysql -h 127.0.0.1 -P 13306 -uroot -p1234 < docs/schema.sql`
+3. 旧库执行迁移：`mysql ... < docs/migration/2026-10-22-fix-tb-user-password-null.sql`
+4. 确认 Ollama：`ollama list`（需有 qwen2.5-coder:7b）
+5. 启动后端：`mvn -DskipTests package && java -Dfile.encoding=UTF-8 -jar target/aichat-0.0.1-SNAPSHOT.jar`
+6. 启动前端：`npm install && npm run dev`
+
+详细步骤见 `docs/本地启动.md`。
+
+### 9.3 配置文件
+
+- `application.properties` - 默认配置（支持环境变量覆盖）
+- `application-local.properties` - 本地敏感配置（密码，已 gitignore）
 
 ---
 

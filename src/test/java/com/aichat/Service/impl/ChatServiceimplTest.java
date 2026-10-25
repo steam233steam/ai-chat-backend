@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -26,6 +27,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Dto.UserDto;
 import com.aichat.Repository.ChatSessionRepository;
+import com.aichat.Service.ChatTitleService;
 import com.aichat.utils.UserHolder;
 
 /**
@@ -34,12 +36,14 @@ import com.aichat.utils.UserHolder;
 class ChatServiceimplTest {
 
     private ChatSessionRepository repository;
+    private ChatTitleService chatTitleService;
     private ChatClientRequestSpec requestSpec;
     private ChatServiceimpl service;
 
     @BeforeEach
     void setUp() {
         repository = mock(ChatSessionRepository.class);
+        chatTitleService = mock(ChatTitleService.class);
 
         ChatClient chatClient = mock(ChatClient.class);
         requestSpec = mock(ChatClientRequestSpec.class);
@@ -53,6 +57,7 @@ class ChatServiceimplTest {
         service = new ChatServiceimpl();
         ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
         ReflectionTestUtils.setField(service, "chatClient", chatClient);
+        ReflectionTestUtils.setField(service, "chatTitleService", chatTitleService);
 
         UserDto user = new UserDto();
         user.setId("u1");
@@ -70,7 +75,7 @@ class ChatServiceimplTest {
         List<Message> history = List.of(new UserMessage("上一轮"), new AssistantMessage("上一轮回复"));
         when(repository.getHistory("u1", "s1")).thenReturn(history);
 
-        String answer = service.SendSession("s1", new UserMessage("新问题"));
+        String answer = service.sendSession("s1", new UserMessage("新问题"));
 
         assertThat(answer).isEqualTo("你好");
 
@@ -83,16 +88,19 @@ class ChatServiceimplTest {
         verify(requestSpec).user("新问题");
         verify(repository).save(eq("u1"), eq("s1"), eq(new UserMessage("新问题")));
         verify(repository).save("u1", "s1", new AssistantMessage("你好"));
+        // 已有历史时不应再生成标题
+        verifyNoInteractions(chatTitleService);
     }
 
     @Test
     void shouldCreateTitleBeforeSavingFirstUserMessage() {
         when(repository.getHistory("u1", "s1")).thenReturn(List.of());
 
-        service.SendSession("s1", new UserMessage("新问题"));
+        service.sendSession("s1", new UserMessage("新问题"));
 
-        InOrder order = inOrder(repository);
+        InOrder order = inOrder(repository, chatTitleService);
         order.verify(repository).saveTitle("u1", "s1", "新问题");
+        order.verify(chatTitleService).generateTitleAsync("u1", "s1", "新问题", "新问题");
         order.verify(repository).save(eq("u1"), eq("s1"), eq(new UserMessage("新问题")));
         order.verify(repository).save("u1", "s1", new AssistantMessage("你好"));
     }

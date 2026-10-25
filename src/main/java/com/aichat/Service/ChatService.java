@@ -10,16 +10,16 @@ import reactor.core.publisher.Flux;
 
 public interface ChatService {
 
-    public String SendSession(String sessionid, UserMessage userMessage);
+    String sendSession(String sessionid, UserMessage userMessage);
 
-    public boolean ClearSession(String sessionid);
+    boolean clearSession(String sessionid);
 
-    public List<Map<String, Object>> getHistory(String sessionid);
+    List<Map<String, Object>> getHistory(String sessionid);
 
     List<Map<String, Object>> getSessions();
 
-    public void saveTitle(String sessionid, String title);
+    void saveTitle(String sessionid, String title);
 
-    public Flux<String> sendSessionStream(String sessionid, String question);
+    Flux<String> sendSessionStream(String sessionid, String question);
 
 }

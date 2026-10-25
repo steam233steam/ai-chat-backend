@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: 用户认证 + 聊天功能 + 安全加固 + 聊天数据 MySQL 持久化完成 ✅
+- **当前阶段**: 生产级异常处理 + 参数校验收尾完成 ✅（阶段一）
 
 ## 架构分层
 
@@ -14,44 +14,47 @@
 com.aichat/
 ├── AichatApplication.java          # 启动类
 ├── Config/
+│   ├── AsyncConfig.java            # ⭐ @EnableAsync + 标题生成线程池
 │   ├── RedisConfig.java            # Redis 配置
 │   ├── ChatClientConfig.java       # ChatClient Bean 配置（统一系统提示词）
 │   ├── WebMvcConfig.java           # MVC 配置（拦截器 + CORS）
-│   ├── LoginInterceptor.java       # 登录拦截器
+│   ├── LoginInterceptor.java       # 登录拦截器（CORS 预检放行）
 │   └── RefreshTokenInterceptor.java # Token 刷新拦截器
 ├── Controller/
 │   ├── ChatController.java         # 聊天接口（/chat 前缀 + 参数校验）
 │   └── UserController.java         # 用户接口（/user 前缀）
 ├── Dto/
 │   ├── Result.java                 # 统一返回结果（支持自定义 code）
-│   ├── SMessage.java              # 消息实体（含时间戳，去 Lombok）
+│   ├── SMessage.java              # Redis 消息实体（含时间戳，去 Lombok）
 │   ├── User.java                   # 用户实体
 │   ├── UserDto.java               # 用户 DTO（含 isNewUser 字段）
 │   └── LoginFormDTO.java          # 登录表单 DTO
-├── Entity/
-│   ├── ChatMessage.java            # 聊天消息数据库实体
-│   └── ChatSession.java            # 会话元数据数据库实体
+├── Entity/                         # ⭐ 2026-10-22 新增
+│   ├── ChatSession.java            # 会话实体（tb_chat_session）
+│   └── ChatMessage.java            # 消息实体（tb_chat_message）
 ├── Exception/
 │   ├── BusinessException.java      # 业务异常（含错误码）
 │   └── GlobalExceptionHandler.java # 全局异常处理器
 ├── Mapper/
-│   ├── UserMapper.java             # 用户表 Mapper
-│   ├── ChatMessageMapper.java      # 消息表 Mapper
-│   └── ChatSessionMapper.java      # 会话表 Mapper
+│   ├── UserMapper.java             # 用户 Mapper
+│   ├── ChatSessionMapper.java      # ⭐ 会话 Mapper（upsert + 按用户查询）
+│   └── ChatMessageMapper.java      # ⭐ 消息 Mapper（按 id 稳定排序）
 ├── Repository/
-│   ├── ChatSessionRepository.java  # 会话仓储接口（用户隔离）
+│   ├── ChatSessionRepository.java  # 会话仓储接口
 │   ├── UserRepository.java         # 用户仓储接口
 │   └── impl/
-│       ├── ChatSessionRepositoryimpl.java  # Redis 缓存 + MySQL 回源
+│       ├── ChatSessionRepositoryimpl.java  # ⭐ MySQL 主存储 + Redis 缓存
 │       └── UserRepositoryimpl.java
 ├── Service/
 │   ├── ChatService.java            # 聊天服务接口
-│   ├── ChatPersistenceService.java # 聊天数据持久化接口
+│   ├── ChatTitleService.java       # ⭐ 会话标题生成接口
 │   ├── UserService.java            # 用户服务接口
+│   ├── ChatPersistenceService.java # ⭐ 聊天持久化服务接口
 │   └── impl/
 │       ├── ChatServiceimpl.java
-│       ├── ChatPersistenceServiceimpl.java # MySQL 事务实现
-│       └── UserServiceimpl.java
+│       ├── ChatTitleServiceimpl.java       # ⭐ 异步生成标题 + 不覆盖用户标题
+│       ├── UserServiceimpl.java
+│       └── ChatPersistenceServiceimpl.java # ⭐ MySQL 事务写入
 └── Utils/
     ├── UserHolder.java             # 用户上下文（ThreadLocal）
     ├── PasswordUtils.java          # 密码工具（BCrypt）
@@ -60,7 +63,7 @@ com.aichat/
     └── RedisConstants.java         # Redis Key 常量
 ```
 
-## 当前状态（2026-10-22 16:15 更新）
+## 当前状态（2026-10-25 10:08 更新）
 
 ### ✅ 已完成功能
 #### 用户认证系统
@@ -80,9 +83,17 @@ com.aichat/
 - [x] 获取会话列表（GET /chat/sessions）
 - [x] 更新会话标题（PUT /chat/title）+ 长度限制
 - [x] 清空会话（DELETE /chat/clear-session）
-- [x] 聊天消息和会话元数据写入 MySQL（`tb_chat_message`、`tb_chat_session`）
-- [x] Redis 缓存未命中时从 MySQL 回源并回填（历史、会话列表、标题）
-- [x] 清空会话同时清理 MySQL 与 Redis
+
+#### 数据持久化 ⭐ 2026-10-22
+- [x] 新增 `tb_chat_session` 表（会话元数据）
+- [x] 新增 `tb_chat_message` 表（聊天消息）
+- [x] `ChatSessionMapper` - upsert + 按用户查询 + 标题查询 + 删除
+- [x] `ChatMessageMapper` - 插入 + 按会话查询（id 排序）+ 删除
+- [x] `ChatPersistenceService` - MySQL 事务写入（消息 + 会话元数据）
+- [x] `ChatSessionRepositoryimpl` - 改为"先写 MySQL，再写 Redis"
+- [x] 缓存未命中自动回源 MySQL 并回填
+- [x] Redis 写入失败时主动失效缓存，降级到 MySQL
+- [x] 旧库 password NOT NULL 迁移脚本
 
 #### 安全与工具
 - [x] Token 拦截器（RefreshTokenInterceptor）
@@ -96,45 +107,35 @@ com.aichat/
 - [x] 会话数据用户隔离
 - [x] CORS 配置（本地开发端口）
 
-### 📝 核心改进（2026-10-17 更新）
-1. **全局异常处理** - 新增 `BusinessException` + `GlobalExceptionHandler`，统一错误响应格式
-2. **验证码防刷** - 同一手机号 60 秒内只能发一次验证码（Redis `setIfAbsent` 实现）
-3. **验证码一次性** - 校验通过后立即删除，防止重放攻击
-4. **密码强度校验** - 设置密码前校验格式（4-32 位字母数字下划线）
-5. **手机号归属校验** - 设置密码时校验手机号必须属于当前登录账号，防止越权
-6. **新用户密码策略** - 首次注册不生成随机密码，必须走验证码登录后由用户设置
-7. **昵称默认规则** - 新用户默认昵称改为"用户+手机尾号"
-8. **参数长度校验** - sessionid≤64、question≤8000、title≤50、昵称≤20
-9. **CORS 配置** - 允许本地前端跨域（localhost:* 和 127.0.0.1:*）
-10. **CORS 预检放行** - OPTIONS 请求不校验登录态
-11. **标题按 Unicode 计算** - 使用 codePointCount 正确处理中文
-12. **系统提示词集中化** - ChatClientConfig 统一定义 SYSTEM_PROMPT
-13. **流式输出优化** - 客户端断开时也保存已生成部分，避免上下文丢失
-14. **新用户标记策略调整** - 只在设置密码时清除，改昵称不清除
-15. **application.properties 优化** - 使用环境变量 + local profile
-16. **SMessage 去 Lombok** - 避免 IDE 未开启注解处理时批量报错
+#### 生产级异常处理 + 参数校验 ⭐ 2026-10-25
+- [x] 拦截器 401 统一走 `BusinessException`（不再手写 JSON）
+- [x] `GlobalExceptionHandler` 补全 handler：
+  - `MethodArgumentNotValidException`（@Valid 触发）
+  - `NoResourceFoundException` / `NoHandlerFoundException`（404）
+  - `MethodArgumentTypeMismatchException`（参数类型不匹配）
+  - `MaxUploadSizeExceededException`（文件上传超限，预留）
+- [x] 引入 `spring-boot-starter-validation` 依赖
+- [x] `LoginFormDTO` 加 `@NotBlank` + `@Pattern`（手机号格式）
+- [x] `UserController` 登录类接口加 `@Valid` 注解
+- [x] 命名规范：`SendSession`/`ClearSession` → `sendSession`/`clearSession`
 
-### 🆕 2026-10-22 聊天数据持久化
+### 📝 核心改进（2026-10-22 持久化改造）
 
-**目标**：Redis 只做 7 天缓存，MySQL 成为聊天数据的持久化主存储。
+**问题**：聊天数据只存在 Redis（7 天 TTL），过期后历史丢失。
 
-**实现**：
-- 新增 `Entity/ChatMessage`、`Entity/ChatSession`
-- 新增 `Mapper/ChatMessageMapper`、`Mapper/ChatSessionMapper`
-- 新增 `Service/ChatPersistenceService` 接口与 `Service/impl/ChatPersistenceServiceimpl`，用 `@Transactional` 保证消息和会话元数据一起提交
-- `ChatSessionRepositoryimpl` 作为缓存门面统一接线（Service 不直接操作 Mapper）：
-  - 写：先写 MySQL，再更新 Redis
-  - 读：先读 Redis，未命中查 MySQL 并回填
-  - 清空：先删 MySQL，再删 Redis
-- Redis 写失败只记日志并删除可能不完整的缓存，不影响数据库正确性
-- 新增 `ChatSessionRepositoryimplTest`，覆盖缓存未命中回源、标题回源、会话列表回源、
-  先落库后写缓存、清空会话
+**方案**：MySQL 为持久化主存储，Redis 降级为 7 天热缓存。
 
-**验证**：
-- `./mvnw -Dtest='!AichatApplicationTests' test` 通过
-- 本地 MySQL + Redis 集成验证：删除 Redis key 后，历史消息、标题、会话列表均可从 MySQL 恢复
+1. **写入路径**：`ChatService` → `ChatSessionRepository.save()` → `ChatPersistenceService.saveMessage()`（MySQL 事务）→ Redis 缓存
+   - 每条消息都 upsert 会话元数据，刷新 `update_time`，保证会话列表按最近活跃排序
+   - 消息和会话元数据在同一事务写入，避免半成功
+2. **读取路径**：Redis 命中 → 直接返回；未命中 → 查 MySQL → 回填 Redis
+   - 消息缓存失败时删除不完整缓存
+   - 会话列表缓存过期时从 MySQL 整体重建，避免列表不完整
+3. **清除路径**：先删 MySQL（消息 + 会话），再清 Redis；返回值区分"数据库有数据"和"只有 Redis 缓存"
+4. **稳定性**：消息表用自增 `id` 保证同一毫秒内消息的稳定排序，不依赖时间精度
+5. **迁移**：`tb_user.password` 改为 NULL 允许（新用户密码为 NULL 的设计需要）
 
-### API 接口总览
+### API 接口总览（对外行为不变）
 
 #### 用户接口（/user 前缀）
 | 方法 | 路径 | 参数 | 说明 |
@@ -159,18 +160,15 @@ com.aichat/
 | DELETE | /chat/clear-session | sessionid | 清空会话 |
 
 ### 技术要点
-1. 用户数据存储在 MySQL（tb_user 表），Redis 缓存会话和 Token
+1. **MySQL 是聊天数据持久化主存储**，Redis 只做 7 天热缓存
 2. 密码使用 BCrypt 自动加盐加密
 3. Token 有效期 7 天，每次请求自动续期
 4. 验证码有效期 5 分钟，同一手机号 60 秒冷却
 5. 新用户标记有效期 365 天，仅设置密码后自动取消
 6. 会话数据按用户隔离，key 格式：`aichat:chat:sessions:{userId}`
-7. 消息历史按用户隔离，key 格式：`aichat:chat:session:{userId}:{sessionId}`
-8. 会话标题按用户隔离，key 格式：`aichat:chat:title:{userId}:{sessionId}`
-9. 全局异常处理：BusinessException 携带错误码，统一 JSON 响应
-10. 双拦截器：Token 刷新 + 登录校验，CORS 预检放行
-11. 参数校验：长度限制 + 格式校验 + 归属校验
-12. 聊天持久化：MySQL 主存储 + Redis 缓存，缓存未命中自动回源 MySQL
+7. 消息按自增 id 稳定排序（不依赖时间精度）
+8. 全局异常处理：BusinessException 携带错误码，统一 JSON 响应
+9. 双拦截器：Token 刷新 + 登录校验，CORS 预检放行
 
 ## 数据库表结构
 
@@ -180,42 +178,46 @@ CREATE TABLE tb_user (
   uid VARCHAR(32) PRIMARY KEY COMMENT '用户唯一标识',
   name VARCHAR(64) COMMENT '用户昵称',
   phone VARCHAR(20) UNIQUE COMMENT '手机号',
-  password VARCHAR(128) COMMENT '密码（BCrypt 加密，首次为 NULL）',
+  password VARCHAR(255) NULL COMMENT '密码（BCrypt 加密，首次为 NULL）',
   create_time DATETIME COMMENT '创建时间',
   update_time DATETIME COMMENT '更新时间'
 );
 ```
 
-### tb_chat_session 表
+### tb_chat_session 表 ⭐ 新增
 ```sql
 CREATE TABLE tb_chat_session (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  user_id VARCHAR(32) NOT NULL,
-  session_id VARCHAR(64) NOT NULL,
-  title VARCHAR(100),
-  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+  user_id     VARCHAR(32) NOT NULL COMMENT '用户 uid',
+  session_id  VARCHAR(64) NOT NULL COMMENT '会话标识',
+  title       VARCHAR(100) DEFAULT NULL COMMENT '会话标题',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间',
   UNIQUE KEY uk_user_session (user_id, session_id),
   KEY idx_user_update (user_id, update_time)
 );
 ```
 
-### tb_chat_message 表
+### tb_chat_message 表 ⭐ 新增
 ```sql
 CREATE TABLE tb_chat_message (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  user_id VARCHAR(32) NOT NULL,
-  session_id VARCHAR(64) NOT NULL,
-  role VARCHAR(16) NOT NULL,
-  content TEXT NOT NULL,
-  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+  user_id     VARCHAR(32) NOT NULL COMMENT '用户 uid',
+  session_id  VARCHAR(64) NOT NULL COMMENT '所属会话',
+  role        VARCHAR(16) NOT NULL COMMENT 'user/assistant/system',
+  content     TEXT NOT NULL COMMENT '消息内容',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间',
   KEY idx_user_session (user_id, session_id, id)
 );
 ```
 
+**完整建表脚本**：`docs/schema.sql`  
+**迁移脚本**：`docs/migration/2026-10-22-fix-tb-user-password-null.sql`
+
 ## 依赖项
 ```xml
 - spring-boot-starter-web
+- spring-boot-starter-validation   # ⭐ 2026-10-25 参数校验
 - spring-boot-starter-data-redis
 - spring-ai-ollama-spring-boot-starter
 - mysql-connector-j (8.0.33)
@@ -225,67 +227,36 @@ CREATE TABLE tb_chat_message (
 - spring-boot-starter-test
 ```
 
-## 配置说明
-
-### application.properties
-```properties
-# 激活 local profile（application-local.properties 不提交到 Git）
-spring.profiles.active=${SPRING_PROFILES_ACTIVE:local}
-
-# Ollama（支持环境变量覆盖）
-spring.ai.ollama.base-url=${OLLAMA_BASE_URL:http://localhost:11434}
-spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
-
-# Redis（支持环境变量覆盖）
-spring.data.redis.host=${REDIS_HOST:localhost}
-spring.data.redis.port=${REDIS_PORT:16379}
-spring.data.redis.password=${REDIS_PASSWORD:}
-
-# MySQL（支持环境变量覆盖）
-spring.datasource.url=${MYSQL_URL:jdbc:mysql://localhost:13306/aichat?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8}
-spring.datasource.username=${MYSQL_USERNAME:root}
-spring.datasource.password=${MYSQL_PASSWORD:}
-
-# 验证码开发模式（接入短信前打印到日志）
-app.sms.dev-mode=${APP_SMS_DEV_MODE:true}
-```
-
 ## 文档
 - `docs/API.md` - 后端接口文档（供前端使用）
-- `docs/聊天持久化设计.md` - 持久化与缓存一致性设计
-- `docs/DEVELOPMENT_PLAN.md` - 后续开发与求职准备计划
+- `docs/DEVELOPMENT_PLAN.md` - 后续开发计划（暑期求职版，10 周路线）
+- `docs/聊天记录持久化设计.md` - 持久化设计说明
+- `docs/schema.sql` - 数据库初始化脚本
+- `docs/本地启动.md` - 本地启动指南（含虚拟机端口转发说明）
+- `docs/migration/` - 数据库迁移脚本
 - `docs/学习笔记.md` - 项目学习笔记
 - `docs/备注.md` - 开发备注
 - `PROJECT_STATUS.md` - 项目状态记录
 
-## 下一步计划
+## 开发环境说明（本地启动.md 摘要）
+- 后端：`http://localhost:8080`
+- 前端：Vite `http://localhost:5173`（/api 代理到后端）
+- Ollama：`127.0.0.1:11434`（qwen2.5-coder:7b）
+- MySQL：`127.0.0.1:13306`（VirtualBox 虚拟机 studybox 的 NAT 转发）
+- Redis：`127.0.0.1:16379`（同上）
+- 敏感配置放 `application-local.properties`（.gitignore 中不提交）
 
-完整路线见 **`docs/DEVELOPMENT_PLAN.md`**。近期优先级：
-- [ ] 为聊天持久化补分页、上下文裁剪
-- [ ] 加强测试（Testcontainers / API 集成测试）
-- [ ] 安全加固（接口限流、JWT/Token 策略评估）
-- [ ] RAG 知识库（文档上传、切分、向量检索、引用）
-- [ ] 可观测性与 Docker Compose 部署
+## 下一步计划（见 DEVELOPMENT_PLAN.md）
+- [x] 聊天数据持久化（MySQL 主存储 + Redis 缓存）✅ 2026-10-22
+- [x] 生产级异常处理 + @Valid 参数校验 ✅ 2026-10-25（阶段一收尾）
+- [ ] 阶段二：管理员后台 / 消息搜索等业务广度模块
+- [ ] 历史消息分页 + 长上下文裁剪
+- [ ] 聊天/登录接口限流 + 安全加固
+- [ ] Testcontainers 集成测试 + GitHub Actions CI
+- [ ] Docker Compose 部署
+- [ ] RAG 知识库（可选加分项）
+- [ ] Micrometer 可观测性 + 压测
+- [ ] springdoc-openapi 接口文档
 
 ---
-*最后更新: 2026-10-22 16:15*
-
-
----
-
-## 本地运行（2026-10-17 已跑通）
-
-启动步骤见 **`docs/本地启动.md`**，建库脚本见 **`docs/schema.sql`**。
-
-| 组件 | 实际位置 |
-|------|----------|
-| MySQL | VirtualBox 虚拟机 `studybox`（Ubuntu 22.10），guest 3306 → 宿主 **13306**，root / 1234 |
-| Redis | 同一台虚拟机，guest 6379 → 宿主 **16379**，密码 qw928826 |
-| Ollama | Windows 宿主 11434，模型 `qwen2.5-coder:7b` |
-| 后端 | Windows 宿主 8080 |
-| 前端 | Windows 宿主 5173（`npm run dev`） |
-
-`application.properties` 默认端口（13306 / 16379）与虚拟机 NAT 转发一致，
-`application-local.properties`（已在 .gitignore）只保留两个密码，不需要再覆盖数据源 URL。
-
-联调通过：验证码登录 → 新用户设置密码 → 流式对话（Ollama）→ 刷新恢复历史 → 重命名/删除会话 → 修改昵称。
+*最后更新: 2026-10-25 16:21（阶段一收尾：生产级异常处理 + @Valid 参数校验）*

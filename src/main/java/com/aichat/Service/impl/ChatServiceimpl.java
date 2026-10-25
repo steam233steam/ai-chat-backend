@@ -19,6 +19,7 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatService;
+import com.aichat.Service.ChatTitleService;
 import com.aichat.utils.UserHolder;
 
 import reactor.core.publisher.Flux;
@@ -37,18 +38,17 @@ public class ChatServiceimpl implements ChatService {
     private ChatSessionRepository chatSessionRepository;
     @Autowired
     private ChatClient chatClient;
+    @Autowired
+    private ChatTitleService chatTitleService;
 
     @Override
-    public String SendSession(String sessionid, UserMessage userMessage) {
+    public String sendSession(String sessionid, UserMessage userMessage) {
         String userId = currentUserId();
         String question = userMessage.getText();
 
         // 先读历史、再落库：当前问题只通过下面的 .user(question) 进入上下文，避免重复发送
         List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
-        if (history.isEmpty()) {
-            // 先建会话标题，再写消息，避免会话元数据出现 title=null 的中间状态
-            chatSessionRepository.saveTitle(userId, sessionid, buildTitle(question));
-        }
+        initSessionIfNeeded(userId, sessionid, question, history);
         chatSessionRepository.save(userId, sessionid, userMessage);
 
         try {
@@ -66,7 +66,7 @@ public class ChatServiceimpl implements ChatService {
     }
 
     @Override
-    public boolean ClearSession(String sessionid) {
+    public boolean clearSession(String sessionid) {
         String userId = currentUserId();
         return chatSessionRepository.clear(userId, sessionid);
     }
@@ -110,9 +110,7 @@ public class ChatServiceimpl implements ChatService {
 
         // 与同步接口保持一致：历史先读出来，再把当前问题落库，避免问题重复进入上下文
         List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
-        if (history.isEmpty()) {
-            chatSessionRepository.saveTitle(userId, sessionid, buildTitle(question));
-        }
+        initSessionIfNeeded(userId, sessionid, question, history);
         chatSessionRepository.save(userId, sessionid, new UserMessage(question));
 
         StringBuilder fullResponse = new StringBuilder();
@@ -139,6 +137,19 @@ public class ChatServiceimpl implements ChatService {
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(v -> {
                 }, e -> log.error("保存助手回复失败: userId={}, sessionid={}", userId, sessionid, e));
+    }
+
+    /**
+     * 首次对话时先写兜底标题并落库，再提交异步 AI 标题任务。
+     * 先落库是为了避免会话元数据出现 title=null 的中间状态。
+     */
+    private void initSessionIfNeeded(String userId, String sessionId, String question, List<Message> history) {
+        if (!history.isEmpty()) {
+            return;
+        }
+        String fallbackTitle = buildTitle(question);
+        chatSessionRepository.saveTitle(userId, sessionId, fallbackTitle);
+        chatTitleService.generateTitleAsync(userId, sessionId, question, fallbackTitle);
     }
 
     private String buildTitle(String question) {
