@@ -25,6 +25,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.aichat.Config.ModelRouter;
 import com.aichat.Dto.UserDto;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
@@ -37,6 +38,7 @@ class ChatServiceimplTest {
 
     private ChatSessionRepository repository;
     private ChatTitleService chatTitleService;
+    private ModelRouter modelRouter;
     private ChatClientRequestSpec requestSpec;
     private ChatServiceimpl service;
 
@@ -54,9 +56,14 @@ class ChatServiceimplTest {
         when(requestSpec.call()).thenReturn(callResponseSpec);
         when(callResponseSpec.content()).thenReturn("你好");
 
+        // ModelRouter 用 mock，client() 直接返回我们 mock 的 chatClient（隔离路由器本身）
+        modelRouter = mock(ModelRouter.class);
+        when(modelRouter.client(anyString())).thenReturn(chatClient);
+        when(modelRouter.client(null)).thenReturn(chatClient);
+
         service = new ChatServiceimpl();
         ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
-        ReflectionTestUtils.setField(service, "chatClient", chatClient);
+        ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
         ReflectionTestUtils.setField(service, "chatTitleService", chatTitleService);
 
         UserDto user = new UserDto();
@@ -75,7 +82,7 @@ class ChatServiceimplTest {
         List<Message> history = List.of(new UserMessage("上一轮"), new AssistantMessage("上一轮回复"));
         when(repository.getHistory("u1", "s1")).thenReturn(history);
 
-        String answer = service.sendSession("s1", new UserMessage("新问题"));
+        String answer = service.sendSession("s1", new UserMessage("新问题"), null);
 
         assertThat(answer).isEqualTo("你好");
 
@@ -96,7 +103,7 @@ class ChatServiceimplTest {
     void shouldCreateTitleBeforeSavingFirstUserMessage() {
         when(repository.getHistory("u1", "s1")).thenReturn(List.of());
 
-        service.sendSession("s1", new UserMessage("新问题"));
+        service.sendSession("s1", new UserMessage("新问题"), null);
 
         InOrder order = inOrder(repository, chatTitleService);
         order.verify(repository).saveTitle("u1", "s1", "新问题");

@@ -2,12 +2,12 @@ package com.aichat.Service.impl;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import com.aichat.Config.AsyncConfig;
+import com.aichat.Config.ModelRouter;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
 
@@ -16,7 +16,7 @@ public class ChatTitleServiceimpl implements ChatTitleService {
     private static final Logger log = LoggerFactory.getLogger(ChatTitleServiceimpl.class);
 
     @Autowired
-    private ChatClient chatClient;
+    private ModelRouter modelRouter;
     @Autowired
     private ChatSessionRepository chatSessionRepository;
 
@@ -28,7 +28,8 @@ public class ChatTitleServiceimpl implements ChatTitleService {
     @Async(AsyncConfig.CHAT_TITLE_EXECUTOR)
     public void generateTitleAsync(String userId, String sessionId, String firstQuestion, String fallbackTitle) {
         try {
-            String aiTitle = chatClient.prompt()
+            // 标题生成用默认模型（本地 Ollama，便宜快），不跟随用户选的聊天模型
+            String aiTitle = modelRouter.client(null).prompt()
                     .system(TITLE_PROMPT)
                     .user(firstQuestion)
                     .call()

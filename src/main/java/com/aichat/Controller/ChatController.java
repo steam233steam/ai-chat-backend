@@ -2,6 +2,7 @@ package com.aichat.Controller;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,19 +32,29 @@ public class ChatController {
     @Autowired
     private ChatService chatService;
 
+    /** 查询可用模型白名单（前端渲染下拉框用，无需登录，公开接口） */
+    @GetMapping("/models")
+    public Result<Set<String>> models() {
+        return Result.success(chatService.availableModels());
+    }
+
     @PostMapping("/ask")
-    public Result<String> chat(@RequestParam String sessionid, @RequestParam String question) {
+    public Result<String> chat(@RequestParam String sessionid,
+            @RequestParam String question,
+            @RequestParam(required = false) String modelName) {
         validateSessionId(sessionid);
         validateQuestion(question);
-        return Result.success(chatService.sendSession(sessionid, new UserMessage(question)));
+        return Result.success(chatService.sendSession(sessionid, new UserMessage(question), modelName));
     }
 
     // 流式输出（SSE）
     @GetMapping(value = "/ask-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chatStream(@RequestParam String sessionid, @RequestParam String question) {
+    public Flux<String> chatStream(@RequestParam String sessionid,
+            @RequestParam String question,
+            @RequestParam(required = false) String modelName) {
         validateSessionId(sessionid);
         validateQuestion(question);
-        return chatService.sendSessionStream(sessionid, question);
+        return chatService.sendSessionStream(sessionid, question, modelName);
     }
 
     @DeleteMapping("/clear-session")

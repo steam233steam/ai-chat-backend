@@ -14,11 +14,13 @@ import org.springframework.ai.chat.client.ChatClient.CallResponseSpec;
 import org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.aichat.Config.ModelRouter;
 import com.aichat.Repository.ChatSessionRepository;
 
 class ChatTitleServiceimplTest {
 
     private ChatSessionRepository repository;
+    private ModelRouter modelRouter;
     private ChatClientRequestSpec requestSpec;
     private CallResponseSpec callResponseSpec;
     private ChatTitleServiceimpl service;
@@ -36,8 +38,12 @@ class ChatTitleServiceimplTest {
         when(requestSpec.user(anyString())).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(callResponseSpec);
 
+        // modelRouter.client(null) 标题用默认（本地）模型
+        modelRouter = mock(ModelRouter.class);
+        when(modelRouter.client(null)).thenReturn(chatClient);
+
         service = new ChatTitleServiceimpl();
-        ReflectionTestUtils.setField(service, "chatClient", chatClient);
+        ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
         ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
     }
 

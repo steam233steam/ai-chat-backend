@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.aichat.Config.ModelRouter;
 import com.aichat.Dto.SMessage;
 import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
@@ -37,14 +39,15 @@ public class ChatServiceimpl implements ChatService {
     @Autowired
     private ChatSessionRepository chatSessionRepository;
     @Autowired
-    private ChatClient chatClient;
+    private ModelRouter modelRouter;
     @Autowired
     private ChatTitleService chatTitleService;
 
     @Override
-    public String sendSession(String sessionid, UserMessage userMessage) {
+    public String sendSession(String sessionid, UserMessage userMessage, String modelName) {
         String userId = currentUserId();
         String question = userMessage.getText();
+        ChatClient chatClient = modelRouter.client(modelName);
 
         // 先读历史、再落库：当前问题只通过下面的 .user(question) 进入上下文，避免重复发送
         List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
@@ -60,7 +63,7 @@ public class ChatServiceimpl implements ChatService {
             chatSessionRepository.save(userId, sessionid, new AssistantMessage(response));
             return response;
         } catch (Exception e) {
-            log.error("AI 调用失败: userId={}, sessionid={}", userId, sessionid, e);
+            log.error("AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, modelName, e);
             throw new BusinessException(500, "AI 服务暂时不可用，请稍后重试");
         }
     }
@@ -105,8 +108,9 @@ public class ChatServiceimpl implements ChatService {
     }
 
     @Override
-    public Flux<String> sendSessionStream(String sessionid, String question) {
+    public Flux<String> sendSessionStream(String sessionid, String question, String modelName) {
         String userId = currentUserId();
+        ChatClient chatClient = modelRouter.client(modelName);
 
         // 与同步接口保持一致：历史先读出来，再把当前问题落库，避免问题重复进入上下文
         List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
@@ -121,7 +125,7 @@ public class ChatServiceimpl implements ChatService {
                 .stream()
                 .content()
                 .doOnNext(fullResponse::append)
-                .doOnError(e -> log.error("流式 AI 调用失败: userId={}, sessionid={}", userId, sessionid, e))
+                .doOnError(e -> log.error("流式 AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, modelName, e))
                 .onErrorResume(e -> Flux.just("AI 服务暂时不可用，请稍后重试"))
                 .doFinally(signal -> {
                     // 正常结束或客户端主动断开时都保存已生成的部分，避免上下文丢失
@@ -130,6 +134,11 @@ public class ChatServiceimpl implements ChatService {
                         saveAssistantReply(userId, sessionid, fullResponse.toString());
                     }
                 });
+    }
+
+    @Override
+    public Set<String> availableModels() {
+        return modelRouter.availableModels();
     }
 
     private void saveAssistantReply(String userId, String sessionid, String content) {

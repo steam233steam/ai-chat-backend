@@ -15,8 +15,10 @@ com.aichat/
 ├── AichatApplication.java          # 启动类
 ├── Config/
 │   ├── AsyncConfig.java            # ⭐ @EnableAsync + 标题生成线程池
+│   ├── ModelProperties.java        # ⭐ 多模型白名单/默认模型配置绑定
+│   ├── ModelRouter.java            # ⭐ 按模型名路由 Ollama/DeepSeek
 │   ├── RedisConfig.java            # Redis 配置
-│   ├── ChatClientConfig.java       # ChatClient Bean 配置（统一系统提示词）
+│   ├── ChatClientConfig.java       # 系统提示词配置（多模型下已迁至 ModelRouter）
 │   ├── WebMvcConfig.java           # MVC 配置（拦截器 + CORS）
 │   ├── LoginInterceptor.java       # 登录拦截器（CORS 预检放行）
 │   └── RefreshTokenInterceptor.java # Token 刷新拦截器
@@ -258,5 +260,34 @@ CREATE TABLE tb_chat_message (
 - [ ] Micrometer 可观测性 + 压测
 - [ ] springdoc-openapi 接口文档
 
+## 多模型架构 ⭐ 2026-10-25
+- [x] Ollama（本地） + DeepSeek（云端，OpenAI 兼容协议）双供应商
+- [x] `ModelRouter` 按模型名路由到对应 `ChatModel`（规避多 starter 的 Bean 冲突）
+- [x] 模型白名单 + 默认模型配置化（`app.models.*`）
+- [x] `POST /chat/ask` / `GET /chat/ask-stream` 支持 `modelName` 参数
+- [x] `GET /chat/models` 返回可用模型白名单（前端渲染下拉框）
+- [x] 标题生成固定用默认（本地）模型，不跟随用户聊天模型
+
+### 技术要点
+1. **DeepSeek 走 OpenAI 兼容协议**：Spring AI 1.0.0-M5 没有 DeepSeek 官方 starter，且 M5 的 OpenAI starter 叫 `spring-ai-openai-spring-boot-starter`（artifact 名不带 `model-` 前缀）。利用 DeepSeek API 与 OpenAI 完全兼容的特性，配 `spring.ai.openai.base-url=https://api.deepseek.com` + `api-key` 即可。
+2. **多 starter 的 Bean 冲突**：Ollama + OpenAI 两个 starter 各自动装配一个 `ChatModel` 和 `ChatClient.Builder`，直接注入会报 `NoUniqueBeanDefinitionException`。解法：不注入自动装配的单例 `ChatClient`，改为在 `ModelRouter` 里手动 `ChatClient.builder(chatModel)` 建两个带默认 system prompt 的 client，按模型名分发。
+3. **key 安全**：`spring.ai.openai.api-key` 从环境变量 `${DEEPSEEK_API_KEY}` 读，不提交到 git。
+4. **AI 标题用本地模型**：`ChatTitleServiceimpl` 调 `modelRouter.client(null)` 走默认本地模型，便宜快，不消耗云端额度。
+
+## BYOK 设计思路（仅设计，未实现）
+
+当前项目是**平台内置 key**（管理员在后端配置，用户无感），这是学习项目最合理的形态——一个人/一台服务器/一个 key，BYOK 没有真实用户和付费体系根本运转不起来。
+
+若未来要做 BYOK，设计思路如下（面试可展开）：
+
+1. **key 加密存储**：用户填 key，后端用 AES 加密存到 `tb_user` 或独立表（绝不存明文）
+2. **有效性校验**：入库时发 1 个 token 的测试请求，确认 key 可用
+3. **限额 + 计费**：每用户 token 配额，Redis 计数防刷
+4. **故障归因**：区分"用户 key 失效" vs "服务自身故障"，给不同提示
+5. **平台 key 兜底**：用户 key 失效/没填时，回落平台内置 key
+6. **多租户隔离**：key 按 userId 维度存，A 用户的 key 绝不给 B 用
+
+**取舍**：BYOK 是产品级功能，涉及加密/计费/限额/多租户，学习项目里"讲得清设计"比"做出来"更有面试价值。
+
 ---
-*最后更新: 2026-10-25 16:21（阶段一收尾：生产级异常处理 + @Valid 参数校验）*
+*最后更新: 2026-10-25 17:00（多模型切换 + BYOK 设计思路）*
