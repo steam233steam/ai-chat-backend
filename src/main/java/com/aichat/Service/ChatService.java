@@ -17,6 +17,9 @@ public interface ChatService {
 
     List<Map<String, Object>> getHistory(String sessionid);
 
+    /** 游标分页获取历史：beforeId 之前（不含）最近 limit 条，按时间正序。 */
+    List<Map<String, Object>> getHistory(String sessionid, Long beforeId, int limit);
+
     List<Map<String, Object>> getSessions();
 
     void saveTitle(String sessionid, String title);

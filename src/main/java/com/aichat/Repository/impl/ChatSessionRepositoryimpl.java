@@ -4,6 +4,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -42,7 +44,6 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
     public void save(String userId, String sessionid, Message message) {
         String type = getMessageType(message);
         long now = System.currentTimeMillis();
-        SMessage sMessage = new SMessage(message.getText(), type, now);
 
         // 先写 MySQL，保证 Redis 过期或宕机后仍能恢复完整历史
         String title = getTitle(userId, sessionid);
@@ -52,7 +53,10 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
                 type,
                 message.getText(),
                 toLocalDateTime(now));
-        chatPersistenceService.saveMessage(chatMessage, title);
+        ChatMessage saved = chatPersistenceService.saveMessage(chatMessage, title);
+
+        // MySQL 回填的自增 id 一并写入缓存，作为分页游标
+        SMessage sMessage = new SMessage(saved.getId(), message.getText(), type, now);
 
         // 再更新 Redis；缓存失败只影响性能，不影响数据正确性
         try {
@@ -102,13 +106,31 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
         }
 
         List<SMessage> result = messages.stream()
-                .map(message -> new SMessage(
-                        message.getContent(),
-                        message.getRole(),
-                        toEpochMilli(message.getCreateTime())))
+                .map(this::toSMessage)
                 .collect(Collectors.toList());
         cacheMessages(key, result);
         return result;
+    }
+
+    @Override
+    public List<SMessage> getMessageHistory(String userId, String sessionid, Long beforeId, int limit) {
+        String key = USER_SESSION_KEY_PREFIX + userId + ":" + sessionid;
+        List<SMessage> cached = readCachedMessages(key);
+        if (!cached.isEmpty()) {
+            // 缓存保存的是全量历史，直接按 id 游标过滤后取最近 limit 条
+            List<SMessage> filtered = cached.stream()
+                    .filter(m -> beforeId == null || m.getId() < beforeId)
+                    .collect(Collectors.toList());
+            if (filtered.size() <= limit) {
+                return filtered;
+            }
+            return new ArrayList<>(filtered.subList(filtered.size() - limit, filtered.size()));
+        }
+
+        // 缓存未命中时不回填，避免把“一页”当成全量历史写进缓存
+        return chatPersistenceService.getMessages(userId, sessionid, beforeId, limit).stream()
+                .map(this::toSMessage)
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -206,13 +228,21 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
     private List<SMessage> readCachedMessages(String key) {
         try {
             List<Object> messages = redisTemplate.opsForList().range(key, 0, -1);
-            if (messages == null) {
+            if (messages == null || messages.isEmpty()) {
                 return List.of();
             }
-            return messages.stream()
+            List<SMessage> result = messages.stream()
                     .filter(SMessage.class::isInstance)
                     .map(SMessage.class::cast)
                     .collect(Collectors.toList());
+            // 旧版本缓存没有 id，无法做游标分页；视为未命中，回源 MySQL 后重建
+            if (result.stream().anyMatch(m -> m.getId() == null)) {
+                log.info("消息缓存缺少 id，回源 MySQL 重建: key={}", key);
+                return List.of();
+            }
+            // 并发请求下 Redis 的写入顺序可能和 MySQL id 顺序不一致，读时按 id 校正
+            result.sort(Comparator.comparing(SMessage::getId));
+            return result;
         } catch (Exception e) {
             log.warn("读取 Redis 消息缓存失败，回退 MySQL: key={}", key, e);
             return List.of();
@@ -221,6 +251,8 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
 
     private void cacheMessages(String key, List<SMessage> messages) {
         try {
+            // 覆盖前先删，避免旧格式缓存或上次回填残留导致消息重复
+            redisTemplate.delete(key);
             redisTemplate.opsForList().rightPushAll(key, messages.toArray());
             redisTemplate.expire(key, Duration.ofDays(SESSION_TTL_DAYS));
         } catch (Exception e) {
@@ -274,6 +306,14 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
         } catch (Exception e) {
             log.warn("删除会话列表缓存失败: userId={}", userId, e);
         }
+    }
+
+    private SMessage toSMessage(ChatMessage message) {
+        return new SMessage(
+                message.getId(),
+                message.getContent(),
+                message.getRole(),
+                toEpochMilli(message.getCreateTime()));
     }
 
     private String getMessageType(Message message) {

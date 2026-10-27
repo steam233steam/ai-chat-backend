@@ -31,18 +31,18 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public Result<String> login(@Valid LoginFormDTO loginForm) {
+    public Result<String> login(@Valid @RequestBody LoginFormDTO loginForm) {
         return userService.login(loginForm);
     }
 
     @PostMapping("/login/password")
-    public Result<String> loginByPassword(@Valid LoginFormDTO loginForm) {
+    public Result<String> loginByPassword(@Valid @RequestBody LoginFormDTO loginForm) {
         return userService.loginByPassword(loginForm);
     }
 
     // 设置密码（新用户首次设置，或登录后重置）
     @PutMapping("/set-password")
-    public Result<String> setPassword(@Valid LoginFormDTO loginForm) {
+    public Result<String> setPassword(@Valid @RequestBody LoginFormDTO loginForm) {
         return userService.setPassword(loginForm);
     }
 

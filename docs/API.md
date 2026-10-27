@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v5.1  
-> 最后更新：2026-10-25  
+> 文档版本：v6.0  
+> 最后更新：2026-10-26  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v5.1 - 聊天数据持久化改造（MySQL 主存储 + Redis 缓存），接口行为不变，新增数据存储说明
+> 变更记录：v6.0 - 多模型路由 + 历史分页 + 上下文裁剪 + 异步 AI 标题生成
 
 ---
 
@@ -13,9 +13,11 @@
 3. [聊天接口](#3-聊天接口)
 4. [错误码说明](#4-错误码说明)
 5. [数据存储说明](#5-数据存储说明)
-6. [前端使用示例](#6-前端使用示例)
-7. [认证说明](#7-认证说明)
-8. [CORS 说明](#8-cors-说明)
+6. [多模型说明](#6-多模型说明)
+7. [前端使用示例](#7-前端使用示例)
+8. [认证说明](#8-认证说明)
+9. [CORS 说明](#9-cors-说明)
+10. [本地开发说明](#10-本地开发说明)
 
 ---
 
@@ -33,7 +35,7 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| code | Integer | 状态码，200 成功，400/401/500 失败 |
+| code | Integer | 状态码，200 成功，400/401/404/500 失败 |
 | message | String | 提示信息 |
 | data | T | 返回数据，类型根据接口而定 |
 
@@ -343,9 +345,35 @@ POST /user/code?phone=13800138000
 
 ## 3. 聊天接口
 
-> 前缀：`/chat`，所有接口需要登录，请求头携带 Token：`Authorization: {token}`
+> 前缀：`/chat`，除 `/chat/models` 外所有接口需要登录，请求头携带 Token：`Authorization: {token}`
 
-### 3.1 发送消息（同步）
+### 3.1 获取可用模型 ⭐ 新增
+
+获取可用模型白名单（前端渲染下拉框用）。
+
+- **接口地址**：`GET /chat/models`
+- **公开接口**（无需登录）
+
+#### 响应示例
+
+```json
+{
+  "code": 200,
+  "message": "成功",
+  "data": [
+    "qwen2.5-coder:7b",
+    "deepseek-chat"
+  ]
+}
+```
+
+**说明**：
+- 返回的是模型名数组，前端可直接用于下拉框
+- 模型名需在白名单内，否则会报 400
+
+---
+
+### 3.2 发送消息（同步）
 
 获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。
 
@@ -358,11 +386,12 @@ POST /user/code?phone=13800138000
 |--------|------|------|------|
 | sessionid | String | 是 | 会话 ID（≤64 字符） |
 | question | String | 是 | 用户消息内容（≤8000 字符） |
+| modelName | String | 否 | 模型名（白名单内），不传用默认模型 |
 
 #### 请求示例
 
 ```bash
-POST /chat/ask?sessionid=s001&question=你好
+POST /chat/ask?sessionid=s001&question=你好&modelName=deepseek-chat
 Authorization: 550e8400-e29b-41d4-a716-446655440000
 ```
 
@@ -380,8 +409,8 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 
 ```json
 {
-  "code": 500,
-  "message": "AI 服务暂时不可用，请稍后重试",
+  "code": 400,
+  "message": "不支持的模型: gpt-4",
   "data": null
 }
 ```
@@ -389,10 +418,12 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 **说明**：
 - 首次发消息时自动创建会话并生成默认标题（取问题前 20 个字符）
 - 会话列表按最近活跃时间倒序排列
+- 只把最近 N 条历史送给模型（默认 20，`app.chat.context-max-messages` 可调）
+- AI 标题异步生成（不阻塞主流程），只有标题仍是兜底值时才覆盖
 
 ---
 
-### 3.2 发送消息（流式）⭐
+### 3.3 发送消息（流式）⭐
 
 使用 SSE（Server-Sent Events）流式返回 AI 回复，实现打字机效果。
 
@@ -405,11 +436,12 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 |--------|------|------|------|
 | sessionid | String | 是 | 会话 ID（≤64 字符） |
 | question | String | 是 | 用户消息内容（≤8000 字符） |
+| modelName | String | 否 | 模型名（白名单内），不传用默认模型 |
 
 #### 请求示例
 
 ```bash
-GET /chat/ask-stream?sessionid=s001&question=写一个快速排序
+GET /chat/ask-stream?sessionid=s001&question=写一个快速排序&modelName=qwen2.5-coder:7b
 Authorization: 550e8400-e29b-41d4-a716-446655440000
 ```
 
@@ -436,10 +468,11 @@ data: [DONE]
 **说明**：
 - 客户端主动断开时，已生成的部分也会保存（避免上下文丢失）
 - 每条 AI 回复完整后落库（MySQL + Redis）
+- 模型名校验失败时返回 400，不会进入流式
 
 ---
 
-### 3.3 获取会话列表
+### 3.4 获取会话列表
 
 获取当前用户的所有会话列表（按最近活跃时间倒序）。
 
@@ -469,9 +502,9 @@ data: [DONE]
 
 ---
 
-### 3.4 获取会话历史
+### 3.5 获取会话历史 ⭐ 支持分页
 
-获取指定会话的所有消息历史，包含时间戳。
+获取指定会话的所有消息历史，包含时间戳和消息 ID（分页游标）。
 
 - **接口地址**：`GET /chat/history`
 - **请求头**：`Authorization: {token}`
@@ -481,6 +514,28 @@ data: [DONE]
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | sessionid | String | 是 | 会话 ID |
+| beforeId | Long | 否 | 分页游标（传该 ID 之前的一页），需配 limit |
+| limit | Integer | 否 | 每页条数（1-100），不传时返回全量历史 |
+
+#### 请求示例
+
+全量历史（兼容旧行为）：
+```bash
+GET /chat/history?sessionid=s001
+Authorization: 550e8400-e29b-41d4-a716-446655440000
+```
+
+分页（取最新 20 条）：
+```bash
+GET /chat/history?sessionid=s001&limit=20
+Authorization: 550e8400-e29b-41d4-a716-446655440000
+```
+
+分页（取更早一页，游标为上一页最小的 id）：
+```bash
+GET /chat/history?sessionid=s001&beforeId=100&limit=20
+Authorization: 550e8400-e29b-41d4-a716-446655440000
+```
 
 #### 响应示例
 
@@ -490,11 +545,13 @@ data: [DONE]
   "message": "成功",
   "data": [
     {
+      "id": 100,
       "role": "user",
       "content": "你好，请介绍一下你自己",
       "timestamp": 1727356800000
     },
     {
+      "id": 101,
       "role": "assistant",
       "content": "你好！我是一个乐于助人的 AI 助手...",
       "timestamp": 1727356805000
@@ -504,14 +561,37 @@ data: [DONE]
 ```
 
 **说明**：
+- `id`: 消息自增 ID（分页游标）
 - `role`: 消息角色（user/assistant）
 - `content`: 消息内容
 - `timestamp`: 时间戳（毫秒）
-- Redis 缓存未命中时自动从 MySQL 回源（按自增 id 稳定排序）
+- 不传 `limit` 时返回全量历史（现有前端无需改动）
+- `beforeId` 必须配 `limit` 使用，否则报错
+- `limit` 范围 1-100
+- 分页查询不回写缓存（避免把"一页"当成全量历史）
+- 响应顺序：`beforeId` 之前的最近 `limit` 条，按 id 升序
+
+#### 错误响应
+
+```json
+{
+  "code": 400,
+  "message": "beforeId 需要配合 limit 使用",
+  "data": null
+}
+```
+
+```json
+{
+  "code": 400,
+  "message": "limit 必须在 1-100 之间",
+  "data": null
+}
+```
 
 ---
 
-### 3.5 更新会话标题
+### 3.6 更新会话标题
 
 更新指定会话的标题（最长 50 字符）。
 
@@ -545,11 +625,13 @@ data: [DONE]
 }
 ```
 
-**说明**：会话不存在时会自动创建一条会话记录（title 不会被空标题覆盖已有标题）。
+**说明**：
+- 手动更新标题后，异步 AI 标题生成不会覆盖（只有标题仍等于兜底值时才覆盖）
+- 会话不存在时会自动创建一条会话记录
 
 ---
 
-### 3.6 清空会话历史
+### 3.7 清空会话历史
 
 删除指定会话的所有历史记录（MySQL + Redis）。
 
@@ -591,13 +673,15 @@ data: [DONE]
 | 错误码 | 说明 | 处理建议 |
 |--------|------|----------|
 | 200 | 请求成功 | - |
-| 400 | 请求参数错误 | 检查参数格式和长度 |
+| 400 | 请求参数错误 | 检查参数格式、长度、模型名 |
 | 401 | 未登录 | 请先登录 |
+| 404 | 接口不存在 | 检查路径 |
+| 413 | 上传文件过大 | 检查文件大小 |
 | 500 | 系统错误 | AI 服务不可用或服务器异常 |
 
 ---
 
-## 5. 数据存储说明 ⭐ 2026-10-22 更新
+## 5. 数据存储说明
 
 ### 5.1 存储职责
 
@@ -634,7 +718,7 @@ CREATE TABLE tb_chat_session (
   KEY idx_user_update (user_id, update_time)
 );
 
--- 消息表（自增 id 保证稳定排序）
+-- 消息表（自增 id 保证稳定排序 + 分页游标）
 CREATE TABLE tb_chat_message (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id VARCHAR(32) NOT NULL,
@@ -657,12 +741,13 @@ CREATE TABLE tb_chat_message (
 | `aichat:login:token:{token}` | Hash | 用户信息 | 7 天 |
 | `aichat:user:new:{uid}` | String | 新用户标记 | 365 天 |
 | `aichat:chat:sessions:{userId}` | ZSet | 会话列表（按更新时间排序） | 7 天 |
-| `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含时间戳） | 7 天 |
+| `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含 id 游标 + 时间戳） | 7 天 |
 | `aichat:chat:title:{userId}:{sessionId}` | Hash | 会话标题 | 7 天 |
 
 **消息结构（SMessage）**：
 ```json
 {
+  "id": 100,
   "text": "消息内容",
   "type": "user|assistant|system",
   "timestamp": 1727356800000
@@ -678,12 +763,61 @@ CREATE TABLE tb_chat_message (
 | 缓存回填失败 | 删除不完整缓存，避免脏数据 |
 | 会话列表缓存过期 | 从 MySQL 整体重建（避免列表不完整） |
 | 清空会话 | 先删 MySQL 再清 Redis |
+| 旧版缓存缺少 id | 视为未命中，回源 MySQL 重建 |
+| 分页查询 | 不回写缓存（避免把"一页"当成全量历史） |
 
 ---
 
-## 6. 前端使用示例
+## 6. 多模型说明 ⭐ 新增
 
-### 6.1 登录流程
+### 6.1 模型路由
+
+后端支持多个模型，通过 `ModelRouter` 按模型名分发：
+
+| 模型 | 协议 | 说明 |
+|------|------|------|
+| `qwen2.5-coder:7b` | Ollama（本地） | 默认模型，本地部署 |
+| `deepseek-chat` | OpenAI 兼容（DeepSeek） | 云端模型 |
+
+**路由逻辑**：
+1. 前端传 `modelName`，不传用默认模型
+2. 模型名在 `app.models.ollama-models` 里 → 走 Ollama
+3. 其余白名单模型 → 走 OpenAI 兼容协议（DeepSeek）
+4. 模型名不在 `app.models.available` 白名单 → 报 400（不静默兜底）
+
+### 6.2 配置项
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `app.models.available` | `qwen2.5-coder:7b,deepseek-chat` | 模型白名单（逗号分隔） |
+| `app.models.default-model` | `qwen2.5-coder:7b` | 默认模型 |
+| `app.models.ollama-models` | `qwen2.5-coder:7b` | 走 Ollama 的模型，其余走 OpenAI 兼容协议 |
+
+### 6.3 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `DEEPSEEK_API_KEY` | DeepSeek API Key（不提交 Git） |
+| `DEEPSEEK_BASE_URL` | DeepSeek API 地址（默认 `https://api.deepseek.com`） |
+| `OLLAMA_BASE_URL` | Ollama 服务地址（默认 `http://localhost:11434`） |
+| `OLLAMA_MODEL` | 默认 Ollama 模型 |
+
+### 6.4 上下文裁剪
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `app.chat.context-max-messages` | `20` | 送给模型的历史消息条数，<=0 表示不裁剪 |
+
+**说明**：
+- 只把最近 N 条历史送给模型，控制 Prompt 长度
+- 历史接口仍返回全量/分页数据，裁剪只影响 AI 上下文
+- 长对话不会撑爆 Prompt
+
+---
+
+## 7. 前端使用示例
+
+### 7.1 登录流程
 
 ```javascript
 const API_BASE = 'http://localhost:8080';
@@ -719,7 +853,7 @@ async function loginByPassword(phone, password) {
   });
   const result = await response.json();
   if (result.code === 200) {
-    localStorage.getItem('token', result.data);
+    localStorage.setItem('token', result.data);
   }
   return result;
 }
@@ -772,7 +906,7 @@ async function logout() {
 }
 ```
 
-### 6.2 新用户引导流程
+### 7.2 新用户引导流程
 
 ```javascript
 // 检查用户是否为新用户，如果是则引导设置密码
@@ -793,13 +927,42 @@ async function setupPassword(phone, code, password) {
 }
 ```
 
-### 6.3 聊天流程
+### 7.3 模型选择
+
+```javascript
+// 获取可用模型（渲染下拉框）
+async function getAvailableModels() {
+  const response = await fetch(`${API_BASE}/chat/models`);
+  const result = await response.json();
+  if (result.code === 200) {
+    return result.data; // ["qwen2.5-coder:7b", "deepseek-chat"]
+  }
+  return [];
+}
+
+// 选择模型后发送消息
+async function sendMessage(sessionId, question, modelName) {
+  const token = localStorage.getItem('token');
+  const params = new URLSearchParams({ sessionid: sessionId, question });
+  if (modelName) params.append('modelName', modelName);
+  
+  const response = await fetch(`${API_BASE}/chat/ask?${params}`, {
+    method: 'POST',
+    headers: { 'Authorization': token }
+  });
+  return await response.json();
+}
+```
+
+### 7.4 聊天流程（含分页）
 
 ```javascript
 // 发送消息（同步）
-async function sendMessage(sessionId, question) {
+async function sendMessage(sessionId, question, modelName) {
   const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/ask?sessionid=${sessionId}&question=${encodeURIComponent(question)}`, {
+  const params = new URLSearchParams({ sessionid: sessionId, question });
+  if (modelName) params.append('modelName', modelName);
+  const response = await fetch(`${API_BASE}/chat/ask?${params}`, {
     method: 'POST',
     headers: { 'Authorization': token }
   });
@@ -807,9 +970,12 @@ async function sendMessage(sessionId, question) {
 }
 
 // 流式发送消息
-async function streamSendMessage(sessionId, question, onChunk, onComplete) {
+async function streamSendMessage(sessionId, question, modelName, onChunk, onComplete) {
   const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/ask-stream?sessionid=${sessionId}&question=${encodeURIComponent(question)}`, {
+  const params = new URLSearchParams({ sessionid: sessionId, question });
+  if (modelName) params.append('modelName', modelName);
+  
+  const response = await fetch(`${API_BASE}/chat/ask-stream?${params}`, {
     headers: { 'Authorization': token }
   });
   
@@ -847,10 +1013,28 @@ async function getSessions() {
   return await response.json();
 }
 
-// 获取会话历史（含时间戳）
+// 获取会话历史（全量，兼容旧行为）
 async function getHistory(sessionId) {
   const token = localStorage.getItem('token');
   const response = await fetch(`${API_BASE}/chat/history?sessionid=${sessionId}`, {
+    headers: { 'Authorization': token }
+  });
+  return await response.json();
+}
+
+// 获取会话历史（分页：取最新一页）
+async function getHistoryLatest(sessionId, limit = 20) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/chat/history?sessionid=${sessionId}&limit=${limit}`, {
+    headers: { 'Authorization': token }
+  });
+  return await response.json();
+}
+
+// 获取会话历史（分页：取更早一页，游标为上一页最小的 id）
+async function getHistoryBefore(sessionId, beforeId, limit = 20) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/chat/history?sessionid=${sessionId}&beforeId=${beforeId}&limit=${limit}`, {
     headers: { 'Authorization': token }
   });
   return await response.json();
@@ -877,7 +1061,7 @@ async function clearSession(sessionId) {
 }
 ```
 
-### 6.4 Axios 封装
+### 7.5 Axios 封装
 
 ```javascript
 import axios from 'axios';
@@ -914,14 +1098,14 @@ api.interceptors.response.use(
 export default api;
 ```
 
-**说明**：使用 axios 时注意，后端错误响应（400/500）也会进入响应拦截器的 error 分支，
+**说明**：使用 axios 时注意，后端错误响应（400/404/500）也会进入响应拦截器的 error 分支，
 `error.response.data` 中即为 `Result` 格式的错误体。
 
 ---
 
-## 7. 认证说明
+## 8. 认证说明
 
-### 7.1 Token 机制
+### 8.1 Token 机制
 
 1. 登录成功后，服务端生成 UUID Token
 2. Token 存储到 Redis，有效期 7 天
@@ -929,7 +1113,7 @@ export default api;
 4. 每次请求自动刷新 Token 过期时间（续期）
 5. 登出时删除 Token
 
-### 7.2 新用户标记机制
+### 8.2 新用户标记机制
 
 1. 首次通过验证码登录的用户会被标记为"新用户"
 2. 新用户标记存储在 Redis，有效期 365 天
@@ -937,7 +1121,7 @@ export default api;
 4. 设置密码后，新用户标记自动取消
 5. 前端可通过 `GET /user/me` 的 `isNewUser` 字段或 `GET /user/is-new-user` 检查
 
-### 7.3 安全特性
+### 8.3 安全特性
 
 | 特性 | 说明 |
 |------|------|
@@ -947,8 +1131,10 @@ export default api;
 | 手机号归属 | 设置密码时校验手机号属于当前账号 |
 | 统一错误提示 | 密码登录不暴露手机号是否注册 |
 | 参数长度校验 | sessionid≤64、question≤8000、title≤50、昵称≤20 |
+| 模型白名单 | 只能选白名单内的模型，否则报 400 |
+| @Valid 校验 | 手机号格式 + 非空 |
 
-### 7.4 拦截器说明
+### 8.4 拦截器说明
 
 | 拦截器 | 功能 | 拦截路径 |
 |--------|------|----------|
@@ -959,10 +1145,11 @@ export default api;
 - `/user/code` - 发送验证码
 - `/user/login` - 验证码登录
 - `/user/login/password` - 密码登录
+- `/chat/models` - 获取可用模型（新增）
 
 ---
 
-## 8. CORS 说明
+## 9. CORS 说明
 
 后端已配置 CORS，允许本地开发端口跨域：
 
@@ -978,15 +1165,16 @@ export default api;
 
 ---
 
-## 9. 本地开发说明
+## 10. 本地开发说明
 
-### 9.1 环境架构
+### 10.1 环境架构
 
 ```
 Windows 宿主
 ├── 前端 Vite            http://localhost:5173
 ├── 后端 Spring Boot     http://localhost:8080
 ├── Ollama               127.0.0.1:11434   (qwen2.5-coder:7b)
+├── DeepSeek             https://api.deepseek.com   (云端)
 └── VirtualBox 虚拟机 studybox (Ubuntu 22.10)
     ├── MySQL   guest 3306  ── NAT 转发 ──> 宿主 13306
     ├── Redis   guest 6379  ── NAT 转发 ──> 宿主 16379
@@ -994,18 +1182,20 @@ Windows 宿主
     └── nginx   guest 80    ── NAT 转发 ──> 宿主 8082
 ```
 
-### 9.2 启动步骤
+### 10.2 启动步骤
 
-1. 启动虚拟机（必须先启动）
-2. 初始化数据库：`mysql -h 127.0.0.1 -P 13306 -uroot -p1234 < docs/schema.sql`
-3. 旧库执行迁移：`mysql ... < docs/migration/2026-10-22-fix-tb-user-password-null.sql`
-4. 确认 Ollama：`ollama list`（需有 qwen2.5-coder:7b）
-5. 启动后端：`mvn -DskipTests package && java -Dfile.encoding=UTF-8 -jar target/aichat-0.0.1-SNAPSHOT.jar`
-6. 启动前端：`npm install && npm run dev`
+1. 复制并填写本地敏感配置：`cp src/main/resources/application-local.properties.example src/main/resources/application-local.properties`
+2. 使用 DeepSeek 时配置 key：`export DEEPSEEK_API_KEY=sk-xxx`
+3. 启动虚拟机（必须先启动）
+4. 初始化数据库：`mysql -h 127.0.0.1 -P 13306 -uroot -p1234 < docs/schema.sql`
+5. 旧库执行迁移：`mysql ... < docs/migration/2026-10-22-fix-tb-user-password-null.sql`
+6. 确认 Ollama：`ollama list`（需有 qwen2.5-coder:7b）
+7. 启动后端：`mvn spring-boot:run`
+8. 启动前端：`npm install && npm run dev`
 
 详细步骤见 `docs/本地启动.md`。
 
-### 9.3 配置文件
+### 10.3 配置文件
 
 - `application.properties` - 默认配置（支持环境变量覆盖）
 - `application-local.properties` - 本地敏感配置（密码，已 gitignore）

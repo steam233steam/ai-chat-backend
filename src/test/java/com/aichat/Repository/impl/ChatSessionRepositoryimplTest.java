@@ -7,7 +7,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
@@ -18,6 +20,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.data.redis.core.HashOperations;
@@ -63,16 +66,17 @@ class ChatSessionRepositoryimplTest {
         String key = "aichat:chat:session:u1:s1";
         when(listOperations.range(key, 0, -1)).thenReturn(List.of());
         when(chatPersistenceService.getMessages("u1", "s1"))
-                .thenReturn(List.of(new ChatMessage(
-                        "u1", "s1", "user", "你好",
+                .thenReturn(List.of(message(11L, "user", "你好",
                         LocalDateTime.of(2026, 10, 22, 10, 0))));
 
         List<SMessage> history = repository.getMessageHistory("u1", "s1");
 
         assertThat(history).hasSize(1);
+        assertThat(history.get(0).getId()).isEqualTo(11L);
         assertThat(history.get(0).getText()).isEqualTo("你好");
         assertThat(history.get(0).getType()).isEqualTo("user");
         verify(chatPersistenceService).getMessages("u1", "s1");
+        verify(redisTemplate).delete(key);
         verify(listOperations).rightPushAll(eq(key), any(Object[].class));
         verify(redisTemplate).expire(eq(key), any(Duration.class));
     }
@@ -116,12 +120,19 @@ class ChatSessionRepositoryimplTest {
         String titleKey = "aichat:chat:title:u1:s1";
         when(hashOperations.get(titleKey, "s1")).thenReturn(null);
         when(chatPersistenceService.getTitle("u1", "s1")).thenReturn(null);
+        ChatMessage persisted = new ChatMessage("u1", "s1", "user", "新问题",
+                LocalDateTime.of(2026, 10, 25, 17, 0));
+        persisted.setId(7L);
+        when(chatPersistenceService.saveMessage(any(ChatMessage.class), isNull()))
+                .thenReturn(persisted);
 
         repository.save("u1", "s1", new UserMessage("新问题"));
 
         InOrder order = inOrder(chatPersistenceService, listOperations);
         order.verify(chatPersistenceService).saveMessage(any(ChatMessage.class), isNull());
-        order.verify(listOperations).rightPush(eq(messageKey), any(SMessage.class));
+        ArgumentCaptor<SMessage> messageCaptor = ArgumentCaptor.forClass(SMessage.class);
+        order.verify(listOperations).rightPush(eq(messageKey), messageCaptor.capture());
+        assertThat(messageCaptor.getValue().getId()).isEqualTo(7L);
     }
 
     @Test
@@ -135,5 +146,74 @@ class ChatSessionRepositoryimplTest {
         verify(chatPersistenceService).clear("u1", "s1");
         verify(zSetOperations).remove("aichat:chat:sessions:u1", "s1");
         verify(redisTemplate).delete("aichat:chat:session:u1:s1");
+    }
+
+    @Test
+    void shouldPageFromCacheWithoutTouchingMysql() {
+        String key = "aichat:chat:session:u1:s1";
+        when(listOperations.range(key, 0, -1)).thenReturn(List.of(
+                cached(1L, "user", "一", 1000L),
+                cached(2L, "assistant", "二", 2000L),
+                cached(3L, "user", "三", 3000L)));
+
+        List<SMessage> page = repository.getMessageHistory("u1", "s1", 3L, 1);
+
+        assertThat(page).extracting(SMessage::getId).containsExactly(2L);
+        verifyNoInteractions(chatPersistenceService);
+    }
+
+    @Test
+    void shouldPageFromMysqlWithoutCachingPartialHistory() {
+        String key = "aichat:chat:session:u1:s1";
+        when(listOperations.range(key, 0, -1)).thenReturn(List.of());
+        when(chatPersistenceService.getMessages("u1", "s1", 10L, 2))
+                .thenReturn(List.of(
+                        message(8L, "user", "八", LocalDateTime.of(2026, 10, 25, 10, 0)),
+                        message(9L, "assistant", "九", LocalDateTime.of(2026, 10, 25, 10, 1))));
+
+        List<SMessage> page = repository.getMessageHistory("u1", "s1", 10L, 2);
+
+        assertThat(page).extracting(SMessage::getId).containsExactly(8L, 9L);
+        verify(chatPersistenceService).getMessages("u1", "s1", 10L, 2);
+        verify(listOperations, never()).rightPushAll(eq(key), any(Object[].class));
+    }
+
+    @Test
+    void shouldRebuildFullCacheWhenCachedMessagesHaveNoId() {
+        String key = "aichat:chat:session:u1:s1";
+        when(listOperations.range(key, 0, -1)).thenReturn(List.of(
+                new SMessage("旧缓存消息", "user", 1000L)));
+        when(chatPersistenceService.getMessages("u1", "s1"))
+                .thenReturn(List.of(message(5L, "user", "数据库消息",
+                        LocalDateTime.of(2026, 10, 25, 11, 0))));
+
+        List<SMessage> history = repository.getMessageHistory("u1", "s1");
+
+        assertThat(history).extracting(SMessage::getId).containsExactly(5L);
+        InOrder order = inOrder(redisTemplate, listOperations);
+        order.verify(redisTemplate).delete(key);
+        order.verify(listOperations).rightPushAll(eq(key), any(Object[].class));
+    }
+
+    @Test
+    void shouldSortCachedMessagesByIdToTolerateConcurrentWrites() {
+        String key = "aichat:chat:session:u1:s1";
+        when(listOperations.range(key, 0, -1)).thenReturn(List.of(
+                cached(2L, "assistant", "二", 2000L),
+                cached(1L, "user", "一", 1000L)));
+
+        List<SMessage> history = repository.getMessageHistory("u1", "s1");
+
+        assertThat(history).extracting(SMessage::getId).containsExactly(1L, 2L);
+    }
+
+    private ChatMessage message(long id, String role, String content, LocalDateTime time) {
+        ChatMessage message = new ChatMessage("u1", "s1", role, content, time);
+        message.setId(id);
+        return message;
+    }
+
+    private SMessage cached(long id, String type, String content, long timestamp) {
+        return new SMessage(id, content, type, timestamp);
     }
 }

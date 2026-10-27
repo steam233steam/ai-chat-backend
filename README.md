@@ -2,19 +2,21 @@
 
 # AI Chat 后端
 
-基于 Spring Boot 3 + Spring AI 的智能对话后端，接入 Ollama 本地模型，支持同步/流式两种响应模式。
+基于 Spring Boot 3 + Spring AI 的智能对话后端，支持 Ollama 本地模型与 DeepSeek 云端模型切换，提供同步/流式两种响应模式。
 
 > 前端仓库：[ai-chat-frontend](https://github.com/steam233steam/ai-chat-frontend)
 
 ## 技术栈
 
-Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama) · MySQL · MyBatis · Redis · Hutool · Java 17
+Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama / OpenAI 兼容) · DeepSeek · MySQL · MyBatis · Redis · Hutool · Java 17
 
 ## 功能特性
 
 - **双方式登录**：手机验证码登录 + 密码登录（BCrypt 加密）
 - **新用户引导**：首次登录自动标记，需完善密码/昵称
 - **多轮对话**：Redis 缓存会话上下文，MySQL 持久化，支持流式 SSE 输出
+- **多模型切换**：`ModelRouter` 按模型名路由 Ollama / DeepSeek，白名单配置化
+- **长对话友好**：历史消息游标分页（`beforeId` + `limit`），只把最近 N 条历史送入模型
 - **多用户隔离**：会话数据按 userId 隔离，含越权校验
 - **数据可恢复**：Redis 7 天 TTL 到期后，历史消息、会话列表和标题可从 MySQL 回源
 - **工程化**：三层架构 + 全局异常处理 + 拦截器链 + 参数校验
@@ -26,6 +28,9 @@ Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama) · MySQL · MyBatis · Redis ·
 ```bash
 # 复制并填写本地密码
 cp src/main/resources/application-local.properties.example src/main/resources/application-local.properties
+
+# 使用 DeepSeek 时配置 key（不提交到 Git）
+export DEEPSEEK_API_KEY=sk-xxx
 
 # 启动
 mvn spring-boot:run
@@ -51,9 +56,10 @@ mvn spring-boot:run
 ### 聊天接口 `/chat`
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/chat/models` | 可用模型白名单 |
 | POST | `/chat/ask` | 同步对话 |
 | GET | `/chat/ask-stream` | 流式对话 (SSE) |
-| GET | `/chat/history` | 会话历史 |
+| GET | `/chat/history` | 会话历史（可选 `beforeId` + `limit` 分页） |
 | GET | `/chat/sessions` | 会话列表 |
 | PUT | `/chat/title` | 更新标题 |
 | DELETE | `/chat/clear-session` | 清空会话 |
@@ -85,8 +91,11 @@ MySQL 是聊天数据的持久化主存储，Redis 只做 7 天热缓存：
 ```
 
 - 表：`tb_chat_session`、`tb_chat_message`
-- 消息按自增 `id` 升序，避免同一秒内顺序不稳定
+- 消息按自增 `id` 升序，避免同一秒内顺序不稳定；`id` 同时作为分页游标
+- 历史接口支持 `beforeId` + `limit` 游标分页，不传 `limit` 时保持全量返回
+- 只把最近 N 条历史送给模型（默认 20，`app.chat.context-max-messages` 可调），控制 Prompt 长度
 - 缓存写失败只记录日志并删除可能不完整的缓存，读请求会回源 MySQL
+- 旧版本消息缓存缺少 `id` 时自动回源 MySQL 并重建
 - 清空会话时先删 MySQL，再删 Redis
 
 详细设计见 `docs/聊天持久化设计.md`。
@@ -133,6 +142,15 @@ com.aichat/
 GitHub Actions 在每次 push 时执行单元测试与打包（`.github/workflows/ci.yml`）。
 
 `AichatApplicationTests` 是 `@SpringBootTest`，启动需要真实的 Redis / MySQL / Ollama，因此未纳入 CI；CI 只跑不依赖外部服务的单元测试。
+
+## 配置项
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `app.models.available` | `qwen2.5-coder:7b,deepseek-chat` | 模型白名单 |
+| `app.models.default-model` | `qwen2.5-coder:7b` | 默认模型 |
+| `app.models.ollama-models` | `qwen2.5-coder:7b` | 走 Ollama 的模型，其余走 OpenAI 兼容协议 |
+| `app.chat.context-max-messages` | `20` | 送给模型的历史消息条数，`<=0` 表示不裁剪 |
 
 ## 文档
 

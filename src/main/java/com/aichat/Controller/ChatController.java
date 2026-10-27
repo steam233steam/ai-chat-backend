@@ -28,6 +28,7 @@ public class ChatController {
     private static final int MAX_SESSION_ID_LENGTH = 64;
     private static final int MAX_QUESTION_LENGTH = 8_000;
     private static final int MAX_TITLE_LENGTH = 50;
+    private static final int MAX_HISTORY_PAGE_SIZE = 100;
 
     @Autowired
     private ChatService chatService;
@@ -68,9 +69,20 @@ public class ChatController {
     }
 
     @GetMapping("/history")
-    public Result<List<Map<String, Object>>> getHistory(@RequestParam String sessionid) {
+    public Result<List<Map<String, Object>>> getHistory(
+            @RequestParam String sessionid,
+            @RequestParam(required = false) Long beforeId,
+            @RequestParam(required = false) Integer limit) {
         validateSessionId(sessionid);
-        return Result.success(chatService.getHistory(sessionid));
+        // 不传 limit 时保持旧行为：返回全量历史（现有前端无需改动）
+        if (limit == null) {
+            Assert.isNull(beforeId, "beforeId 需要配合 limit 使用");
+            return Result.success(chatService.getHistory(sessionid));
+        }
+        Assert.isTrue(limit >= 1 && limit <= MAX_HISTORY_PAGE_SIZE,
+                "limit 必须在 1-" + MAX_HISTORY_PAGE_SIZE + " 之间");
+        Assert.isTrue(beforeId == null || beforeId > 0, "beforeId 必须为正数");
+        return Result.success(chatService.getHistory(sessionid, beforeId, limit));
     }
 
     @GetMapping("/sessions")

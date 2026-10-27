@@ -51,7 +51,9 @@ public class UserServiceimpl implements UserService {
         userRepository.saveCode(phone, code);
         // TODO: 接入短信服务，当前仅存 Redis
         if (smsDevMode) {
-            log.warn("[DEV] 未接入短信服务，验证码仅打印在日志: phone={}, code={}", phone, code);
+            // 生产日志不回显完整验证码，避免手机号 + 验证码成对泄露；仅打印前 2 位脱敏
+            log.warn("[DEV] 未接入短信服务，验证码已打印在日志: phone={}, code={}**",
+                    phone, code.substring(0, 2));
         } else {
             log.info("验证码已发送: phone={}", phone);
         }

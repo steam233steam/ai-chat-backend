@@ -13,6 +13,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.aichat.Config.ModelRouter;
@@ -36,6 +37,10 @@ public class ChatServiceimpl implements ChatService {
     /** 会话标题最大长度（按 Unicode 字符计） */
     private static final int TITLE_MAX_LENGTH = 20;
 
+    /** 送给模型的历史消息上限；<=0 表示不裁剪 */
+    @Value("${app.chat.context-max-messages:20}")
+    private int contextMaxMessages = 20;
+
     @Autowired
     private ChatSessionRepository chatSessionRepository;
     @Autowired
@@ -50,7 +55,7 @@ public class ChatServiceimpl implements ChatService {
         ChatClient chatClient = modelRouter.client(modelName);
 
         // 先读历史、再落库：当前问题只通过下面的 .user(question) 进入上下文，避免重复发送
-        List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
+        List<Message> history = trimHistory(chatSessionRepository.getHistory(userId, sessionid));
         initSessionIfNeeded(userId, sessionid, question, history);
         chatSessionRepository.save(userId, sessionid, userMessage);
 
@@ -76,10 +81,18 @@ public class ChatServiceimpl implements ChatService {
 
     @Override
     public List<Map<String, Object>> getHistory(String sessionid) {
+        return getHistory(sessionid, null, 0);
+    }
+
+    @Override
+    public List<Map<String, Object>> getHistory(String sessionid, Long beforeId, int limit) {
         String userId = currentUserId();
-        List<SMessage> messages = chatSessionRepository.getMessageHistory(userId, sessionid);
+        List<SMessage> messages = limit > 0
+                ? chatSessionRepository.getMessageHistory(userId, sessionid, beforeId, limit)
+                : chatSessionRepository.getMessageHistory(userId, sessionid);
         return messages.stream().map(msg -> {
             Map<String, Object> m = new HashMap<>();
+            m.put("id", msg.getId());
             m.put("role", msg.getType());
             m.put("content", msg.getText());
             m.put("timestamp", msg.getTimestamp());
@@ -113,7 +126,7 @@ public class ChatServiceimpl implements ChatService {
         ChatClient chatClient = modelRouter.client(modelName);
 
         // 与同步接口保持一致：历史先读出来，再把当前问题落库，避免问题重复进入上下文
-        List<Message> history = chatSessionRepository.getHistory(userId, sessionid);
+        List<Message> history = trimHistory(chatSessionRepository.getHistory(userId, sessionid));
         initSessionIfNeeded(userId, sessionid, question, history);
         chatSessionRepository.save(userId, sessionid, new UserMessage(question));
 
@@ -146,6 +159,17 @@ public class ChatServiceimpl implements ChatService {
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(v -> {
                 }, e -> log.error("保存助手回复失败: userId={}, sessionid={}", userId, sessionid, e));
+    }
+
+    /**
+     * 只保留最近 N 条历史送给模型，控制 Prompt 长度。
+     * 历史接口仍然返回全量/分页数据，裁剪只影响 AI 上下文。
+     */
+    private List<Message> trimHistory(List<Message> history) {
+        if (contextMaxMessages <= 0 || history.size() <= contextMaxMessages) {
+            return history;
+        }
+        return new ArrayList<>(history.subList(history.size() - contextMaxMessages, history.size()));
     }
 
     /**

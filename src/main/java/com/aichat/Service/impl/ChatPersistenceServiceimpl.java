@@ -1,6 +1,8 @@
 package com.aichat.Service.impl;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,7 +30,7 @@ public class ChatPersistenceServiceimpl implements ChatPersistenceService {
     // 每条消息都 upsert 会话：首条创建元数据，后续刷新 update_time，保证会话列表按最近活跃排序。
     @Override
     @Transactional
-    public void saveMessage(ChatMessage message, String title) {
+    public ChatMessage saveMessage(ChatMessage message, String title) {
         chatMessageMapper.insert(message);
         ChatSession session = new ChatSession(
                 message.getUserId(),
@@ -37,12 +39,25 @@ public class ChatPersistenceServiceimpl implements ChatPersistenceService {
                 message.getCreateTime(),
                 message.getCreateTime());
         chatSessionMapper.upsert(session);
+        return message;
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ChatMessage> getMessages(String userId, String sessionId) {
         return chatMessageMapper.selectBySession(userId, sessionId);
+    }
+
+    // Mapper 按 id 倒序取游标附近的一页，这里反转为升序，保证接口返回顺序稳定
+    @Override
+    @Transactional(readOnly = true)
+    public List<ChatMessage> getMessages(String userId, String sessionId, Long beforeId, int limit) {
+        List<ChatMessage> messages = beforeId == null
+                ? chatMessageMapper.selectLatestBySession(userId, sessionId, limit)
+                : chatMessageMapper.selectBySessionBeforeId(userId, sessionId, beforeId, limit);
+        List<ChatMessage> ascending = new ArrayList<>(messages);
+        Collections.reverse(ascending);
+        return ascending;
     }
 
     @Override

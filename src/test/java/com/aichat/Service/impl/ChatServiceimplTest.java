@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +27,7 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Config.ModelRouter;
+import com.aichat.Dto.SMessage;
 import com.aichat.Dto.UserDto;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
@@ -97,6 +99,42 @@ class ChatServiceimplTest {
         verify(repository).save("u1", "s1", new AssistantMessage("你好"));
         // 已有历史时不应再生成标题
         verifyNoInteractions(chatTitleService);
+    }
+
+    @Test
+    void shouldTrimHistoryToRecentMessagesBeforeCallingModel() {
+        ReflectionTestUtils.setField(service, "contextMaxMessages", 2);
+        List<Message> history = List.of(
+                new UserMessage("旧问题"),
+                new AssistantMessage("旧回复"),
+                new UserMessage("较新问题"),
+                new AssistantMessage("较新回复"));
+        when(repository.getHistory("u1", "s1")).thenReturn(history);
+
+        service.sendSession("s1", new UserMessage("新问题"), null);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass(List.class);
+        verify(requestSpec).messages(historyCaptor.capture());
+        assertThat(historyCaptor.getValue()).containsExactly(
+                new UserMessage("较新问题"), new AssistantMessage("较新回复"));
+    }
+
+    @Test
+    void shouldReturnPagedHistoryWithIds() {
+        when(repository.getMessageHistory("u1", "s1", 100L, 2))
+                .thenReturn(List.of(
+                        new SMessage(8L, "较早", "user", 1000L),
+                        new SMessage(9L, "较新", "assistant", 2000L)));
+
+        List<Map<String, Object>> history = service.getHistory("s1", 100L, 2);
+
+        assertThat(history).hasSize(2);
+        assertThat(history.get(0))
+                .containsEntry("id", 8L)
+                .containsEntry("role", "user")
+                .containsEntry("content", "较早");
+        assertThat(history.get(1)).containsEntry("id", 9L);
     }
 
     @Test

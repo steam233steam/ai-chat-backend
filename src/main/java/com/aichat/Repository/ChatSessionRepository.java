@@ -18,6 +18,12 @@ public interface ChatSessionRepository {
 
     List<SMessage> getMessageHistory(String userId, String sessionid);
 
+    /**
+     * 游标分页：取 beforeId 之前（不含）的最近 limit 条消息，按 id 升序返回。
+     * beforeId 为 null 时取最新一页。
+     */
+    List<SMessage> getMessageHistory(String userId, String sessionid, Long beforeId, int limit);
+
     boolean clear(String userId, String sessionid);
 
     List<String> getSessions(String userId);
