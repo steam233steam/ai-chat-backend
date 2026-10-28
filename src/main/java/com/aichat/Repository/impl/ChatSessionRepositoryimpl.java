@@ -41,7 +41,7 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
     private ChatPersistenceService chatPersistenceService;
 
     @Override
-    public void save(String userId, String sessionid, Message message) {
+    public void save(String userId, String sessionid, Message message, String model) {
         String type = getMessageType(message);
         long now = System.currentTimeMillis();
 
@@ -52,11 +52,12 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
                 sessionid,
                 type,
                 message.getText(),
+                model,
                 toLocalDateTime(now));
         ChatMessage saved = chatPersistenceService.saveMessage(chatMessage, title);
 
-        // MySQL 回填的自增 id 一并写入缓存，作为分页游标
-        SMessage sMessage = new SMessage(saved.getId(), message.getText(), type, now);
+        // MySQL 回填的自增 id + model 一并写入缓存，作为分页游标与模型追溯依据
+        SMessage sMessage = new SMessage(saved.getId(), message.getText(), type, model, now);
 
         // 再更新 Redis；缓存失败只影响性能，不影响数据正确性
         try {
@@ -235,7 +236,9 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
                     .filter(SMessage.class::isInstance)
                     .map(SMessage.class::cast)
                     .collect(Collectors.toList());
-            // 旧版本缓存没有 id，无法做游标分页；视为未命中，回源 MySQL 后重建
+            // 旧版本缓存缺少 id 时无法做游标分页，视为未命中并回源重建。
+            // model 为 null 是历史消息的正常状态（加 model 列之前的数据），不能作为缓存失效条件，
+            // 否则这些会话每次读取都会回源 MySQL，永远无法命中缓存。
             if (result.stream().anyMatch(m -> m.getId() == null)) {
                 log.info("消息缓存缺少 id，回源 MySQL 重建: key={}", key);
                 return List.of();
@@ -313,6 +316,7 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
                 message.getId(),
                 message.getContent(),
                 message.getRole(),
+                message.getModel(),
                 toEpochMilli(message.getCreateTime()));
     }
 

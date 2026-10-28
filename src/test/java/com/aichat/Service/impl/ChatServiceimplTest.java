@@ -3,7 +3,6 @@ package com.aichat.Service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -60,8 +59,9 @@ class ChatServiceimplTest {
 
         // ModelRouter 用 mock，client() 直接返回我们 mock 的 chatClient（隔离路由器本身）
         modelRouter = mock(ModelRouter.class);
+        when(modelRouter.resolve(null)).thenReturn("qwen2.5-coder:7b");
+        when(modelRouter.resolve("deepseek-chat")).thenReturn("deepseek-chat");
         when(modelRouter.client(anyString())).thenReturn(chatClient);
-        when(modelRouter.client(null)).thenReturn(chatClient);
 
         service = new ChatServiceimpl();
         ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
@@ -95,8 +95,9 @@ class ChatServiceimplTest {
         assertThat(historyCaptor.getValue()).containsExactlyElementsOf(history);
 
         verify(requestSpec).user("新问题");
-        verify(repository).save(eq("u1"), eq("s1"), eq(new UserMessage("新问题")));
-        verify(repository).save("u1", "s1", new AssistantMessage("你好"));
+        // 未显式传模型时，落库的应该是解析后的默认模型，而不是 null
+        verify(repository).save("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
+        verify(repository).save("u1", "s1", new AssistantMessage("你好"), "qwen2.5-coder:7b");
         // 已有历史时不应再生成标题
         verifyNoInteractions(chatTitleService);
     }
@@ -124,8 +125,8 @@ class ChatServiceimplTest {
     void shouldReturnPagedHistoryWithIds() {
         when(repository.getMessageHistory("u1", "s1", 100L, 2))
                 .thenReturn(List.of(
-                        new SMessage(8L, "较早", "user", 1000L),
-                        new SMessage(9L, "较新", "assistant", 2000L)));
+                        new SMessage(8L, "较早", "user", "qwen2.5-coder:7b", 1000L),
+                        new SMessage(9L, "较新", "assistant", "deepseek-chat", 2000L)));
 
         List<Map<String, Object>> history = service.getHistory("s1", 100L, 2);
 
@@ -133,8 +134,11 @@ class ChatServiceimplTest {
         assertThat(history.get(0))
                 .containsEntry("id", 8L)
                 .containsEntry("role", "user")
-                .containsEntry("content", "较早");
-        assertThat(history.get(1)).containsEntry("id", 9L);
+                .containsEntry("content", "较早")
+                .containsEntry("model", "qwen2.5-coder:7b");
+        assertThat(history.get(1))
+                .containsEntry("id", 9L)
+                .containsEntry("model", "deepseek-chat");
     }
 
     @Test
@@ -146,7 +150,19 @@ class ChatServiceimplTest {
         InOrder order = inOrder(repository, chatTitleService);
         order.verify(repository).saveTitle("u1", "s1", "新问题");
         order.verify(chatTitleService).generateTitleAsync("u1", "s1", "新问题", "新问题");
-        order.verify(repository).save(eq("u1"), eq("s1"), eq(new UserMessage("新问题")));
-        order.verify(repository).save("u1", "s1", new AssistantMessage("你好"));
+        order.verify(repository).save("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
+        order.verify(repository).save("u1", "s1", new AssistantMessage("你好"), "qwen2.5-coder:7b");
+    }
+
+    @Test
+    void shouldUseExplicitModelForRouterAndPersistence() {
+        when(repository.getHistory("u1", "s1")).thenReturn(List.of(new UserMessage("上一轮")));
+
+        service.sendSession("s1", new UserMessage("新问题"), "deepseek-chat");
+
+        verify(modelRouter).resolve("deepseek-chat");
+        verify(modelRouter).client("deepseek-chat");
+        verify(repository).save("u1", "s1", new UserMessage("新问题"), "deepseek-chat");
+        verify(repository).save("u1", "s1", new AssistantMessage("你好"), "deepseek-chat");
     }
 }

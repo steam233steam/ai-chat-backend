@@ -12,7 +12,11 @@ import com.aichat.Dto.SMessage;
  */
 public interface ChatSessionRepository {
 
-    void save(String userId, String sessionid, Message message);
+    /**
+     * 保存一条消息到 MySQL 主存储 + Redis 缓存。
+     * @param model 本轮使用的模型名（来自 ModelRouter，会一并落库和写进缓存）
+     */
+    void save(String userId, String sessionid, Message message, String model);
 
     List<Message> getHistory(String userId, String sessionid);
 

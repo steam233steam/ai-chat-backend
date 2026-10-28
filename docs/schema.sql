@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS tb_chat_message (
   session_id  VARCHAR(64) NOT NULL COMMENT '所属会话',
   role        VARCHAR(16) NOT NULL COMMENT 'user/assistant/system',
   content     TEXT NOT NULL COMMENT '消息内容',
+  model       VARCHAR(64) COMMENT '本轮使用的模型名（多模型切换后每条消息记录实际走的是哪个模型）',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间',
   KEY idx_user_session (user_id, session_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 已有库升级：见 docs/migration/2026-10-28-add-chat-message-model.sql

@@ -52,12 +52,14 @@ public class ChatServiceimpl implements ChatService {
     public String sendSession(String sessionid, UserMessage userMessage, String modelName) {
         String userId = currentUserId();
         String question = userMessage.getText();
-        ChatClient chatClient = modelRouter.client(modelName);
+        // 先解析出本轮真正使用的模型：前端不传时也要把默认模型写进消息，而不是记 null
+        String model = modelRouter.resolve(modelName);
+        ChatClient chatClient = modelRouter.client(model);
 
         // 先读历史、再落库：当前问题只通过下面的 .user(question) 进入上下文，避免重复发送
         List<Message> history = trimHistory(chatSessionRepository.getHistory(userId, sessionid));
         initSessionIfNeeded(userId, sessionid, question, history);
-        chatSessionRepository.save(userId, sessionid, userMessage);
+        chatSessionRepository.save(userId, sessionid, userMessage, model);
 
         try {
             String response = chatClient.prompt()
@@ -65,10 +67,10 @@ public class ChatServiceimpl implements ChatService {
                     .user(question)
                     .call()
                     .content();
-            chatSessionRepository.save(userId, sessionid, new AssistantMessage(response));
+            chatSessionRepository.save(userId, sessionid, new AssistantMessage(response), model);
             return response;
         } catch (Exception e) {
-            log.error("AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, modelName, e);
+            log.error("AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e);
             throw new BusinessException(500, "AI 服务暂时不可用，请稍后重试");
         }
     }
@@ -95,6 +97,7 @@ public class ChatServiceimpl implements ChatService {
             m.put("id", msg.getId());
             m.put("role", msg.getType());
             m.put("content", msg.getText());
+            m.put("model", msg.getModel());
             m.put("timestamp", msg.getTimestamp());
             return m;
         }).toList();
@@ -123,12 +126,14 @@ public class ChatServiceimpl implements ChatService {
     @Override
     public Flux<String> sendSessionStream(String sessionid, String question, String modelName) {
         String userId = currentUserId();
-        ChatClient chatClient = modelRouter.client(modelName);
+        // 与同步接口一致：先解析默认模型，落库和日志都记录实际使用的模型
+        String model = modelRouter.resolve(modelName);
+        ChatClient chatClient = modelRouter.client(model);
 
         // 与同步接口保持一致：历史先读出来，再把当前问题落库，避免问题重复进入上下文
         List<Message> history = trimHistory(chatSessionRepository.getHistory(userId, sessionid));
         initSessionIfNeeded(userId, sessionid, question, history);
-        chatSessionRepository.save(userId, sessionid, new UserMessage(question));
+        chatSessionRepository.save(userId, sessionid, new UserMessage(question), model);
 
         StringBuilder fullResponse = new StringBuilder();
 
@@ -138,13 +143,13 @@ public class ChatServiceimpl implements ChatService {
                 .stream()
                 .content()
                 .doOnNext(fullResponse::append)
-                .doOnError(e -> log.error("流式 AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, modelName, e))
+                .doOnError(e -> log.error("流式 AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e))
                 .onErrorResume(e -> Flux.just("AI 服务暂时不可用，请稍后重试"))
                 .doFinally(signal -> {
                     // 正常结束或客户端主动断开时都保存已生成的部分，避免上下文丢失
                     if (fullResponse.length() > 0
                             && (signal == SignalType.ON_COMPLETE || signal == SignalType.CANCEL)) {
-                        saveAssistantReply(userId, sessionid, fullResponse.toString());
+                        saveAssistantReply(userId, sessionid, fullResponse.toString(), model);
                     }
                 });
     }
@@ -154,11 +159,11 @@ public class ChatServiceimpl implements ChatService {
         return modelRouter.availableModels();
     }
 
-    private void saveAssistantReply(String userId, String sessionid, String content) {
-        Mono.fromRunnable(() -> chatSessionRepository.save(userId, sessionid, new AssistantMessage(content)))
+    private void saveAssistantReply(String userId, String sessionid, String content, String model) {
+        Mono.fromRunnable(() -> chatSessionRepository.save(userId, sessionid, new AssistantMessage(content), model))
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(v -> {
-                }, e -> log.error("保存助手回复失败: userId={}, sessionid={}", userId, sessionid, e));
+                }, e -> log.error("保存助手回复失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e));
     }
 
     /**

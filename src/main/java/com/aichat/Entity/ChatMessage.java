@@ -11,16 +11,23 @@ public class ChatMessage {
     private String sessionId;
     private String role;
     private String content;
+    private String model;
     private LocalDateTime createTime;
 
     public ChatMessage() {
     }
 
     public ChatMessage(String userId, String sessionId, String role, String content, LocalDateTime createTime) {
+        this(userId, sessionId, role, content, null, createTime);
+    }
+
+    public ChatMessage(String userId, String sessionId, String role, String content, String model,
+            LocalDateTime createTime) {
         this.userId = userId;
         this.sessionId = sessionId;
         this.role = role;
         this.content = content;
+        this.model = model;
         this.createTime = createTime;
     }
 
@@ -62,6 +69,14 @@ public class ChatMessage {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getModel() {
+        return model;
+    }
+
+    public void setModel(String model) {
+        this.model = model;
     }
 
     public LocalDateTime getCreateTime() {

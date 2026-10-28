@@ -120,19 +120,22 @@ class ChatSessionRepositoryimplTest {
         String titleKey = "aichat:chat:title:u1:s1";
         when(hashOperations.get(titleKey, "s1")).thenReturn(null);
         when(chatPersistenceService.getTitle("u1", "s1")).thenReturn(null);
-        ChatMessage persisted = new ChatMessage("u1", "s1", "user", "新问题",
+        ChatMessage persisted = new ChatMessage("u1", "s1", "user", "新问题", "qwen2.5-coder:7b",
                 LocalDateTime.of(2026, 10, 25, 17, 0));
         persisted.setId(7L);
         when(chatPersistenceService.saveMessage(any(ChatMessage.class), isNull()))
                 .thenReturn(persisted);
 
-        repository.save("u1", "s1", new UserMessage("新问题"));
+        repository.save("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
 
         InOrder order = inOrder(chatPersistenceService, listOperations);
-        order.verify(chatPersistenceService).saveMessage(any(ChatMessage.class), isNull());
+        ArgumentCaptor<ChatMessage> dbMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        order.verify(chatPersistenceService).saveMessage(dbMessageCaptor.capture(), isNull());
         ArgumentCaptor<SMessage> messageCaptor = ArgumentCaptor.forClass(SMessage.class);
         order.verify(listOperations).rightPush(eq(messageKey), messageCaptor.capture());
+        assertThat(dbMessageCaptor.getValue().getModel()).isEqualTo("qwen2.5-coder:7b");
         assertThat(messageCaptor.getValue().getId()).isEqualTo(7L);
+        assertThat(messageCaptor.getValue().getModel()).isEqualTo("qwen2.5-coder:7b");
     }
 
     @Test
@@ -181,6 +184,7 @@ class ChatSessionRepositoryimplTest {
     @Test
     void shouldRebuildFullCacheWhenCachedMessagesHaveNoId() {
         String key = "aichat:chat:session:u1:s1";
+        // 旧版缓存没有 id，无法做游标分页，必须回源重建
         when(listOperations.range(key, 0, -1)).thenReturn(List.of(
                 new SMessage("旧缓存消息", "user", 1000L)));
         when(chatPersistenceService.getMessages("u1", "s1"))
@@ -193,6 +197,20 @@ class ChatSessionRepositoryimplTest {
         InOrder order = inOrder(redisTemplate, listOperations);
         order.verify(redisTemplate).delete(key);
         order.verify(listOperations).rightPushAll(eq(key), any(Object[].class));
+    }
+
+    @Test
+    void shouldServeCachedHistoryWithNullModelForLegacyMessages() {
+        String key = "aichat:chat:session:u1:s1";
+        // 加 model 列之前的历史消息 model 就是 null；这是合法缓存，不应反复回源
+        when(listOperations.range(key, 0, -1)).thenReturn(List.of(
+                new SMessage(5L, "历史消息", "user", null, 1000L)));
+
+        List<SMessage> history = repository.getMessageHistory("u1", "s1");
+
+        assertThat(history).extracting(SMessage::getId).containsExactly(5L);
+        assertThat(history.get(0).getModel()).isNull();
+        verifyNoInteractions(chatPersistenceService);
     }
 
     @Test
@@ -214,6 +232,7 @@ class ChatSessionRepositoryimplTest {
     }
 
     private SMessage cached(long id, String type, String content, long timestamp) {
-        return new SMessage(id, content, type, timestamp);
+        // 构造带 id + model 的新格式缓存，确保不会触发回源
+        return new SMessage(id, content, type, "qwen2.5-coder:7b", timestamp);
     }
 }
