@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: 多模型路由 + 历史分页 + 上下文裁剪 + 异步 AI 标题生成完成 ✅
+- **当前阶段**: 多模型路由 + 历史分页 + 上下文裁剪 + 异步 AI 标题生成 + 消息级模型追踪完成 ✅
 
 ## 架构分层
 
@@ -27,13 +27,13 @@ com.aichat/
 │   └── UserController.java         # 用户接口（/user 前缀 + @Valid 校验）
 ├── Dto/
 │   ├── Result.java                 # 统一返回结果（支持自定义 code）
-│   ├── SMessage.java              # 消息实体（含 id 游标 + 时间戳，去 Lombok）
+│   ├── SMessage.java              # 消息实体（含 id 游标 + 时间戳 + 模型名，去 Lombok）
 │   ├── User.java                   # 用户实体
 │   ├── UserDto.java               # 用户 DTO（含 isNewUser 字段）
 │   └── LoginFormDTO.java          # 登录表单 DTO（@NotBlank + @Pattern 校验）
 ├── Entity/
 │   ├── ChatSession.java            # 会话实体（tb_chat_session）
-│   └── ChatMessage.java            # 消息实体（tb_chat_message）
+│   └── ChatMessage.java            # 消息实体（tb_chat_message，含 model）
 ├── Exception/
 │   ├── BusinessException.java      # 业务异常（含错误码）
 │   └── GlobalExceptionHandler.java # 全局异常处理器（含 @Valid/404/413）
@@ -53,7 +53,7 @@ com.aichat/
 │   ├── ChatPersistenceService.java # 聊天持久化服务接口（MySQL 事务）
 │   ├── ChatTitleService.java       # ⭐ AI 标题生成服务接口
 │   └── impl/
-│       ├── ChatServiceImpl.java    # 含上下文裁剪 + 模型路由
+│       ├── ChatServiceimpl.java    # 含上下文裁剪 + 模型路由 + 消息级模型记录
 │       ├── UserServiceimpl.java
 │       ├── ChatPersistenceServiceimpl.java
 │       └── ChatTitleServiceimpl.java # ⭐ 异步标题生成（@Async 独立线程池）
@@ -65,7 +65,7 @@ com.aichat/
     └── RedisConstants.java         # Redis Key 常量
 ```
 
-## 当前状态（2026-10-26 18:37 更新）
+## 当前状态（2026-10-28 13:34 更新）
 
 ### ✅ 已完成功能
 #### 用户认证系统
@@ -94,6 +94,13 @@ com.aichat/
 - [x] `POST /chat/ask` 和 `GET /chat/ask-stream` 支持 `modelName` 参数
 - [x] 模型名不在白名单时报 400（不静默兜底，避免用户以为切换成功）
 - [x] 系统提示词集中在 `ModelRouter` 构建 ChatClient 时注入
+
+#### 消息级模型追踪 ⭐ 2026-10-28
+- [x] `tb_chat_message` 新增 `model` 列，记录每条消息实际使用的模型
+- [x] `ChatMessage` / Redis `SMessage` / `ChatMessageMapper` SQL 全链路带 `model`
+- [x] `ChatServiceimpl` 通过 `ModelRouter.resolve()` 解析默认模型后落库，未显式传 `modelName` 也记录实际模型
+- [x] `/chat/history` 响应新增 `model` 字段；历史消息（加列之前）为 `null`
+- [x] 旧缓存只在缺少 `id` 时回源重建；`model=null` 是历史数据合法状态，不会导致缓存永久未命中
 
 #### 历史消息分页 ⭐ 2026-10-25
 - [x] `SMessage` 新增 `id` 字段（MySQL 自增 id 作为分页游标）
@@ -146,7 +153,7 @@ com.aichat/
 - [x] `docs/schema.sql` - 数据库初始化脚本
 - [x] `docs/DEVELOPMENT_PLAN.md` - 后续开发计划
 
-### 📝 核心改进（2026-10-25 更新）
+### 📝 核心改进（2026-10-28 更新）
 
 **1. 多模型架构**
 - 不再使用单一 `ChatClient` Bean，改为 `ModelRouter` 按模型名分发
@@ -173,6 +180,12 @@ com.aichat/
 **5. 用户接口增强**
 - `UserController` 使用 `@Valid` 注解触发 Bean Validation
 - `GlobalExceptionHandler` 新增处理 `MethodArgumentNotValidException`、`NoResourceFoundException`、`MaxUploadSizeExceededException`
+
+**6. 消息级模型追踪（2026-10-28）**
+- 多模型切换后，只记录"当前会话用了哪个模型"不够，需要按消息追溯
+- 同步和流式接口都在落库前调用 `ModelRouter.resolve()`，把默认模型解析成实际模型名
+- MySQL、Redis 缓存、历史接口三处字段保持一致；旧数据保留 `null`，不伪造模型
+- 旧缓存兼容只检查 `id`，避免历史消息 `model=null` 导致每次读都回源
 
 ### API 接口总览（对外行为）
 
@@ -213,6 +226,7 @@ com.aichat/
 11. 多模型路由：`ModelRouter` 按白名单分发 Ollama / DeepSeek
 12. 上下文裁剪：默认只送最近 20 条历史给模型
 13. 异步标题：独立线程池，不阻塞主流程
+14. 模型追踪：每条消息记录实际使用的模型，默认模型也会解析后落库
 
 ## 数据库表结构
 
@@ -250,13 +264,16 @@ CREATE TABLE tb_chat_message (
   session_id  VARCHAR(64) NOT NULL COMMENT '所属会话',
   role        VARCHAR(16) NOT NULL COMMENT 'user/assistant/system',
   content     TEXT NOT NULL COMMENT '消息内容',
+  model       VARCHAR(64) COMMENT '本轮使用的模型名',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间',
   KEY idx_user_session (user_id, session_id, id)
 );
 ```
 
 **完整建表脚本**：`docs/schema.sql`  
-**迁移脚本**：`docs/migration/2026-10-22-fix-tb-user-password-null.sql`
+**迁移脚本**：
+- `docs/migration/2026-10-22-fix-tb-user-password-null.sql`
+- `docs/migration/2026-10-28-add-chat-message-model.sql`
 
 ## 依赖项
 ```xml
@@ -308,6 +325,21 @@ spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
 | `MYSQL_USERNAME` | `root` | MySQL 用户名 |
 | `MYSQL_PASSWORD` | - | MySQL 密码 |
 
+## BYOK 设计思路（仅设计，未实现）
+
+当前项目是**平台内置 key**（管理员在后端配置，用户无感），这是学习项目最合理的形态——一个人/一台服务器/一个 key，BYOK 没有真实用户和付费体系根本运转不起来。
+
+若未来要做 BYOK，设计思路如下（面试可展开）：
+
+1. **key 加密存储**：用户填 key，后端用 AES 加密存到 `tb_user` 或独立表（绝不存明文）
+2. **有效性校验**：入库时发 1 个 token 的测试请求，确认 key 可用
+3. **限额 + 计费**：每用户 token 配额，Redis 计数防刷
+4. **故障归因**：区分"用户 key 失效" vs "服务自身故障"，给不同提示
+5. **平台 key 兜底**：用户 key 失效/没填时，回落平台内置 key
+6. **多租户隔离**：key 按 userId 维度存，A 用户的 key 绝不给 B 用
+
+**取舍**：BYOK 是产品级功能，涉及加密/计费/限额/多租户，学习项目里"讲得清设计"比"做出来"更有面试价值。
+
 ## 文档
 - `README.md` - 项目说明 + API 总览 + 配置项
 - `docs/API.md` - 后端接口文档（供前端使用）
@@ -335,6 +367,8 @@ spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
 - [x] 历史消息分页 ✅ 2026-10-25
 - [x] 上下文裁剪 ✅ 2026-10-25
 - [x] 异步 AI 标题生成 ✅ 2026-10-25
+- [x] 消息级模型追踪（model 列 + 历史接口返回）✅ 2026-10-28
+- [ ] BYOK（当前仅设计，见上）
 - [ ] 聊天/登录接口限流 + 安全加固
 - [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
 - [ ] Docker Compose 部署
@@ -343,4 +377,4 @@ spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
 - [ ] springdoc-openapi 接口文档
 
 ---
-*最后更新: 2026-10-26 18:37*
+*最后更新: 2026-10-28 13:34（消息级模型追踪 + BYOK 设计说明）*

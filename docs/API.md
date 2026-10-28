@@ -504,7 +504,7 @@ data: [DONE]
 
 ### 3.5 获取会话历史 ⭐ 支持分页
 
-获取指定会话的所有消息历史，包含时间戳和消息 ID（分页游标）。
+获取指定会话的所有消息历史，包含时间戳、消息 ID（分页游标）和实际使用的模型。
 
 - **接口地址**：`GET /chat/history`
 - **请求头**：`Authorization: {token}`
@@ -548,12 +548,14 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
       "id": 100,
       "role": "user",
       "content": "你好，请介绍一下你自己",
+      "model": "qwen2.5-coder:7b",
       "timestamp": 1727356800000
     },
     {
       "id": 101,
       "role": "assistant",
       "content": "你好！我是一个乐于助人的 AI 助手...",
+      "model": "qwen2.5-coder:7b",
       "timestamp": 1727356805000
     }
   ]
@@ -564,6 +566,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - `id`: 消息自增 ID（分页游标）
 - `role`: 消息角色（user/assistant）
 - `content`: 消息内容
+- `model`: 该条消息实际使用的模型名；加 `model` 列之前的历史消息为 `null`
 - `timestamp`: 时间戳（毫秒）
 - 不传 `limit` 时返回全量历史（现有前端无需改动）
 - `beforeId` 必须配 `limit` 使用，否则报错
@@ -725,6 +728,7 @@ CREATE TABLE tb_chat_message (
   session_id VARCHAR(64) NOT NULL,
   role VARCHAR(16) NOT NULL,
   content TEXT NOT NULL,
+  model VARCHAR(64) NULL COMMENT '本轮使用的模型名',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_user_session (user_id, session_id, id)
 );
@@ -741,7 +745,7 @@ CREATE TABLE tb_chat_message (
 | `aichat:login:token:{token}` | Hash | 用户信息 | 7 天 |
 | `aichat:user:new:{uid}` | String | 新用户标记 | 365 天 |
 | `aichat:chat:sessions:{userId}` | ZSet | 会话列表（按更新时间排序） | 7 天 |
-| `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含 id 游标 + 时间戳） | 7 天 |
+| `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含 id 游标 + 时间戳 + 模型名） | 7 天 |
 | `aichat:chat:title:{userId}:{sessionId}` | Hash | 会话标题 | 7 天 |
 
 **消息结构（SMessage）**：
@@ -750,9 +754,12 @@ CREATE TABLE tb_chat_message (
   "id": 100,
   "text": "消息内容",
   "type": "user|assistant|system",
+  "model": "qwen2.5-coder:7b",
   "timestamp": 1727356800000
 }
 ```
+
+> `model` 为 `null` 表示该消息产生于 model 列上线之前；新消息记录 `ModelRouter.resolve()` 后的实际模型。
 
 ### 5.4 缓存一致性策略
 
@@ -764,6 +771,7 @@ CREATE TABLE tb_chat_message (
 | 会话列表缓存过期 | 从 MySQL 整体重建（避免列表不完整） |
 | 清空会话 | 先删 MySQL 再清 Redis |
 | 旧版缓存缺少 id | 视为未命中，回源 MySQL 重建 |
+| 历史消息 model 为 null | 正常返回；不触发缓存重建（仅缺 id 才重建） |
 | 分页查询 | 不回写缓存（避免把"一页"当成全量历史） |
 
 ---
@@ -784,6 +792,7 @@ CREATE TABLE tb_chat_message (
 2. 模型名在 `app.models.ollama-models` 里 → 走 Ollama
 3. 其余白名单模型 → 走 OpenAI 兼容协议（DeepSeek）
 4. 模型名不在 `app.models.available` 白名单 → 报 400（不静默兜底）
+5. 解析后的实际模型随用户消息和助手回复一起落库，并写入 Redis 缓存
 
 ### 6.2 配置项
 
