@@ -1,10 +1,10 @@
 package com.aichat.Service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -21,19 +21,21 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClient.CallResponseSpec;
 import org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Config.ModelRouter;
 import com.aichat.Dto.SMessage;
 import com.aichat.Dto.UserDto;
+import com.aichat.Exception.BusinessException;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
 import com.aichat.utils.UserHolder;
 
 /**
- * 回归测试：同步对话不能把当前问题发送两次
+ * 回归测试：
+ * 1. 同步对话不能把当前问题发送两次
+ * 2. 跨模型历史以带 [模型名] 标签的 system message 注入，而非裸 List<Message>
  */
 class ChatServiceimplTest {
 
@@ -52,10 +54,11 @@ class ChatServiceimplTest {
         requestSpec = mock(ChatClientRequestSpec.class);
         CallResponseSpec callResponseSpec = mock(CallResponseSpec.class);
         when(chatClient.prompt()).thenReturn(requestSpec);
-        when(requestSpec.messages(anyList())).thenReturn(requestSpec);
         when(requestSpec.user(anyString())).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(callResponseSpec);
         when(callResponseSpec.content()).thenReturn("你好");
+        // system message 也返回 requestSpec，支持带历史上下文的调用
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
 
         // ModelRouter 用 mock，client() 直接返回我们 mock 的 chatClient（隔离路由器本身）
         modelRouter = mock(ModelRouter.class);
@@ -80,21 +83,31 @@ class ChatServiceimplTest {
     }
 
     @Test
-    void shouldSendHistoryOnlyOnceAndSaveAssistantReply() {
-        List<Message> history = List.of(new UserMessage("上一轮"), new AssistantMessage("上一轮回复"));
-        when(repository.getHistory("u1", "s1")).thenReturn(history);
+    void shouldSendLabeledHistoryOnceAndSaveAssistantReply() {
+        // 历史里包含两个模型：qwen 和 deepseek，验证跨模型标签都被喂进去
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of(
+                new SMessage(1L, "上一轮", "user", "qwen2.5-coder:7b", 1000L),
+                new SMessage(2L, "上一轮回复", "assistant", "qwen2.5-coder:7b", 2000L),
+                new SMessage(3L, "中间提问", "user", "deepseek-chat", 3000L),
+                new SMessage(4L, "中间回复", "assistant", "deepseek-chat", 4000L)));
 
         String answer = service.sendSession("s1", new UserMessage("新问题"), null);
 
         assertThat(answer).isEqualTo("你好");
 
-        // 当前问题只通过 user(question) 进入 Prompt，不能同时出现在 messages 里
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass(List.class);
-        verify(requestSpec).messages(historyCaptor.capture());
-        assertThat(historyCaptor.getValue()).containsExactlyElementsOf(history);
-
+        // 当前问题只通过 user(question) 进入 Prompt
         verify(requestSpec).user("新问题");
+
+        // 历史以带发言者标注的 system message 注入，当前模型自己的历史标"（我）"，其他标"（其他模型）"
+        ArgumentCaptor<String> systemCaptor = ArgumentCaptor.forClass(String.class);
+        verify(requestSpec).system(systemCaptor.capture());
+        String injected = systemCaptor.getValue();
+        // 当前模型是默认 qwen2.5-coder:7b → 它的历史是"我"
+        assertThat(injected).contains("发言者: qwen2.5-coder:7b（我）");
+        // 其他模型 deepseek-chat 的历史 → "其他模型"
+        assertThat(injected).contains("发言者: deepseek-chat（其他模型）");
+        assertThat(injected).contains("用户: 上一轮");
+
         // 未显式传模型时，落库的应该是解析后的默认模型，而不是 null
         verify(repository).save("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
         verify(repository).save("u1", "s1", new AssistantMessage("你好"), "qwen2.5-coder:7b");
@@ -103,22 +116,33 @@ class ChatServiceimplTest {
     }
 
     @Test
-    void shouldTrimHistoryToRecentMessagesBeforeCallingModel() {
-        ReflectionTestUtils.setField(service, "contextMaxMessages", 2);
-        List<Message> history = List.of(
-                new UserMessage("旧问题"),
-                new AssistantMessage("旧回复"),
-                new UserMessage("较新问题"),
-                new AssistantMessage("较新回复"));
-        when(repository.getHistory("u1", "s1")).thenReturn(history);
+    void shouldNotInjectSystemHistoryWhenNoHistory() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
 
         service.sendSession("s1", new UserMessage("新问题"), null);
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass(List.class);
-        verify(requestSpec).messages(historyCaptor.capture());
-        assertThat(historyCaptor.getValue()).containsExactly(
-                new UserMessage("较新问题"), new AssistantMessage("较新回复"));
+        // 无历史时不注入 system 历史块
+        verify(requestSpec, never()).system(anyString());
+    }
+
+    @Test
+    void shouldTrimLabeledHistoryToRecentMessagesBeforeCallingModel() {
+        ReflectionTestUtils.setField(service, "contextMaxMessages", 2);
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of(
+                new SMessage(1L, "旧问题", "user", "qwen2.5-coder:7b", 1000L),
+                new SMessage(2L, "旧回复", "assistant", "qwen2.5-coder:7b", 2000L),
+                new SMessage(3L, "较新问题", "user", "qwen2.5-coder:7b", 3000L),
+                new SMessage(4L, "较新回复", "assistant", "qwen2.5-coder:7b", 4000L)));
+
+        service.sendSession("s1", new UserMessage("新问题"), null);
+
+        ArgumentCaptor<String> systemCaptor = ArgumentCaptor.forClass(String.class);
+        verify(requestSpec).system(systemCaptor.capture());
+        String injected = systemCaptor.getValue();
+        // 只保留最近 2 条
+        assertThat(injected).doesNotContain("旧问题");
+        assertThat(injected).contains("较新问题");
+        assertThat(injected).contains("较新回复");
     }
 
     @Test
@@ -143,7 +167,7 @@ class ChatServiceimplTest {
 
     @Test
     void shouldCreateTitleBeforeSavingFirstUserMessage() {
-        when(repository.getHistory("u1", "s1")).thenReturn(List.of());
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
 
         service.sendSession("s1", new UserMessage("新问题"), null);
 
@@ -156,7 +180,9 @@ class ChatServiceimplTest {
 
     @Test
     void shouldUseExplicitModelForRouterAndPersistence() {
-        when(repository.getHistory("u1", "s1")).thenReturn(List.of(new UserMessage("上一轮")));
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(
+                List.of(new SMessage(1L, "上一轮", "user", "qwen2.5-coder:7b", 1000L)));
+        when(repository.getModel("u1", "s1")).thenReturn("deepseek-chat");
 
         service.sendSession("s1", new UserMessage("新问题"), "deepseek-chat");
 
@@ -164,5 +190,74 @@ class ChatServiceimplTest {
         verify(modelRouter).client("deepseek-chat");
         verify(repository).save("u1", "s1", new UserMessage("新问题"), "deepseek-chat");
         verify(repository).save("u1", "s1", new AssistantMessage("你好"), "deepseek-chat");
+        // 模型一致，不应重新锁定
+        verify(repository, never()).lockModel(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void shouldLockNewSessionModelOnFirstMessage() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        when(repository.getModel("u1", "s1")).thenReturn(null);
+
+        service.sendSession("s1", new UserMessage("新问题"), null);
+
+        verify(repository).lockModel("u1", "s1", "qwen2.5-coder:7b");
+    }
+
+    @Test
+    void shouldRejectModelSwitchOnLockedSession() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(
+                List.of(new SMessage(1L, "上一轮", "user", "qwen2.5-coder:7b", 1000L)));
+        when(repository.getModel("u1", "s1")).thenReturn("qwen2.5-coder:7b");
+
+        BusinessException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                BusinessException.class,
+                () -> service.sendSession("s1", new UserMessage("新问题"), "deepseek-chat"));
+
+        assertThat(ex.getCode()).isEqualTo(409);
+        assertThat(ex.getMessage()).contains("qwen2.5-coder:7b");
+        // resolve 在 enforceModelLock 之前执行了（这是正常流程），但 client() 不应被调用
+        verify(modelRouter).resolve("deepseek-chat");
+        verify(modelRouter, never()).client(anyString());
+        // 冲突时不应重新锁定，也不应调用 AI
+        verify(repository, never()).lockModel(anyString(), anyString(), anyString());
+        verifyNoInteractions(requestSpec);
+    }
+
+    @Test
+    void shouldKeepBasePersonaWhenInjectingHistory() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(
+                List.of(new SMessage(1L, "上一轮", "user", "qwen2.5-coder:7b", 1000L)));
+
+        service.sendSession("s1", new UserMessage("新问题"), null);
+
+        ArgumentCaptor<String> systemCaptor = ArgumentCaptor.forClass(String.class);
+        verify(requestSpec).system(systemCaptor.capture());
+        String injected = systemCaptor.getValue();
+
+        // spring-ai 的 .system(..) 会覆盖 ChatClient.defaultSystem，
+        // 所以带历史时必须显式把基础人设拼回去，否则从第二条消息起人设丢失
+        assertThat(injected).contains(ModelRouter.SYSTEM_PROMPT.strip());
+        assertThat(injected).contains("【本会话历史】");
+        // 顺序：先人设，再历史
+        assertThat(injected.indexOf("乐于助人的 AI 助手"))
+                .isLessThan(injected.indexOf("【本会话历史】"));
+    }
+
+    @Test
+    void shouldUseBatchModelLookupForSessionList() {
+        when(repository.getSessions("u1")).thenReturn(List.of("s1", "s2"));
+        when(repository.getModels("u1", List.of("s1", "s2")))
+                .thenReturn(Map.of("s1", "qwen2.5-coder:7b"));
+        when(repository.getTitle("u1", "s1")).thenReturn("标题1");
+        when(repository.getTitle("u1", "s2")).thenReturn("标题2");
+
+        List<Map<String, Object>> sessions = service.getSessions();
+
+        assertThat(sessions).hasSize(2);
+        assertThat(sessions.get(0)).containsEntry("model", "qwen2.5-coder:7b");
+        assertThat(sessions.get(1)).containsEntry("model", null);
+        // 列表里不能退化成逐会话查模型
+        verify(repository, never()).getModel(anyString(), anyString());
     }
 }

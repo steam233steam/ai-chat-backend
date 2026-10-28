@@ -27,6 +27,12 @@ public interface ChatPersistenceService {
     // 保存会话标题
     void saveTitle(String userId, String sessionId, String title);
 
+    // 锁定会话模型（只在首条消息时写入，已锁定的不会被覆盖）
+    void lockModel(String userId, String sessionId, String model);
+
+    // 获取会话锁定的模型，未锁定返回 null
+    String getSessionModel(String userId, String sessionId);
+
     // 清空会话
     boolean clear(String userId, String sessionId);
 

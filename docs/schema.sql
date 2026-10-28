@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS tb_chat_session (
   user_id     VARCHAR(32) NOT NULL COMMENT '用户 uid',
   session_id  VARCHAR(64) NOT NULL COMMENT '会话标识',
   title       VARCHAR(100) DEFAULT NULL COMMENT '会话标题',
+  model       VARCHAR(64) DEFAULT NULL COMMENT '会话锁定的模型（首条消息写入后固定，切换模型需新建会话）',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
               ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间',

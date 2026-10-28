@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -83,7 +85,8 @@ class ChatSessionRepositoryimplTest {
 
     @Test
     void shouldLoadTitleFromMysqlAndRefillRedis() {
-        String titleKey = "aichat:chat:title:u1:s1";
+        // 标题 hash key 只到 userId（与 model 缓存结构一致），field 用 sessionid
+        String titleKey = "aichat:chat:title:u1";
         when(hashOperations.get(titleKey, "s1")).thenReturn(null);
         when(chatPersistenceService.getTitle("u1", "s1")).thenReturn("会话标题");
 
@@ -117,7 +120,7 @@ class ChatSessionRepositoryimplTest {
     @Test
     void shouldPersistMessageBeforeUpdatingRedisCache() {
         String messageKey = "aichat:chat:session:u1:s1";
-        String titleKey = "aichat:chat:title:u1:s1";
+        String titleKey = "aichat:chat:title:u1";
         when(hashOperations.get(titleKey, "s1")).thenReturn(null);
         when(chatPersistenceService.getTitle("u1", "s1")).thenReturn(null);
         ChatMessage persisted = new ChatMessage("u1", "s1", "user", "新问题", "qwen2.5-coder:7b",
@@ -234,5 +237,56 @@ class ChatSessionRepositoryimplTest {
     private SMessage cached(long id, String type, String content, long timestamp) {
         // 构造带 id + model 的新格式缓存，确保不会触发回源
         return new SMessage(id, content, type, "qwen2.5-coder:7b", timestamp);
+    }
+
+    @Test
+    void shouldCacheMysqlAuthoritativeModelWhenLocking() {
+        // 并发首条消息：本次请求 deepseek，但库里已被先到的 qwen 锁定（upsert 的 COALESCE 只认先到的）
+        when(chatPersistenceService.getSessionModel("u1", "s1")).thenReturn("qwen2.5-coder:7b");
+
+        repository.lockModel("u1", "s1", "deepseek-chat");
+
+        verify(chatPersistenceService).lockModel("u1", "s1", "deepseek-chat");
+        // 缓存里必须是库里的值，否则后续请求会按错误的模型 409/放行
+        verify(hashOperations).put("aichat:chat:sessionmodel:u1", "s1", "qwen2.5-coder:7b");
+        verify(hashOperations, never()).put("aichat:chat:sessionmodel:u1", "s1", "deepseek-chat");
+    }
+
+    @Test
+    void shouldBatchReadModelsFromRedisInOneCall() {
+        when(hashOperations.entries("aichat:chat:sessionmodel:u1")).thenReturn(Map.of(
+                "s1", "qwen2.5-coder:7b",
+                "s2", "deepseek-chat"));
+
+        Map<String, String> models = repository.getModels("u1", List.of("s1", "s2"));
+
+        assertThat(models).containsEntry("s1", "qwen2.5-coder:7b")
+                .containsEntry("s2", "deepseek-chat");
+        // 全部命中缓存，不应回源 MySQL
+        verify(chatPersistenceService, never()).getSessions(anyString());
+        verify(hashOperations, never()).putAll(anyString(), any());
+    }
+
+    @Test
+    void shouldFillMissingModelsWithSingleMysqlQueryAndRefillCache() {
+        when(hashOperations.entries("aichat:chat:sessionmodel:u1")).thenReturn(Map.of(
+                "s1", "qwen2.5-coder:7b"));
+        // 未锁定的旧会话（model=null）不应被当成命中，也不应回填
+        when(chatPersistenceService.getSessions("u1")).thenReturn(List.of(
+                new ChatSession("u1", "s2", "标题2", "deepseek-chat",
+                        LocalDateTime.of(2026, 10, 28, 10, 0),
+                        LocalDateTime.of(2026, 10, 28, 10, 0)),
+                new ChatSession("u1", "s3", "标题3", (String) null,
+                        LocalDateTime.of(2026, 10, 28, 10, 0),
+                        LocalDateTime.of(2026, 10, 28, 10, 0))));
+
+        Map<String, String> models = repository.getModels("u1", List.of("s1", "s2", "s3"));
+
+        assertThat(models).containsEntry("s1", "qwen2.5-coder:7b")
+                .containsEntry("s2", "deepseek-chat")
+                .doesNotContainKey("s3");
+        // 3 个会话只回源 1 次
+        verify(chatPersistenceService, times(1)).getSessions("u1");
+        verify(hashOperations).putAll("aichat:chat:sessionmodel:u1", Map.of("s2", "deepseek-chat"));
     }
 }

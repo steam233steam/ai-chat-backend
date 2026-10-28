@@ -77,7 +77,21 @@ public class ChatPersistenceServiceimpl implements ChatPersistenceService {
     @Transactional
     public void saveTitle(String userId, String sessionId, String title) {
         LocalDateTime now = LocalDateTime.now();
-        chatSessionMapper.upsert(new ChatSession(userId, sessionId, title, now, now));
+        chatSessionMapper.upsert(new ChatSession(userId, sessionId, title, null, now, now));
+    }
+
+    // 锁模型：upsert 时 model 走 COALESCE(model, #{model})，已锁定则不覆盖，未锁定则写入
+    @Override
+    @Transactional
+    public void lockModel(String userId, String sessionId, String model) {
+        LocalDateTime now = LocalDateTime.now();
+        chatSessionMapper.upsert(new ChatSession(userId, sessionId, null, model, now, now));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String getSessionModel(String userId, String sessionId) {
+        return chatSessionMapper.selectModel(userId, sessionId);
     }
 
     // 先删消息再删会话，返回值用于区分“数据库有数据”和“只剩 Redis 缓存”

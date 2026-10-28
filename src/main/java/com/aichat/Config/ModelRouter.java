@@ -23,7 +23,12 @@ import com.aichat.Exception.BusinessException;
 @Component
 public class ModelRouter {
 
-    private static final String SYSTEM_PROMPT = """
+    /**
+     * 基础人设 system prompt。
+     * 必须公开：Spring AI 的 ChatClient.prompt().system(...) 会覆盖 defaultSystem，
+     * 带历史上下文调用时需要自己把这段基础人设拼回去，否则从第二条消息起人设会丢失。
+     */
+    public static final String SYSTEM_PROMPT = """
             你是一个乐于助人的 AI 助手。
             回答要准确、简洁，优先使用中文；不确定时如实说明，不要编造事实。
             请结合对话上下文理解用户的问题。

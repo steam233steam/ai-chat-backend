@@ -415,10 +415,21 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
+会话已锁定其他模型时返回 **HTTP 409**：
+
+```json
+{
+  "code": 409,
+  "message": "该会话已锁定为 qwen2.5-coder:7b，切换模型请新建会话",
+  "data": null
+}
+```
+
 **说明**：
 - 首次发消息时自动创建会话并生成默认标题（取问题前 20 个字符）
+- **会话锁模型**：首条消息把解析后的模型锁定到会话，之后同一会话传不同 `modelName` 返回 409
 - 会话列表按最近活跃时间倒序排列
-- 只把最近 N 条历史送给模型（默认 20，`app.chat.context-max-messages` 可调）
+- 只把最近 N 条历史（默认 20，`app.chat.context-max-messages` 可调）以"发言者 + 模型名"标注的 system message 注入，并保留基础人设 prompt
 - AI 标题异步生成（不阻塞主流程），只有标题仍是兜底值时才覆盖
 
 ---
@@ -488,17 +499,22 @@ data: [DONE]
   "data": [
     {
       "sessionId": "s001",
-      "title": "你好，请介绍..."
+      "title": "你好，请介绍...",
+      "model": "qwen2.5-coder:7b"
     },
     {
       "sessionId": "s002",
-      "title": "Java 多线程编程"
+      "title": "Java 多线程编程",
+      "model": "deepseek-chat"
     }
   ]
 }
 ```
 
-**说明**：Redis 缓存过期后会话列表自动从 MySQL 恢复，数据不会丢失。
+**说明**：
+- Redis 缓存过期后会话列表自动从 MySQL 恢复，数据不会丢失
+- `model`：该会话锁定的模型；升级前的旧会话未锁定，返回 `null`
+- 会话锁定模型后，要换模型请新建会话（见 3.2 的 409 说明）
 
 ---
 
@@ -715,6 +731,7 @@ CREATE TABLE tb_chat_session (
   user_id VARCHAR(32) NOT NULL,
   session_id VARCHAR(64) NOT NULL,
   title VARCHAR(100) DEFAULT NULL,
+  model VARCHAR(64) DEFAULT NULL COMMENT '会话锁定的模型',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_user_session (user_id, session_id),
@@ -736,6 +753,15 @@ CREATE TABLE tb_chat_message (
 
 完整脚本见 `docs/schema.sql`。
 
+**存量库升级（已上线的库需要手动执行）**：
+
+```sql
+ALTER TABLE tb_chat_session
+  ADD COLUMN model VARCHAR(64) DEFAULT NULL COMMENT '会话锁定的模型' AFTER title;
+```
+
+> 该列允许为 `NULL`：旧会话在升级后第一次发消息时才会锁定模型，不影响历史数据读取。
+
 ### 5.3 Redis 缓存结构
 
 | Key | 类型 | 说明 | TTL |
@@ -746,7 +772,8 @@ CREATE TABLE tb_chat_message (
 | `aichat:user:new:{uid}` | String | 新用户标记 | 365 天 |
 | `aichat:chat:sessions:{userId}` | ZSet | 会话列表（按更新时间排序） | 7 天 |
 | `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含 id 游标 + 时间戳 + 模型名） | 7 天 |
-| `aichat:chat:title:{userId}:{sessionId}` | Hash | 会话标题 | 7 天 |
+| `aichat:chat:title:{userId}` | Hash | 会话标题（field = `sessionId`） | 7 天 |
+| `aichat:chat:sessionmodel:{userId}` | Hash | 会话锁定的模型（field = `sessionId`） | 7 天 |
 
 **消息结构（SMessage）**：
 ```json
@@ -772,6 +799,9 @@ CREATE TABLE tb_chat_message (
 | 清空会话 | 先删 MySQL 再清 Redis |
 | 旧版缓存缺少 id | 视为未命中，回源 MySQL 重建 |
 | 历史消息 model 为 null | 正常返回；不触发缓存重建（仅缺 id 才重建） |
+| 会话锁定模型为 null（旧会话） | 首条新消息时锁定当前模型并落库 |
+| 会话锁定模型与请求模型不一致 | 直接 409，不落库、不调用模型 |
+| 会话列表取模型 | 一次 `HGETALL` 批量读；有未命中再一次性回源 MySQL，未锁定的旧会话不回填 |
 | 分页查询 | 不回写缓存（避免把"一页"当成全量历史） |
 
 ---
@@ -793,6 +823,8 @@ CREATE TABLE tb_chat_message (
 3. 其余白名单模型 → 走 OpenAI 兼容协议（DeepSeek）
 4. 模型名不在 `app.models.available` 白名单 → 报 400（不静默兜底）
 5. 解析后的实际模型随用户消息和助手回复一起落库，并写入 Redis 缓存
+6. **会话锁模型**：会话首条消息把解析后的模型锁定到 `tb_chat_session.model`（MySQL 为唯一真源，Redis 做缓存），同一会话后续传不同模型直接 409，避免跨模型上下文污染与身份漂移
+7. **跨模型历史**：历史按"发言者 + 模型名"标注后注入，并保留 `ModelRouter` 的基础人设 system prompt
 
 ### 6.2 配置项
 

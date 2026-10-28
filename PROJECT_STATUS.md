@@ -102,6 +102,16 @@ com.aichat/
 - [x] `/chat/history` 响应新增 `model` 字段；历史消息（加列之前）为 `null`
 - [x] 旧缓存只在缺少 `id` 时回源重建；`model=null` 是历史数据合法状态，不会导致缓存永久未命中
 
+#### 会话锁模型 + 跨模型历史 ⭐ 2026-10-28
+- [x] `tb_chat_session` 新增 `model` 列，首条消息锁定模型（`ON DUPLICATE KEY UPDATE model = COALESCE(model, ...)`）
+- [x] 同一会话换模型返回 **409**，提示"切换模型请新建会话"，避免跨模型上下文污染
+- [x] 锁模型走 MySQL 真源 + Redis `aichat:chat:sessionmodel:{userId}` Hash 缓存，miss 回源回填
+- [x] 标题缓存 key 收敛为 `aichat:chat:title:{userId}`（Hash，field = sessionId），避免每会话一个 key
+- [x] 历史改为 `ChatHistoryFormatter` 渲染成带"发言者 + 模型名（我/其他模型）"标注的文本块
+- [x] 历史以 system message 注入，并保留 `ModelRouter.SYSTEM_PROMPT` 基础人设（`.system()` 会覆盖 `defaultSystem`）
+- [x] `/chat/sessions` 响应新增 `model` 字段；模型查询改为批量（一次 `HGETALL` + 最多一次 MySQL），消除逐会话查库
+- [x] `GlobalExceptionHandler` 补齐 `409 -> HttpStatus.CONFLICT`（此前 409 会落到 400）
+
 #### 历史消息分页 ⭐ 2026-10-25
 - [x] `SMessage` 新增 `id` 字段（MySQL 自增 id 作为分页游标）
 - [x] `GET /chat/history` 支持 `beforeId` + `limit` 游标分页
@@ -274,6 +284,7 @@ CREATE TABLE tb_chat_message (
 **迁移脚本**：
 - `docs/migration/2026-10-22-fix-tb-user-password-null.sql`
 - `docs/migration/2026-10-28-add-chat-message-model.sql`
+- `docs/migration/2026-10-28-add-chat-session-model.sql`
 
 ## 依赖项
 ```xml

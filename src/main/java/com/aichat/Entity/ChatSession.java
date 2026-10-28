@@ -9,6 +9,7 @@ public class ChatSession {
     private String userId;
     private String sessionId;
     private String title;
+    private String model;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
@@ -17,9 +18,15 @@ public class ChatSession {
 
     public ChatSession(String userId, String sessionId, String title,
             LocalDateTime createTime, LocalDateTime updateTime) {
+        this(userId, sessionId, title, null, createTime, updateTime);
+    }
+
+    public ChatSession(String userId, String sessionId, String title, String model,
+            LocalDateTime createTime, LocalDateTime updateTime) {
         this.userId = userId;
         this.sessionId = sessionId;
         this.title = title;
+        this.model = model;
         this.createTime = createTime;
         this.updateTime = updateTime;
     }
@@ -46,6 +53,14 @@ public class ChatSession {
 
     public void setTitle(String title) {
         this.title = title;
+    }
+
+    public String getModel() {
+        return model;
+    }
+
+    public void setModel(String model) {
+        this.model = model;
     }
 
     public LocalDateTime getCreateTime() {

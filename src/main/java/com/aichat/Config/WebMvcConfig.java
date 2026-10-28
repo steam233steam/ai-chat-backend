@@ -17,6 +17,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "/user/code",
             "/user/login",
             "/user/login/password",
+            "/chat/models",
             "/error"
     };
 

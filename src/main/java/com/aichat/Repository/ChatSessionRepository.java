@@ -1,6 +1,7 @@
 package com.aichat.Repository;
 
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.ai.chat.messages.Message;
 
@@ -35,5 +36,24 @@ public interface ChatSessionRepository {
     void saveTitle(String userId, String sessionid, String title);
 
     String getTitle(String userId, String sessionid);
+
+    /**
+     * 锁定会话模型（首条消息时调用）。已锁定的会话不会被覆盖。
+     * 落 MySQL + 写 Redis 缓存。
+     */
+    void lockModel(String userId, String sessionid, String model);
+
+    /**
+     * 获取会话锁定的模型名。未锁定（新会话）返回 null。
+     * 读 Redis 缓存，miss 时回源 MySQL。
+     */
+    String getModel(String userId, String sessionid);
+
+    /**
+     * 批量获取会话锁定的模型（sessionId → model），供会话列表使用，避免逐会话查库。
+     * 一次 HGETALL 读缓存；未命中的会话用一次 MySQL 查询补齐并回填。
+     * 未锁定模型的会话不会出现在返回的 Map 里。
+     */
+    Map<String, String> getModels(String userId, List<String> sessionIds);
 
 }

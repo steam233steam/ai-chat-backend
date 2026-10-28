@@ -6,7 +6,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -141,10 +144,10 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
         try {
             String sessionsKey = USER_SESSIONS_KEY_PREFIX + userId;
             String sessionKey = USER_SESSION_KEY_PREFIX + userId + ":" + sessionid;
-            String titleKey = SESSION_TITLE_KEY_PREFIX + userId + ":" + sessionid;
 
             redisTemplate.opsForZSet().remove(sessionsKey, sessionid);
-            redisTemplate.delete(titleKey);
+            redisTemplate.opsForHash().delete(SESSION_TITLE_KEY_PREFIX + userId, sessionid);
+            redisTemplate.opsForHash().delete(SESSION_MODEL_KEY_PREFIX + userId, sessionid);
             deleted = Boolean.TRUE.equals(redisTemplate.delete(sessionKey)) || deleted;
         } catch (Exception e) {
             log.warn("清理 Redis 会话缓存失败，数据库已清理: userId={}, sessionid={}", userId, sessionid, e);
@@ -183,7 +186,8 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
         chatPersistenceService.saveTitle(userId, sessionid, title);
 
         try {
-            String titleKey = SESSION_TITLE_KEY_PREFIX + userId + ":" + sessionid;
+            // 与 model 缓存结构一致：hash key 只到 userId，field 用 sessionid
+            String titleKey = SESSION_TITLE_KEY_PREFIX + userId;
             redisTemplate.opsForHash().put(titleKey, sessionid, title);
             redisTemplate.expire(titleKey, Duration.ofDays(SESSION_TTL_DAYS));
 
@@ -204,7 +208,8 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
 
     @Override
     public String getTitle(String userId, String sessionid) {
-        String titleKey = SESSION_TITLE_KEY_PREFIX + userId + ":" + sessionid;
+        // 与 saveTitle 一致：hash key 只到 userId，field 用 sessionid
+        String titleKey = SESSION_TITLE_KEY_PREFIX + userId;
         try {
             Object cached = redisTemplate.opsForHash().get(titleKey, sessionid);
             if (cached != null) {
@@ -224,6 +229,102 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
             }
         }
         return title;
+    }
+
+    @Override
+    public void lockModel(String userId, String sessionid, String model) {
+        chatPersistenceService.lockModel(userId, sessionid, model);
+
+        // 以 MySQL 为准回填缓存：并发首条消息时 upsert 的 COALESCE 只会保留先到的模型，
+        // 直接写请求模型会让 Redis 与库不一致（后续请求会按错误的模型 409 或放行）。
+        String effective = chatPersistenceService.getSessionModel(userId, sessionid);
+        if (effective == null) {
+            effective = model;
+        }
+
+        try {
+            String modelKey = SESSION_MODEL_KEY_PREFIX + userId;
+            redisTemplate.opsForHash().put(modelKey, sessionid, effective);
+            redisTemplate.expire(modelKey, Duration.ofDays(SESSION_TTL_DAYS));
+        } catch (Exception e) {
+            log.warn("写入 Redis 会话模型缓存失败，模型已落库: userId={}, sessionid={}", userId, sessionid, e);
+            redisTemplate.delete(SESSION_MODEL_KEY_PREFIX + userId);
+        }
+    }
+
+    @Override
+    public String getModel(String userId, String sessionid) {
+        String modelKey = SESSION_MODEL_KEY_PREFIX + userId;
+        try {
+            Object cached = redisTemplate.opsForHash().get(modelKey, sessionid);
+            if (cached != null) {
+                return cached.toString();
+            }
+        } catch (Exception e) {
+            log.warn("读取 Redis 会话模型缓存失败，回退 MySQL: userId={}, sessionid={}", userId, sessionid, e);
+        }
+
+        String model = chatPersistenceService.getSessionModel(userId, sessionid);
+        if (model != null) {
+            try {
+                redisTemplate.opsForHash().put(modelKey, sessionid, model);
+                redisTemplate.expire(modelKey, Duration.ofDays(SESSION_TTL_DAYS));
+            } catch (Exception e) {
+                log.warn("回填 Redis 会话模型缓存失败: userId={}, sessionid={}", userId, sessionid, e);
+            }
+        }
+        return model;
+    }
+
+    @Override
+    public Map<String, String> getModels(String userId, List<String> sessionIds) {
+        if (sessionIds == null || sessionIds.isEmpty()) {
+            return Map.of();
+        }
+        String modelKey = SESSION_MODEL_KEY_PREFIX + userId;
+        Map<String, String> models = new HashMap<>();
+
+        // 一次 HGETALL 拿到该用户全部已锁定的会话模型，再按需要的 sessionId 取子集
+        try {
+            Map<Object, Object> cached = redisTemplate.opsForHash().entries(modelKey);
+            if (cached != null) {
+                for (String sessionId : sessionIds) {
+                    Object model = cached.get(sessionId);
+                    if (model != null) {
+                        models.put(sessionId, model.toString());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("批量读取 Redis 会话模型缓存失败，回退 MySQL: userId={}", userId, e);
+        }
+
+        Set<String> missing = sessionIds.stream()
+                .filter(sessionId -> !models.containsKey(sessionId))
+                .collect(Collectors.toSet());
+        if (missing.isEmpty()) {
+            return models;
+        }
+
+        // 未命中的会话用一次 MySQL 查询补齐；model 为 null 的旧会话不回填（Redis Hash 存不了 null）
+        Map<String, String> refill = new HashMap<>();
+        for (ChatSession session : chatPersistenceService.getSessions(userId)) {
+            if (session.getModel() == null || !missing.contains(session.getSessionId())) {
+                continue;
+            }
+            models.put(session.getSessionId(), session.getModel());
+            refill.put(session.getSessionId(), session.getModel());
+        }
+
+        if (!refill.isEmpty()) {
+            try {
+                redisTemplate.opsForHash().putAll(modelKey, refill);
+                redisTemplate.expire(modelKey, Duration.ofDays(SESSION_TTL_DAYS));
+            } catch (Exception e) {
+                log.warn("回填 Redis 会话模型缓存失败: userId={}", userId, e);
+            }
+        }
+        return models;
     }
 
     private List<SMessage> readCachedMessages(String key) {
@@ -297,7 +398,8 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
 
     private void invalidateTitleCache(String userId, String sessionid) {
         try {
-            redisTemplate.delete(SESSION_TITLE_KEY_PREFIX + userId + ":" + sessionid);
+            // 与 saveTitle/getTitle 的 hash key 保持一致：只到 userId，删的是 field
+            redisTemplate.opsForHash().delete(SESSION_TITLE_KEY_PREFIX + userId, sessionid);
         } catch (Exception e) {
             log.warn("删除标题缓存失败: userId={}, sessionid={}", userId, sessionid, e);
         }

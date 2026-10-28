@@ -22,6 +22,9 @@ public class RedisConstants {
     // 会话标题 Key
     public static final String SESSION_TITLE_KEY_PREFIX = PREFIX + "chat:title:";
 
+    // 会话锁定模型 Key（Hash：{userId} → {sessionId → model}，实现"会话锁模型"）
+    public static final String SESSION_MODEL_KEY_PREFIX = PREFIX + "chat:sessionmodel:";
+
     // TTL
     public static final long CODE_TTL_MINUTES = 5;
     public static final long CODE_SEND_COOLDOWN_SECONDS = 60;
