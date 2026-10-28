@@ -19,8 +19,6 @@ public interface ChatSessionRepository {
      */
     void save(String userId, String sessionid, Message message, String model);
 
-    List<Message> getHistory(String userId, String sessionid);
-
     List<SMessage> getMessageHistory(String userId, String sessionid);
 
     /**

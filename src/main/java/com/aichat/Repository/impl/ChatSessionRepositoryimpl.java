@@ -7,7 +7,6 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -82,18 +81,6 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
             invalidateMessageCache(userId, sessionid);
             invalidateSessionsCache(userId);
         }
-    }
-
-    @Override
-    public List<Message> getHistory(String userId, String sessionid) {
-        return getMessageHistory(userId, sessionid).stream()
-                .map(sMessage -> switch (sMessage.getType()) {
-                    case "user" -> new UserMessage(sMessage.getText());
-                    case "assistant" -> new AssistantMessage(sMessage.getText());
-                    case "system" -> new SystemMessage(sMessage.getText());
-                    default -> throw new IllegalArgumentException("未知消息类型: " + sMessage.getType());
-                })
-                .collect(Collectors.toList());
     }
 
     @Override
