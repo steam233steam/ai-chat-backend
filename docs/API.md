@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v6.0  
-> 最后更新：2026-10-26  
+> 文档版本：v6.1  
+> 最后更新：2026-10-28  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v6.0 - 多模型路由 + 历史分页 + 上下文裁剪 + 异步 AI 标题生成
+> 变更记录：v6.1 - 会话锁模型 + 带发言人标注的历史 + 消息/会话返回 model 字段 + 409 错误码
 
 ---
 
@@ -14,10 +14,11 @@
 4. [错误码说明](#4-错误码说明)
 5. [数据存储说明](#5-数据存储说明)
 6. [多模型说明](#6-多模型说明)
-7. [前端使用示例](#7-前端使用示例)
-8. [认证说明](#8-认证说明)
-9. [CORS 说明](#9-cors-说明)
-10. [本地开发说明](#10-本地开发说明)
+7. [会话锁模型说明](#7-会话锁模型说明)
+8. [前端使用示例](#8-前端使用示例)
+9. [认证说明](#9-认证说明)
+10. [CORS 说明](#10-cors-说明)
+11. [本地开发说明](#11-本地开发说明)
 
 ---
 
@@ -35,7 +36,7 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| code | Integer | 状态码，200 成功，400/401/404/500 失败 |
+| code | Integer | 状态码，200 成功，400/401/404/409/500 失败 |
 | message | String | 提示信息 |
 | data | T | 返回数据，类型根据接口而定 |
 
@@ -90,7 +91,7 @@ POST /user/code?phone=13800138000
 **说明**：
 - 验证码有效期 5 分钟
 - 同一手机号 60 秒冷却，防止短信轰炸
-- 开发模式下验证码打印在日志中，不直接返回
+- 开发模式下验证码打印在日志中（仅前 2 位脱敏），不直接返回
 
 ---
 
@@ -347,7 +348,7 @@ POST /user/code?phone=13800138000
 
 > 前缀：`/chat`，除 `/chat/models` 外所有接口需要登录，请求头携带 Token：`Authorization: {token}`
 
-### 3.1 获取可用模型 ⭐ 新增
+### 3.1 获取可用模型
 
 获取可用模型白名单（前端渲染下拉框用）。
 
@@ -415,8 +416,6 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
-会话已锁定其他模型时返回 **HTTP 409**：
-
 ```json
 {
   "code": 409,
@@ -427,14 +426,14 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 
 **说明**：
 - 首次发消息时自动创建会话并生成默认标题（取问题前 20 个字符）
-- **会话锁模型**：首条消息把解析后的模型锁定到会话，之后同一会话传不同 `modelName` 返回 409
 - 会话列表按最近活跃时间倒序排列
-- 只把最近 N 条历史（默认 20，`app.chat.context-max-messages` 可调）以"发言者 + 模型名"标注的 system message 注入，并保留基础人设 prompt
+- 只把最近 N 条历史送给模型（默认 20，`app.chat.context-max-messages` 可调）
 - AI 标题异步生成（不阻塞主流程），只有标题仍是兜底值时才覆盖
+- 会话锁模型：新会话锁到本次传入的模型；已有会话若传入模型与锁定模型不一致 → 409
 
 ---
 
-### 3.3 发送消息（流式）⭐
+### 3.3 发送消息（流式）
 
 使用 SSE（Server-Sent Events）流式返回 AI 回复，实现打字机效果。
 
@@ -478,14 +477,14 @@ data: [DONE]
 
 **说明**：
 - 客户端主动断开时，已生成的部分也会保存（避免上下文丢失）
-- 每条 AI 回复完整后落库（MySQL + Redis）
-- 模型名校验失败时返回 400，不会进入流式
+- 每条 AI 回复完整后落库（MySQL + Redis，含模型名）
+- 模型名校验失败或会话锁模型冲突时报 400/409，不会进入流式
 
 ---
 
 ### 3.4 获取会话列表
 
-获取当前用户的所有会话列表（按最近活跃时间倒序）。
+获取当前用户的所有会话列表（按最近活跃时间倒序），含锁定的模型。
 
 - **接口地址**：`GET /chat/sessions`
 - **请求头**：`Authorization: {token}`
@@ -500,27 +499,27 @@ data: [DONE]
     {
       "sessionId": "s001",
       "title": "你好，请介绍...",
-      "model": "qwen2.5-coder:7b"
+      "model": "deepseek-chat"
     },
     {
       "sessionId": "s002",
       "title": "Java 多线程编程",
-      "model": "deepseek-chat"
+      "model": "qwen2.5-coder:7b"
     }
   ]
 }
 ```
 
 **说明**：
+- `model` 为会话锁定的模型名，未锁定（旧会话）时为 null
 - Redis 缓存过期后会话列表自动从 MySQL 恢复，数据不会丢失
-- `model`：该会话锁定的模型；升级前的旧会话未锁定，返回 `null`
-- 会话锁定模型后，要换模型请新建会话（见 3.2 的 409 说明）
+- 批量取模型（一次 HGETALL + 最多一次 MySQL），避免逐会话查库
 
 ---
 
-### 3.5 获取会话历史 ⭐ 支持分页
+### 3.5 获取会话历史
 
-获取指定会话的所有消息历史，包含时间戳、消息 ID（分页游标）和实际使用的模型。
+获取指定会话的所有消息历史，包含时间戳、消息 ID（分页游标）和模型名。
 
 - **接口地址**：`GET /chat/history`
 - **请求头**：`Authorization: {token}`
@@ -582,7 +581,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - `id`: 消息自增 ID（分页游标）
 - `role`: 消息角色（user/assistant）
 - `content`: 消息内容
-- `model`: 该条消息实际使用的模型名；加 `model` 列之前的历史消息为 `null`
+- `model`: 本轮使用的模型名（model 列上线前的历史消息为 null）
 - `timestamp`: 时间戳（毫秒）
 - 不传 `limit` 时返回全量历史（现有前端无需改动）
 - `beforeId` 必须配 `limit` 使用，否则报错
@@ -652,7 +651,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 
 ### 3.7 清空会话历史
 
-删除指定会话的所有历史记录（MySQL + Redis）。
+删除指定会话的所有历史记录（MySQL + Redis，含锁模型缓存）。
 
 - **接口地址**：`DELETE /chat/clear-session`
 - **请求头**：`Authorization: {token}`
@@ -683,7 +682,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
-**说明**：先删 MySQL（消息 + 会话元数据），再清 Redis 缓存。
+**说明**：先删 MySQL（消息 + 会话元数据），再清 Redis 缓存（含锁模型 Hash 的对应 field）。
 
 ---
 
@@ -695,6 +694,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 | 400 | 请求参数错误 | 检查参数格式、长度、模型名 |
 | 401 | 未登录 | 请先登录 |
 | 404 | 接口不存在 | 检查路径 |
+| 409 | 会话锁模型冲突 | 该会话已锁定某模型，切换模型请新建会话 |
 | 413 | 上传文件过大 | 检查文件大小 |
 | 500 | 系统错误 | AI 服务不可用或服务器异常 |
 
@@ -707,7 +707,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 | 存储 | 角色 | 内容 |
 |------|------|------|
 | MySQL | 持久化主存储 | `tb_user`、`tb_chat_session`、`tb_chat_message` |
-| Redis | 7 天热缓存 | 消息 List、会话 ZSet、标题 Hash、Token、验证码 |
+| Redis | 7 天热缓存 | 消息 List、会话 ZSet、标题 Hash、锁模型 Hash、Token、验证码 |
 
 **原则**：先写 MySQL，再更新 Redis；读 Redis 未命中时回源 MySQL 并回填。  
 Redis 故障或过期不影响数据正确性，只影响性能。
@@ -725,42 +725,33 @@ CREATE TABLE tb_user (
   update_time DATETIME
 );
 
--- 会话表（唯一键 user_id + session_id）
+-- 会话表（唯一键 user_id + session_id，含锁模型列）
 CREATE TABLE tb_chat_session (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id VARCHAR(32) NOT NULL,
   session_id VARCHAR(64) NOT NULL,
   title VARCHAR(100) DEFAULT NULL,
-  model VARCHAR(64) DEFAULT NULL COMMENT '会话锁定的模型',
+  model VARCHAR(64) DEFAULT NULL,  -- 会话锁定的模型
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_user_session (user_id, session_id),
   KEY idx_user_update (user_id, update_time)
 );
 
--- 消息表（自增 id 保证稳定排序 + 分页游标）
+-- 消息表（自增 id 保证稳定排序 + 分页游标，含模型列）
 CREATE TABLE tb_chat_message (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id VARCHAR(32) NOT NULL,
   session_id VARCHAR(64) NOT NULL,
   role VARCHAR(16) NOT NULL,
   content TEXT NOT NULL,
-  model VARCHAR(64) NULL COMMENT '本轮使用的模型名',
+  model VARCHAR(64),  -- 本轮使用的模型名
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_user_session (user_id, session_id, id)
 );
 ```
 
 完整脚本见 `docs/schema.sql`。
-
-**存量库升级（已上线的库需要手动执行）**：
-
-```sql
-ALTER TABLE tb_chat_session
-  ADD COLUMN model VARCHAR(64) DEFAULT NULL COMMENT '会话锁定的模型' AFTER title;
-```
-
-> 该列允许为 `NULL`：旧会话在升级后第一次发消息时才会锁定模型，不影响历史数据读取。
 
 ### 5.3 Redis 缓存结构
 
@@ -771,9 +762,9 @@ ALTER TABLE tb_chat_session
 | `aichat:login:token:{token}` | Hash | 用户信息 | 7 天 |
 | `aichat:user:new:{uid}` | String | 新用户标记 | 365 天 |
 | `aichat:chat:sessions:{userId}` | ZSet | 会话列表（按更新时间排序） | 7 天 |
-| `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含 id 游标 + 时间戳 + 模型名） | 7 天 |
-| `aichat:chat:title:{userId}` | Hash | 会话标题（field = `sessionId`） | 7 天 |
-| `aichat:chat:sessionmodel:{userId}` | Hash | 会话锁定的模型（field = `sessionId`） | 7 天 |
+| `aichat:chat:session:{userId}:{sessionId}` | List | 消息历史（含 id 游标 + model + 时间戳） | 7 天 |
+| `aichat:chat:title:{userId}` | Hash | 会话标题（field=sessionId） | 7 天 |
+| `aichat:chat:sessionmodel:{userId}` | Hash | 会话锁模型（field=sessionId） | 7 天 |
 
 **消息结构（SMessage）**：
 ```json
@@ -786,7 +777,9 @@ ALTER TABLE tb_chat_session
 }
 ```
 
-> `model` 为 `null` 表示该消息产生于 model 列上线之前；新消息记录 `ModelRouter.resolve()` 后的实际模型。
+**说明**：
+- `model` 为 null 表示该消息产生于 model 列上线之前（历史数据）
+- 标题和锁模型统一用 Hash 结构（key 到 userId，field 用 sessionId）
 
 ### 5.4 缓存一致性策略
 
@@ -796,17 +789,15 @@ ALTER TABLE tb_chat_session
 | Redis 写入失败 | 主动失效相关缓存，降级使用 MySQL |
 | 缓存回填失败 | 删除不完整缓存，避免脏数据 |
 | 会话列表缓存过期 | 从 MySQL 整体重建（避免列表不完整） |
-| 清空会话 | 先删 MySQL 再清 Redis |
+| 清空会话 | 先删 MySQL 再清 Redis（含锁模型 Hash 的对应 field） |
 | 旧版缓存缺少 id | 视为未命中，回源 MySQL 重建 |
-| 历史消息 model 为 null | 正常返回；不触发缓存重建（仅缺 id 才重建） |
-| 会话锁定模型为 null（旧会话） | 首条新消息时锁定当前模型并落库 |
-| 会话锁定模型与请求模型不一致 | 直接 409，不落库、不调用模型 |
-| 会话列表取模型 | 一次 `HGETALL` 批量读；有未命中再一次性回源 MySQL，未锁定的旧会话不回填 |
+| model 为 null | 是历史消息的正常状态，不作为缓存失效条件 |
 | 分页查询 | 不回写缓存（避免把"一页"当成全量历史） |
+| 锁模型 | 以 MySQL 为准回填缓存（并发首条消息时 COALESCE 只保留先到的模型） |
 
 ---
 
-## 6. 多模型说明 ⭐ 新增
+## 6. 多模型说明
 
 ### 6.1 模型路由
 
@@ -822,9 +813,6 @@ ALTER TABLE tb_chat_session
 2. 模型名在 `app.models.ollama-models` 里 → 走 Ollama
 3. 其余白名单模型 → 走 OpenAI 兼容协议（DeepSeek）
 4. 模型名不在 `app.models.available` 白名单 → 报 400（不静默兜底）
-5. 解析后的实际模型随用户消息和助手回复一起落库，并写入 Redis 缓存
-6. **会话锁模型**：会话首条消息把解析后的模型锁定到 `tb_chat_session.model`（MySQL 为唯一真源，Redis 做缓存），同一会话后续传不同模型直接 409，避免跨模型上下文污染与身份漂移
-7. **跨模型历史**：历史按"发言者 + 模型名"标注后注入，并保留 `ModelRouter` 的基础人设 system prompt
 
 ### 6.2 配置项
 
@@ -856,9 +844,52 @@ ALTER TABLE tb_chat_session
 
 ---
 
-## 7. 前端使用示例
+## 7. 会话锁模型说明 ⭐ 新增
 
-### 7.1 登录流程
+### 7.1 设计目的
+
+避免同一会话反复切换模型导致"分布外上下文"污染、弱模型身份漂移。
+
+### 7.2 锁模型规则
+
+| 场景 | 行为 |
+|------|------|
+| 新会话（无锁定模型） | 把本次解析出的模型锁进会话 |
+| 已有会话且传入模型 == 锁定模型 | 放行 |
+| 已有会话且传入模型 != 锁定模型 | 报 409，提示"要换模型请新建会话" |
+
+### 7.3 前端使用建议
+
+- 发送消息前先 `GET /chat/sessions` 查看会话锁定的模型
+- 用户想换模型时，提示"新建会话"而不是切模型
+- 收到 409 错误时，引导用户新建会话
+
+### 7.4 带发言人标注的历史
+
+多模型切换时，同一会话的历史可能来自不同模型。后端把每条历史标注发言人，喂给当前模型时让其区分"哪些是我说的、哪些是别的模型说的"：
+
+```
+发言人: qwen2.5-coder:7b（其他模型）
+  用户: 写个快排
+发言人: qwen2.5-coder:7b（其他模型）
+  助手: public void quickSort...
+发言人: deepseek-chat（我）
+  用户: 那热门模型呢
+发言人: deepseek-chat（我）
+  助手: 当前热门的是...
+```
+
+**说明**：
+- 共享上下文（跨模型不断裂，指代能对上）
+- 不认领错误（不把别的模型的话当成自己的记忆/结论）
+- 旧消息缺少 model 时标记为"未知模型"
+- 弱模型防呆：明确告诉"其他模型的发言不是你说的话，仅供参考"
+
+---
+
+## 8. 前端使用示例
+
+### 8.1 登录流程
 
 ```javascript
 const API_BASE = 'http://localhost:8080';
@@ -947,7 +978,7 @@ async function logout() {
 }
 ```
 
-### 7.2 新用户引导流程
+### 8.2 新用户引导流程
 
 ```javascript
 // 检查用户是否为新用户，如果是则引导设置密码
@@ -968,7 +999,7 @@ async function setupPassword(phone, code, password) {
 }
 ```
 
-### 7.3 模型选择
+### 8.3 模型选择
 
 ```javascript
 // 获取可用模型（渲染下拉框）
@@ -980,25 +1011,12 @@ async function getAvailableModels() {
   }
   return [];
 }
-
-// 选择模型后发送消息
-async function sendMessage(sessionId, question, modelName) {
-  const token = localStorage.getItem('token');
-  const params = new URLSearchParams({ sessionid: sessionId, question });
-  if (modelName) params.append('modelName', modelName);
-  
-  const response = await fetch(`${API_BASE}/chat/ask?${params}`, {
-    method: 'POST',
-    headers: { 'Authorization': token }
-  });
-  return await response.json();
-}
 ```
 
-### 7.4 聊天流程（含分页）
+### 8.4 聊天流程（含会话锁模型 + 分页）
 
 ```javascript
-// 发送消息（同步）
+// 发送消息（同步，带模型）
 async function sendMessage(sessionId, question, modelName) {
   const token = localStorage.getItem('token');
   const params = new URLSearchParams({ sessionid: sessionId, question });
@@ -1007,10 +1025,17 @@ async function sendMessage(sessionId, question, modelName) {
     method: 'POST',
     headers: { 'Authorization': token }
   });
-  return await response.json();
+  const result = await response.json();
+  
+  // 处理 409 会话锁模型冲突
+  if (result.code === 409) {
+    alert('该会话已锁定其他模型，要换模型请新建会话');
+    // 可引导用户新建会话
+  }
+  return result;
 }
 
-// 流式发送消息
+// 流式发送消息（带模型）
 async function streamSendMessage(sessionId, question, modelName, onChunk, onComplete) {
   const token = localStorage.getItem('token');
   const params = new URLSearchParams({ sessionid: sessionId, question });
@@ -1045,16 +1070,17 @@ async function streamSendMessage(sessionId, question, modelName, onChunk, onComp
   }
 }
 
-// 获取会话列表
+// 获取会话列表（含锁模型）
 async function getSessions() {
   const token = localStorage.getItem('token');
   const response = await fetch(`${API_BASE}/chat/sessions`, {
     headers: { 'Authorization': token }
   });
   return await response.json();
+  // 返回的 data 里每项含 model 字段，可用于展示"该会话用的什么模型"
 }
 
-// 获取会话历史（全量，兼容旧行为）
+// 获取会话历史（全量，兼容旧行为，含 model 字段）
 async function getHistory(sessionId) {
   const token = localStorage.getItem('token');
   const response = await fetch(`${API_BASE}/chat/history?sessionid=${sessionId}`, {
@@ -1102,7 +1128,23 @@ async function clearSession(sessionId) {
 }
 ```
 
-### 7.5 Axios 封装
+### 8.5 会话模型展示（前端 UI 建议）
+
+```javascript
+// 渲染会话列表时展示锁定的模型
+async function renderSessionList() {
+  const result = await getSessions();
+  const sessions = result.data;
+  
+  sessions.forEach(s => {
+    const modelLabel = s.model || '未锁定';
+    // 显示 "s.title - modelLabel"
+    // 如果用户想换模型，提示新建会话
+  });
+}
+```
+
+### 8.6 Axios 封装
 
 ```javascript
 import axios from 'axios';
@@ -1139,14 +1181,14 @@ api.interceptors.response.use(
 export default api;
 ```
 
-**说明**：使用 axios 时注意，后端错误响应（400/404/500）也会进入响应拦截器的 error 分支，
-`error.response.data` 中即为 `Result` 格式的错误体。
+**说明**：使用 axios 时注意，后端错误响应（400/404/409/500）也会进入响应拦截器的 error 分支，
+`error.response.data` 中即为 `Result` 格式的错误体。409 表示会话锁模型冲突。
 
 ---
 
-## 8. 认证说明
+## 9. 认证说明
 
-### 8.1 Token 机制
+### 9.1 Token 机制
 
 1. 登录成功后，服务端生成 UUID Token
 2. Token 存储到 Redis，有效期 7 天
@@ -1154,7 +1196,7 @@ export default api;
 4. 每次请求自动刷新 Token 过期时间（续期）
 5. 登出时删除 Token
 
-### 8.2 新用户标记机制
+### 9.2 新用户标记机制
 
 1. 首次通过验证码登录的用户会被标记为"新用户"
 2. 新用户标记存储在 Redis，有效期 365 天
@@ -1162,20 +1204,22 @@ export default api;
 4. 设置密码后，新用户标记自动取消
 5. 前端可通过 `GET /user/me` 的 `isNewUser` 字段或 `GET /user/is-new-user` 检查
 
-### 8.3 安全特性
+### 9.3 安全特性
 
 | 特性 | 说明 |
 |------|------|
 | 验证码冷却 | 同一手机号 60 秒内只能发一次 |
 | 验证码一次性 | 校验通过后立即删除，防止重放 |
+| 验证码日志脱敏 | 开发模式只打前 2 位，避免手机号 + 验证码成对泄露 |
 | 密码强度 | 4-32 位字母、数字或下划线 |
 | 手机号归属 | 设置密码时校验手机号属于当前账号 |
 | 统一错误提示 | 密码登录不暴露手机号是否注册 |
 | 参数长度校验 | sessionid≤64、question≤8000、title≤50、昵称≤20 |
 | 模型白名单 | 只能选白名单内的模型，否则报 400 |
+| 会话锁模型 | 已有会话切换模型报 409 |
 | @Valid 校验 | 手机号格式 + 非空 |
 
-### 8.4 拦截器说明
+### 9.4 拦截器说明
 
 | 拦截器 | 功能 | 拦截路径 |
 |--------|------|----------|
@@ -1186,11 +1230,11 @@ export default api;
 - `/user/code` - 发送验证码
 - `/user/login` - 验证码登录
 - `/user/login/password` - 密码登录
-- `/chat/models` - 获取可用模型（新增）
+- `/chat/models` - 获取可用模型
 
 ---
 
-## 9. CORS 说明
+## 10. CORS 说明
 
 后端已配置 CORS，允许本地开发端口跨域：
 
@@ -1206,9 +1250,9 @@ export default api;
 
 ---
 
-## 10. 本地开发说明
+## 11. 本地开发说明
 
-### 10.1 环境架构
+### 11.1 环境架构
 
 ```
 Windows 宿主
@@ -1223,23 +1267,29 @@ Windows 宿主
     └── nginx   guest 80    ── NAT 转发 ──> 宿主 8082
 ```
 
-### 10.2 启动步骤
+### 11.2 启动步骤
 
 1. 复制并填写本地敏感配置：`cp src/main/resources/application-local.properties.example src/main/resources/application-local.properties`
 2. 使用 DeepSeek 时配置 key：`export DEEPSEEK_API_KEY=sk-xxx`
 3. 启动虚拟机（必须先启动）
 4. 初始化数据库：`mysql -h 127.0.0.1 -P 13306 -uroot -p1234 < docs/schema.sql`
-5. 旧库执行迁移：`mysql ... < docs/migration/2026-10-22-fix-tb-user-password-null.sql`
+5. 旧库执行迁移（按顺序）：
+   - `docs/migration/2026-10-22-fix-tb-user-password-null.sql`
+   - `docs/migration/2026-10-28-add-chat-message-model.sql`
+   - `docs/migration/2026-10-28-add-chat-session-model.sql`
 6. 确认 Ollama：`ollama list`（需有 qwen2.5-coder:7b）
 7. 启动后端：`mvn spring-boot:run`
 8. 启动前端：`npm install && npm run dev`
 
 详细步骤见 `docs/本地启动.md`。
 
-### 10.3 配置文件
+### 11.3 配置文件
 
 - `application.properties` - 默认配置（支持环境变量覆盖）
 - `application-local.properties` - 本地敏感配置（密码，已 gitignore）
+
+**说明**：本地开发需在 `application-local.properties` 里显式设 `app.sms.dev-mode=true`，
+否则默认关闭（生产安全），验证码不会打印到日志。
 
 ---
 

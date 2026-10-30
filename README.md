@@ -21,6 +21,7 @@ Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama / OpenAI 兼容) · DeepSeek · 
 - **多用户隔离**：会话数据按 userId 隔离，含越权校验
 - **数据可恢复**：Redis 7 天 TTL 到期后，历史消息、会话列表和标题可从 MySQL 回源
 - **工程化**：三层架构 + 全局异常处理 + 拦截器链 + 参数校验
+- **一体化集成测试**：`FullFlowIntegrationTest` 13 步全链路端到端验收测试（真实连 MySQL/Redis/Ollama，不 Mock）
 
 ## 快速启动
 
@@ -146,6 +147,17 @@ com.aichat/
 GitHub Actions 在每次 push 时执行单元测试与打包（`.github/workflows/ci.yml`）。
 
 `AichatApplicationTests` 是 `@SpringBootTest`，启动需要真实的 Redis / MySQL / Ollama，因此未纳入 CI；CI 只跑不依赖外部服务的单元测试。
+
+### 一体化集成测试
+
+`FullFlowIntegrationTest` 是不 Mock、真实连 MySQL/Redis/Ollama 的端到端验收测试（13 步全链路）。本地运行：
+
+```bash
+# 前置：虚拟机已起（MySQL 13306、Redis 16379），Ollama 已加载 qwen2.5-coder:7b，无需 DeepSeek key
+mvn test -Dtest=FullFlowIntegrationTest
+```
+
+它用 `HttpComponentsClientHttpRequestFactory` + 自定义 `ResponseErrorHandler`（不抛 4xx）来正确断言 400/401/409 的响应体，并用 `ParameterizedTypeReference` 解决泛型 `Result<T>` 反序列化。全部 13 个测试通过。
 
 ## 配置项
 
