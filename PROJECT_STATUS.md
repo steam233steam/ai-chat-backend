@@ -162,9 +162,11 @@ com.aichat/
 - [x] `app.sms.dev-mode` 默认改为 false（生产安全）
 
 #### 一体化集成测试（2026-10-30）⭐
-- [x] `FullFlowIntegrationTest` - 13 步全链路端到端验收测试（`src/test/java/com/aichat/FullFlowIntegrationTest.java`）
+- [x] `FullFlowIntegrationTest` - 17 步全链路端到端验收测试（`src/test/java/com/aichat/FullFlowIntegrationTest.java`）
 - [x] `@SpringBootTest(RANDOM_PORT)` 不 Mock，连真实 MySQL/Redis/Ollama，跑完整用户旅程
-- [x] 覆盖：发验证码(冷却)→验证码登录→me(isNewUser=true)→is-new-user→设密码→改昵称(超长400)→模型列表→新建会话发消息(本地Ollama)→切模型触发409→查历史(带model)→查会话列表(带锁模型)→清会话→登出(token失效401)
+- [x] 覆盖：发验证码(冷却)→验证码登录→me(isNewUser=true)→is-new-user→设密码→改昵称(超长400)→模型列表→新建会话发消息(本地Ollama)→切模型触发409→查历史(带model)→查会话列表(带锁模型)→历史分页(beforeId+limit)→DeepSeek路由(OpenAI兼容协议,占位符key自动跳过)→清会话+重建重锁→流式SSE(/chat/ask-stream)→登出(token失效401)
+- [x] 流式场景：RestTemplate 读回 `text/event-stream` 全量 body，断言含 `data:`；验证 `doFinally` 断开也保存 + 会话锁模型
+- [x] DeepSeek 场景：读 `environment.getProperty("spring.ai.openai.api-key")`，是占位符则 `Assumptions.assumeTrue` 跳过，配了真 key 才真跑 OpenAI 协议那条路由
 - [x] `TestRestTemplate` 用 `HttpComponentsClientHttpRequestFactory` + 自定义 `ResponseErrorHandler`（不抛 4xx），正确读到 400/401/409 的 body
 - [x] `ParameterizedTypeReference` 解决泛型 `Result<T>` 反序列化
 - [x] 数据隔离：静态手机号 + `@BeforeEach` 用 `dataCleaned` 标志只清一次；`UserRepository.saveCode` 注入已知验证码绕过 60s 冷却

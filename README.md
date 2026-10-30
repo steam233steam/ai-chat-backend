@@ -150,14 +150,14 @@ GitHub Actions 在每次 push 时执行单元测试与打包（`.github/workflow
 
 ### 一体化集成测试
 
-`FullFlowIntegrationTest` 是不 Mock、真实连 MySQL/Redis/Ollama 的端到端验收测试（13 步全链路）。本地运行：
+`FullFlowIntegrationTest` 是不 Mock、真实连 MySQL/Redis/Ollama 的端到端验收测试（17 步全链路）。本地运行：
 
 ```bash
-# 前置：虚拟机已起（MySQL 13306、Redis 16379），Ollama 已加载 qwen2.5-coder:7b，无需 DeepSeek key
+# 前置：虚拟机已起（MySQL 13306、Redis 16379），Ollama 已加载 qwen2.5-coder:7b
 mvn test -Dtest=FullFlowIntegrationTest
 ```
 
-它用 `HttpComponentsClientHttpRequestFactory` + 自定义 `ResponseErrorHandler`（不抛 4xx）来正确断言 400/401/409 的响应体，并用 `ParameterizedTypeReference` 解决泛型 `Result<T>` 反序列化。全部 13 个测试通过。
+它用 `HttpComponentsClientHttpRequestFactory` + 自定义 `ResponseErrorHandler`（不抛 4xx）来正确断言 400/401/409 的响应体，并用 `ParameterizedTypeReference` 解决泛型 `Result<T>` 反序列化。覆盖场景：登录 → 新用户引导 → 设密码 → 改昵称 → 模型列表 → 建会话发消息（Ollama）→ 切模型 409 → 查历史 → 查会话 → **历史分页**（`beforeId`+`limit`）→ **DeepSeek 路由**（OpenAI 兼容协议，配了真实 key 才跑、占位符时自动跳过）→ 清会话重建 + 重新锁模型 → **流式 SSE**（`/chat/ask-stream`）→ 登出 401。
 
 ## 配置项
 

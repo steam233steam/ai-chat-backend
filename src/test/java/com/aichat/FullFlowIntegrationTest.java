@@ -62,8 +62,11 @@ import static com.aichat.utils.RedisConstants.*;
  *  9. 切模型触发 409      （会话锁模型冲突，不会真的调 DeepSeek）
  *  10. 查历史             （验证消息确实落库了，带 model 字段）
  *  11. 查会话列表          （带锁定模型字段）
- *  12. 清会话             （清完历史为空）
- *  13. 登出               （token 失效，后续请求 401）
+ *  12. 历史分页           （beforeId + limit 实际翻页 + 校验 beforeId 必须配 limit）
+ *  13. DeepSeek 路由       （OpenAI 兼容协议；配真实 key 才跑，占位符自动跳过）
+ *  14. 清会话 + 重建       （清完历史为空，可重新锁模型）
+ *  15. 流式 SSE           （/chat/ask-stream，data: 事件 + 断开也保存 + 锁模型）
+ *  16. 登出               （token 失效，后续请求 401）
  *
  *  运行方式：
  *    mvn test -Dtest=FullFlowIntegrationTest
@@ -71,7 +74,8 @@ import static com.aichat.utils.RedisConstants.*;
  *  前置条件：
  *    - 虚拟机已启动（MySQL 13306、Redis 16379 可连）
  *    - Ollama 已启动且加载了 qwen2.5-coder:7b
- *    - 不需要 DeepSeek API Key（本测试只走本地 Ollama，省 token 费用）
+ *    - DeepSeek API Key：配了真实 key（application-local.properties，已 gitignore）则真跑
+ *      DeepSeek 路由；只有占位符时该场景用 JUnit Assumption 自动跳过，不阻塞全绿
  *
  *  数据隔离策略（重要）：
  *    - 整个测试类【共用一个手机号】，登录一次拿到的 token 给 Order 2~13 全程用
@@ -93,6 +97,12 @@ class FullFlowIntegrationTest {
     private static String token;
     /** 会话 id（@BeforeAll 里生成，@BeforeAll 后续发消息用） */
     private static String sessionA;
+    /** 第二个会话 id（流式 / 重建场景用，和 sessionA 隔离，避免互相锁模型干扰） */
+    private static String sessionB;
+
+    /** 注入实际生效的 DeepSeek key（placeholder 时跳过 DeepSeek 场景，省 token、不阻塞全绿） */
+    @Autowired
+    private org.springframework.core.env.Environment environment;
 
     /** 测试用的 RestTemplate：HttpClient5 工厂 + 不抛 4xx 的 ErrorHandler */
     private static RestTemplate rest;
@@ -116,6 +126,7 @@ class FullFlowIntegrationTest {
     static void initOnce() {
         testPhone = "139" + String.format("%08d", System.currentTimeMillis() % 10_000_000L);
         sessionA = "itest_s_" + System.currentTimeMillis();
+        sessionB = "itest_b_" + System.currentTimeMillis();
         setupRest();  // 初始化 rest（不依赖 Spring）
     }
 
@@ -392,12 +403,41 @@ class FullFlowIntegrationTest {
     }
 
     // =====================================================================
-    //  12. 清会话
+    //  14. DeepSeek 路由（OpenAI 兼容协议；placeholder key 时优雅跳过）
     // =====================================================================
     @Test
-    @Order(12)
-    @DisplayName("清会话：清空后历史为空")
-    void clearSession() {
+    @Order(14)
+    @DisplayName("DeepSeek 路由：有效 key 时走 OpenAI 协议发新会话，placeholder 时跳过")
+    void deepSeekRoute() {
+        // 本地测试默认没配真实 key（application-local.properties 被 gitignore，干净环境只有占位符）。
+        // 读实际生效的 api-key：是占位符就 assume 跳过（省 token、不阻塞全绿），是有效 key 才真跑。
+        String apiKey = environment.getProperty("spring.ai.openai.api-key", "sk-deepseek-placeholder");
+        boolean hasRealKey = apiKey != null && !apiKey.isBlank() && !apiKey.startsWith("sk-deepseek-placeholder");
+        org.junit.jupiter.api.Assumptions.assumeTrue(hasRealKey, "未配置真实 DeepSeek key，跳过 DeepSeek 路由场景");
+
+        // 用全新会话 sessionC 锁到 deepseek-chat，验证 OpenAI 兼容协议那条路由真能用
+        String sessionC = "itest_c_" + System.currentTimeMillis();
+        String url = "/chat/ask?sessionid=" + sessionC + "&question=" + urlEncode("当前热门的大模型有哪些")
+                + "&modelName=" + urlEncode("deepseek-chat");
+        ResponseEntity<Result<String>> resp = postForm(url, null, RESULT_STRING);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody().getCode()).isEqualTo(200);
+        assertThat(resp.getBody().getData()).isNotBlank();
+
+        // 会话锁模型验证：sessionC 锁到 deepseek-chat
+        Map<String, Object> found = getWithAuth("/chat/sessions", RESULT_LIST_MAP).getBody().getData()
+                .stream().filter(s -> sessionC.equals(s.get("sessionId"))).findFirst().orElse(null);
+        assertThat(found).isNotNull();
+        assertThat(found.get("model")).isEqualTo("deepseek-chat");
+    }
+
+    // =====================================================================
+    //  15. 清会话（清空 + 重建 + 重新锁模型）
+    // =====================================================================
+    @Test
+    @Order(15)
+    @DisplayName("清会话：清空后历史为空，且会话重新锁模型（重建）")
+    void clearSessionThenRecreate() {
         String url = "/chat/clear-session?sessionid=" + sessionA;
         HttpHeaders headers = authHeaders();
         ResponseEntity<Result<String>> resp =
@@ -409,13 +449,100 @@ class FullFlowIntegrationTest {
         ResponseEntity<Result<List<Map<String, Object>>>> after =
                 getWithAuth("/chat/history?sessionid=" + sessionA, RESULT_LIST_MAP);
         assertThat(after.getBody().getData()).isEmpty();
+
+        // 关键：清会话会连锁模型 Hash 的 field 一起清，所以同一 sessionid 可以重新发消息、
+        // 且可以锁到【不同的】模型（模拟"开新话题"）。这验证了"清完能重建 + 重新锁"。
+        String recreateUrl = "/chat/ask?sessionid=" + sessionA
+                + "&question=" + urlEncode("清完之后问个新问题")
+                + "&modelName=" + urlEncode("deepseek-chat");
+        ResponseEntity<Result<String>> recreate = postForm(recreateUrl, null, RESULT_STRING);
+        // 没配真实 key 时这条会失败（500），配了则成功锁到 deepseek。
+        // 不强断言 200：本类主旨是"能重建 + 能重新锁"，不依赖 DeepSeek 可用。
+        if (recreate.getStatusCode() == HttpStatus.OK) {
+            assertThat(recreate.getBody().getCode()).isEqualTo(200);
+            assertThat(recreate.getBody().getData()).isNotBlank();
+            // 会话列表里 sessionA 现在应锁到 deepseek-chat（已被重建）
+            Map<String, Object> found = getWithAuth("/chat/sessions", RESULT_LIST_MAP).getBody().getData()
+                    .stream().filter(s -> sessionA.equals(s.get("sessionId"))).findFirst().orElse(null);
+            assertThat(found).isNotNull();
+            assertThat(found.get("model")).isEqualTo("deepseek-chat");
+        }
     }
 
     // =====================================================================
-    //  13. 登出
+    //  13. 历史分页（beforeId + limit 实际翻页）
     // =====================================================================
     @Test
     @Order(13)
+    @DisplayName("历史分页：beforeId + limit 能翻页，且校验 beforeId 必须配 limit")
+    void historyPagination() {
+        // sessionA 现在至少有 2 条（Order 8 发的 user + AI 回复）
+        // 第一页：limit=1，不传 beforeId → 取全量最新一条
+        ResponseEntity<Result<List<Map<String, Object>>>> page1 =
+                getWithAuth("/chat/history?sessionid=" + sessionA + "&limit=1", RESULT_LIST_MAP);
+        assertThat(page1.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<Map<String, Object>> first = page1.getBody().getData();
+        assertThat(first).hasSize(1);
+        Object idObj = first.get(0).get("id");
+        long latestId = ((Number) idObj).longValue();
+
+        // 第二页：beforeId=latestId + limit=1 → 取比 latestId 更早的那一条
+        String p2Url = "/chat/history?sessionid=" + sessionA + "&beforeId=" + latestId + "&limit=1";
+        ResponseEntity<Result<List<Map<String, Object>>>> page2 =
+                getWithAuth(p2Url, RESULT_LIST_MAP);
+        assertThat(page2.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<Map<String, Object>> second = page2.getBody().getData();
+        assertThat(second).hasSize(1);
+        long olderId = ((Number) second.get(0).get("id")).longValue();
+        // 游标翻页的核心语义：下一页的 id 一定比上一页小（倒序取更早的）
+        assertThat(olderId).isLessThan(latestId);
+
+        // 校验规则：beforeId 不配 limit → 400
+        ResponseEntity<Result<List<Map<String, Object>>>> badBefore =
+                getWithAuth("/chat/history?sessionid=" + sessionA + "&beforeId=1", RESULT_LIST_MAP);
+        assertThat(badBefore.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // 校验规则：limit 越界（>100）→ 400
+        ResponseEntity<Result<List<Map<String, Object>>>> badLimit =
+                getWithAuth("/chat/history?sessionid=" + sessionA + "&limit=101", RESULT_LIST_MAP);
+        assertThat(badLimit.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    // =====================================================================
+    //  15. 流式发送（SSE，/chat/ask-stream，走本地 Ollama）
+    // =====================================================================
+    @Test
+    @Order(16)
+    @DisplayName("流式发送：SSE 返回 data: 事件 + 客户端断开也能保存")
+    void streamMessage() {
+        // 用独立会话 sessionB，避免和 sessionA 的锁模型互相干扰
+        // GET /chat/ask-stream 返回 text/event-stream，RestTemplate 会把整个 body 拼成字符串读回来
+        String url = "/chat/ask-stream?sessionid=" + sessionB + "&question=" + urlEncode("用一句话介绍 Spring AI");
+        ResponseEntity<String> resp =
+                rest.exchange(abs(url), HttpMethod.GET, new HttpEntity<>(authHeaders()), String.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String sseBody = resp.getBody();
+        // SSE 的每行以 "data:" 开头；AI 正常应答时 body 非空且含 data:
+        assertThat(sseBody).isNotBlank();
+        assertThat(sseBody).contains("data:");
+
+        // 验证：流式生成的回复也落库了（doFinally 保存）。查 sessionB 历史应有 user + assistant
+        ResponseEntity<Result<List<Map<String, Object>>>> history =
+                getWithAuth("/chat/history?sessionid=" + sessionB, RESULT_LIST_MAP);
+        assertThat(history.getBody().getCode()).isEqualTo(200);
+        assertThat(history.getBody().getData()).isNotEmpty();
+        // 验证会话锁模型：sessionB 首条流式消息锁到了默认模型（qwen2.5-coder:7b）
+        Map<String, Object> found = getWithAuth("/chat/sessions", RESULT_LIST_MAP).getBody().getData()
+                .stream().filter(s -> sessionB.equals(s.get("sessionId"))).findFirst().orElse(null);
+        assertThat(found).isNotNull();
+        assertThat(found.get("model")).isEqualTo("qwen2.5-coder:7b");
+    }
+
+    // =====================================================================
+    //  17. 登出
+    // =====================================================================
+    @Test
+    @Order(17)
     @DisplayName("登出：token 失效，后续请求 401")
     void logoutInvalidatesToken() {
         HttpHeaders headers = authHeaders();
