@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: 模型输出净化 + 历史真实角色 + 字符预算裁剪 + 线程安全加固完成 ✅
+- **当前阶段**: 模型输出净化 + 历史真实角色 + 字符预算裁剪 + 线程安全加固 + Springdoc/Swagger 在线接口文档完成 ✅
 
 ## 架构分层
 
@@ -23,8 +23,8 @@ com.aichat/
 │   ├── LoginInterceptor.java       # 登录拦截器（CORS 预检放行）
 │   └── RefreshTokenInterceptor.java # Token 刷新拦截器（入口清理 ThreadLocal）
 ├── Controller/
-│   ├── ChatController.java         # 聊天接口（/chat 前缀 + 参数校验 + 分页）
-│   └── UserController.java         # 用户接口（/user 前缀 + @Valid 校验）
+│   ├── ChatController.java         # 聊天接口（/chat 前缀 + 参数校验 + 分页 + @Operation）
+│   └── UserController.java         # 用户接口（/user 前缀 + @Valid 校验 + @Operation）
 ├── Dto/
 │   ├── Result.java                 # 统一返回结果（支持自定义 code）
 │   ├── SMessage.java              # 消息实体（含 id 游标 + model + 时间戳，去 Lombok）
@@ -68,7 +68,7 @@ com.aichat/
     └── StreamingSafetyFilter.java  # ⭐ 有状态流式过滤器（跨 chunk 剥安全标签）
 ```
 
-## 当前状态（2026-11-01 12:47 更新）
+## 当前状态（2026-11-01 13:08 更新）
 
 ### ✅ 已完成功能
 #### 用户认证系统
@@ -183,6 +183,18 @@ com.aichat/
 - [x] 验证码日志脱敏（只打前 2 位，避免手机号 + 验证码成对泄露）
 - [x] `app.sms.dev-mode` 默认 false（生产安全）
 - [x] 模型输出净化（剥安全标签 + 流式过滤 + 标题净化）
+
+#### 在线接口文档（2026-11-01）⭐
+- [x] `pom.xml` 新增 `springdoc-openapi-starter-webmvc-ui`（2.5.0）
+- [x] `ChatController` / `UserController` 全部接口加 `@Tag` + `@Operation` 注解
+- [x] `application.properties` 新增 springdoc 开关（`springdoc.enabled` 默认 true，可用 `SPRINGDOC_ENABLED=false` 关掉）
+- [x] Swagger UI：`http://localhost:8080/swagger-ui.html`
+- [x] OpenAPI JSON：`http://localhost:8080/v3/api-docs`
+- [x] 生产环境可关闭，不暴露文档
+
+#### 测试基础设施（2026-11-01）⭐
+- [x] `pom.xml` 新增 `httpclient5`（test scope）
+- [x] 集成测试的 RestTemplate 正确处理 4xx 响应（JDK 默认工厂对 4xx 会抛 HttpRetryException）
 
 #### 工程化
 - [x] `README.md` - 项目说明 + API 总览 + 配置项
@@ -404,12 +416,13 @@ spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
 - [x] 会话锁模型 + 带发言人标注的历史 ✅ 2026-10-28
 - [x] 验证码日志脱敏 + dev-mode 默认关闭 ✅ 2026-10-27
 - [x] 模型输出净化 + 历史角色真实化 + 字符预算 + 线程安全 ✅ 2026-11-01
+- [x] Springdoc/Swagger 在线接口文档 + httpclient5 测试依赖 ✅ 2026-11-01
 - [ ] 聊天/登录接口限流 + 安全加固
 - [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
 - [ ] Docker Compose 部署
 - [ ] RAG 知识库（可选加分项）
 - [ ] Micrometer 可观测性 + 压测
-- [ ] springdoc-openapi 接口文档
+- [x] springdoc-openapi 接口文档 ✅ 2026-11-01
 
 ---
 *最后更新: 2026-11-01 12:47*

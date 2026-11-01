@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v6.2  
+> 文档版本：v6.3  
 > 最后更新：2026-11-01  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v6.2 - 模型输出净化（剥 `<ds_safety>` 标签）+ 历史角色真实化 + 字符预算裁剪 + 线程安全加固
+> 变更记录：v6.3 - Springdoc/Swagger 在线接口文档（`/swagger-ui.html` + `/v3/api-docs`），全部接口加 @Operation 注解
 
 ---
 
@@ -1277,7 +1277,22 @@ export default api;
 
 ## 12. 本地开发说明
 
-### 12.1 环境架构
+### 12.1 在线接口文档（Swagger / OpenAPI）⭐ 新增
+
+后端已接入 `springdoc-openapi`，提供在线接口文档：
+
+| 地址 | 说明 |
+|------|------|
+| `http://localhost:8080/swagger-ui.html` | Swagger UI（交互式，可在线调试） |
+| `http://localhost:8080/v3/api-docs` | OpenAPI 3.0 JSON 规范 |
+
+**说明**：
+- 所有 Controller 已加 `@Tag` + `@Operation` 注解，Swagger UI 里可看到中文说明
+- 由 `springdoc.enabled` 开关控制（默认 true）
+- 生产环境可用 `SPRINGDOC_ENABLED=false` 关掉，Swagger UI 和 OpenAPI 端点都不暴露
+- 本地开发直接用 Swagger UI 联调接口即可，无需手写 curl
+
+### 12.2 环境架构
 
 ```
 Windows 宿主
