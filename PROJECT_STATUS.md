@@ -173,6 +173,12 @@ com.aichat/
 - [x] `pom.xml` 新增 `httpclient5`（test scope）依赖
 - [x] 全部 13 个测试通过（`mvn test -Dtest=FullFlowIntegrationTest`）
 
+#### 模型输出净化（2026-11-01）⭐
+- [x] `ModelOutputSanitizer.sanitize()` - 剥掉模型回复里泄漏的 `<ds_safety>...</ds_safety>` 内部审核标签（完整标签 + 残缺只开头不闭合 + 清洗后为空给固定兜底），`src/main/java/com/aichat/utils/ModelOutputSanitizer.java`
+- [x] 治本：`withHistory` 的 system prompt 简化成朴素任务指令，去掉"你是当前模型/别的模型不是你的/仅供参考"等元认知措辞（这类措辞在短输入下会戳中 DeepSeek 安全审核层，诱使它把 `<ds_safety>` 夹带进 content）
+- [x] 治标：`sendSession`（同步）+ `saveAssistantReply`（流式）落库前都接 `sanitize`，脏数据不进库、不进前端
+- [x] `ModelOutputSanitizerTest`（6 例）+ `DeepSeekShortInputRegressionTest`（定向回归：对 DeepSeek 发超短输入"你是"，断言返回体不含 ds_safety）
+
 #### 工程化
 - [x] `README.md` - 项目说明 + API 总览 + 配置项
 - [x] `.github/workflows/ci.yml` - CI（单元测试 + 打包）

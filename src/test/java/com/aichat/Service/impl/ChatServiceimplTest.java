@@ -238,10 +238,10 @@ class ChatServiceimplTest {
         // spring-ai 的 .system(..) 会覆盖 ChatClient.defaultSystem，
         // 所以带历史时必须显式把基础人设拼回去，否则从第二条消息起人设丢失
         assertThat(injected).contains(ModelRouter.SYSTEM_PROMPT.strip());
-        assertThat(injected).contains("【本会话历史】");
+        assertThat(injected).contains("【历史】");
         // 顺序：先人设，再历史
         assertThat(injected.indexOf("乐于助人的 AI 助手"))
-                .isLessThan(injected.indexOf("【本会话历史】"));
+                .isLessThan(injected.indexOf("【历史】"));
     }
 
     @Test

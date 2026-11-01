@@ -23,6 +23,7 @@ import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatService;
 import com.aichat.Service.ChatTitleService;
 import com.aichat.utils.ChatHistoryFormatter;
+import com.aichat.utils.ModelOutputSanitizer;
 import com.aichat.utils.UserHolder;
 
 import reactor.core.publisher.Flux;
@@ -68,10 +69,12 @@ public class ChatServiceimpl implements ChatService {
         chatSessionRepository.save(userId, sessionid, userMessage, model);
 
         try {
-            String response = withHistory(chatClient, historyBlock)
+            String rawResponse = withHistory(chatClient, historyBlock)
                     .user(question)
                     .call()
                     .content();
+            // 输出净化：剥掉模型偶尔泄漏的内部 <ds_safety> 审核标签，避免脏数据落库/进前端
+            String response = ModelOutputSanitizer.sanitize(rawResponse);
             chatSessionRepository.save(userId, sessionid, new AssistantMessage(response), model);
             return response;
         } catch (Exception e) {
@@ -171,7 +174,9 @@ public class ChatServiceimpl implements ChatService {
     }
 
     private void saveAssistantReply(String userId, String sessionid, String content, String model) {
-        Mono.fromRunnable(() -> chatSessionRepository.save(userId, sessionid, new AssistantMessage(content), model))
+        // 输出净化：剥掉流式回复里可能泄漏的 <ds_safety> 内部标签，避免脏数据落库
+        String clean = ModelOutputSanitizer.sanitize(content);
+        Mono.fromRunnable(() -> chatSessionRepository.save(userId, sessionid, new AssistantMessage(clean), model))
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(v -> {
                 }, e -> log.error("保存助手回复失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e));
@@ -219,14 +224,13 @@ public class ChatServiceimpl implements ChatService {
         if (historyBlock == null || historyBlock.isBlank()) {
             return chatClient.prompt();
         }
-        String historyPrompt = "以下是本会话的历史对话。每条前标注了发言者：\n"
-                + "【本会话历史】\n"
-                + historyBlock
-                + "【历史结束】\n"
-                + "说明：标注为" + ChatHistoryFormatter.SELF_MARK + "的是你（当前模型）之前的发言；"
-                + "标注为" + ChatHistoryFormatter.OTHER_MARK + "的是其他模型的回答，它们不是你说的话，"
-                + "仅供参考，不要当作你的记忆或结论。\n"
-                + "请结合上述历史与用户当前问题，以你（当前模型）的身份回答。";
+        // 刻意保持朴素：不做"你是哪个模型/这是别人说的不是你的/仅供参考"这类元认知指令。
+        // 这类指令会戳中 DeepSeek 等带安全审核层模型的自我审视模式，在短输入下诱使模型
+        // 把内部 <ds_safety> 审核标签夹带进正文。发言者区分靠 ChatHistoryFormatter 把
+        // 历史渲染成带模型名的"发言者: xxx"即可，system prompt 不再复述。
+        String historyPrompt = "以下是本会话此前对话的摘要，供你理解上下文："
+                + "【历史】\n" + historyBlock + "\n【结束】\n"
+                + "请结合以上历史，直接回答用户当前的问题。";
         // 关键：spring-ai 的 .system(..) 会覆盖 ModelRouter 的 defaultSystem，
         // 所以这里必须把基础人设一起拼进去，否则从第二条消息起人设会被历史块顶掉。
         return chatClient.prompt()
