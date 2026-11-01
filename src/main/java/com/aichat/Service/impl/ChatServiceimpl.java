@@ -5,11 +5,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,8 +24,9 @@ import com.aichat.Exception.BusinessException;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatService;
 import com.aichat.Service.ChatTitleService;
-import com.aichat.utils.ChatHistoryFormatter;
+import com.aichat.utils.ChatHistoryBuilder;
 import com.aichat.utils.ModelOutputSanitizer;
+import com.aichat.utils.StreamingSafetyFilter;
 import com.aichat.utils.UserHolder;
 
 import reactor.core.publisher.Flux;
@@ -38,9 +41,13 @@ public class ChatServiceimpl implements ChatService {
     /** 会话标题最大长度（按 Unicode 字符计） */
     private static final int TITLE_MAX_LENGTH = 20;
 
-    /** 送给模型的历史消息上限；<=0 表示不裁剪 */
+    /** 送给模型的历史消息条数上限；<=0 表示不裁剪 */
     @Value("${app.chat.context-max-messages:20}")
     private int contextMaxMessages = 20;
+
+    /** 送给模型的历史总字符预算；<=0 表示不限制 */
+    @Value("${app.chat.context-max-chars:24000}")
+    private int contextMaxChars = 24000;
 
     @Autowired
     private ChatSessionRepository chatSessionRepository;
@@ -62,15 +69,14 @@ public class ChatServiceimpl implements ChatService {
 
         ChatClient chatClient = modelRouter.client(model);
 
-        // 先读历史、再落库：当前问题只通过下面的 .user(question) 进入上下文，避免重复发送。
-        // 历史用带发言者标注的文本喂入，让模型区分"自己说的"和"别的模型说的"
-        String historyBlock = buildLabeledHistory(userId, sessionid, model);
-        initSessionIfNeeded(userId, sessionid, question, historyBlock);
+        // 先读历史、再落库：当前问题只通过最后一条 UserMessage 进入上下文，避免重复发送。
+        // 历史必须保持真实角色（User/Assistant），不能拼进 system prompt。
+        List<Message> historyMessages = buildHistoryMessages(userId, sessionid);
+        initSessionIfNeeded(userId, sessionid, question, !historyMessages.isEmpty());
         chatSessionRepository.save(userId, sessionid, userMessage, model);
 
         try {
-            String rawResponse = withHistory(chatClient, historyBlock)
-                    .user(question)
+            String rawResponse = withHistory(chatClient, historyMessages, question)
                     .call()
                     .content();
             // 输出净化：剥掉模型偶尔泄漏的内部 <ds_safety> 审核标签，避免脏数据落库/进前端
@@ -145,23 +151,33 @@ public class ChatServiceimpl implements ChatService {
 
         ChatClient chatClient = modelRouter.client(model);
 
-        // 与同步接口保持一致：历史先读出来（带发言者标注），再把当前问题落库，避免问题重复进入上下文
-        String historyBlock = buildLabeledHistory(userId, sessionid, model);
-        initSessionIfNeeded(userId, sessionid, question, historyBlock);
+        // 与同步接口一致：历史保持真实角色，当前问题作为最后一条 UserMessage
+        List<Message> historyMessages = buildHistoryMessages(userId, sessionid);
+        initSessionIfNeeded(userId, sessionid, question, !historyMessages.isEmpty());
         chatSessionRepository.save(userId, sessionid, new UserMessage(question), model);
 
         StringBuilder fullResponse = new StringBuilder();
+        AtomicBoolean failed = new AtomicBoolean(false);
+        StreamingSafetyFilter safetyFilter = new StreamingSafetyFilter();
 
-        return withHistory(chatClient, historyBlock)
-                .user(question)
+        return withHistory(chatClient, historyMessages, question)
                 .stream()
                 .content()
+                .map(safetyFilter::accept)
+                .filter(chunk -> !chunk.isEmpty())
+                .concatWith(Flux.defer(() -> {
+                    String tail = safetyFilter.finish();
+                    return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
+                }))
                 .doOnNext(fullResponse::append)
-                .doOnError(e -> log.error("流式 AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e))
+                .doOnError(e -> {
+                    failed.set(true);
+                    log.error("流式 AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e);
+                })
                 .onErrorResume(e -> Flux.just("AI 服务暂时不可用，请稍后重试"))
                 .doFinally(signal -> {
-                    // 正常结束或客户端主动断开时都保存已生成的部分，避免上下文丢失
-                    if (fullResponse.length() > 0
+                    // 正常结束或客户端主动断开才保存；失败兜底文案不写入历史，避免污染下一轮上下文
+                    if (!failed.get() && fullResponse.length() > 0
                             && (signal == SignalType.ON_COMPLETE || signal == SignalType.CANCEL)) {
                         saveAssistantReply(userId, sessionid, fullResponse.toString(), model);
                     }
@@ -201,48 +217,33 @@ public class ChatServiceimpl implements ChatService {
     }
 
     /**
-     * 读取该会话最近 N 条历史，渲染成带发言者标注的文本块，作为模型上下文。
-     * 每条历史标注"发言者: 模型名（我/其他模型）"，让当前模型区分"自己说的"和"别的模型说的"。
-     * 历史为空时返回空串（表示无上下文）。
+     * 读取该会话历史，转换成真实角色消息，并按条数 + 字符预算裁剪。
+     * 安全边界：历史只作为 UserMessage / AssistantMessage 传入，绝不拼进 system prompt。
      */
-    private String buildLabeledHistory(String userId, String sessionid, String currentModel) {
+    private List<Message> buildHistoryMessages(String userId, String sessionid) {
         List<SMessage> history = chatSessionRepository.getMessageHistory(userId, sessionid);
-        if (contextMaxMessages <= 0 || history.size() <= contextMaxMessages) {
-            return ChatHistoryFormatter.format(history, currentModel);
-        }
-        // 只保留最近 N 条，控制 Prompt 长度
-        List<SMessage> trimmed = history.subList(history.size() - contextMaxMessages, history.size());
-        return ChatHistoryFormatter.format(trimmed, currentModel);
+        return ChatHistoryBuilder.build(history, contextMaxMessages, contextMaxChars);
     }
 
     /**
-     * 把"带发言者标注的历史文本块"挂到 prompt 上；历史为空则只返回 prompt（不带历史）。
-     * 历史作为一条 system message 注入，模型据此理解跨模型会话背景。
-     * 措辞做防呆：明确告诉弱模型"其他模型的发言不是你说的，只做背景参考"。
+     * 组装本轮 Prompt：system 只放可信人设，历史是真实对话角色，当前问题最后追加。
      */
-    private ChatClient.ChatClientRequestSpec withHistory(ChatClient chatClient, String historyBlock) {
-        if (historyBlock == null || historyBlock.isBlank()) {
-            return chatClient.prompt();
-        }
-        // 刻意保持朴素：不做"你是哪个模型/这是别人说的不是你的/仅供参考"这类元认知指令。
-        // 这类指令会戳中 DeepSeek 等带安全审核层模型的自我审视模式，在短输入下诱使模型
-        // 把内部 <ds_safety> 审核标签夹带进正文。发言者区分靠 ChatHistoryFormatter 把
-        // 历史渲染成带模型名的"发言者: xxx"即可，system prompt 不再复述。
-        String historyPrompt = "以下是本会话此前对话的摘要，供你理解上下文："
-                + "【历史】\n" + historyBlock + "\n【结束】\n"
-                + "请结合以上历史，直接回答用户当前的问题。";
-        // 关键：spring-ai 的 .system(..) 会覆盖 ModelRouter 的 defaultSystem，
-        // 所以这里必须把基础人设一起拼进去，否则从第二条消息起人设会被历史块顶掉。
+    private ChatClient.ChatClientRequestSpec withHistory(
+            ChatClient chatClient, List<Message> historyMessages, String question) {
+        List<Message> messages = new ArrayList<>(historyMessages.size() + 1);
+        messages.addAll(historyMessages);
+        messages.add(new UserMessage(question));
         return chatClient.prompt()
-                .system(ModelRouter.SYSTEM_PROMPT + "\n\n" + historyPrompt);
+                .system(ModelRouter.SYSTEM_PROMPT)
+                .messages(messages);
     }
 
     /**
      * 首次对话时先写兜底标题并落库，再提交异步 AI 标题任务。
      * 先落库是为了避免会话元数据出现 title=null 的中间状态。
      */
-    private void initSessionIfNeeded(String userId, String sessionId, String question, String historyBlock) {
-        if (historyBlock != null && !historyBlock.isBlank()) {
+    private void initSessionIfNeeded(String userId, String sessionId, String question, boolean hasHistory) {
+        if (hasHistory) {
             return;
         }
         String fallbackTitle = buildTitle(question);
@@ -254,7 +255,7 @@ public class ChatServiceimpl implements ChatService {
         if (question == null || question.isBlank()) {
             return "新会话";
         }
-        String trimmed = question.strip();
+        String trimmed = question.strip().replaceAll("[\\r\\n\\t]+", " ");
         if (trimmed.codePointCount(0, trimmed.length()) <= TITLE_MAX_LENGTH) {
             return trimmed;
         }

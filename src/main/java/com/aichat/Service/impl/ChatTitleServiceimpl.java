@@ -10,6 +10,7 @@ import com.aichat.Config.AsyncConfig;
 import com.aichat.Config.ModelRouter;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
+import com.aichat.utils.ModelOutputSanitizer;
 
 @Service
 public class ChatTitleServiceimpl implements ChatTitleService {
@@ -34,8 +35,8 @@ public class ChatTitleServiceimpl implements ChatTitleService {
                     .user(firstQuestion)
                     .call()
                     .content();
-            if (aiTitle != null && !aiTitle.isBlank()) {
-                String clean = aiTitle.strip();
+            String clean = ModelOutputSanitizer.sanitizeTitle(aiTitle);
+            if (clean != null && !clean.isBlank()) {
                 if (clean.codePointCount(0, clean.length()) > 10) {
                     clean = clean.substring(0, clean.offsetByCodePoints(0, 10));
                 }

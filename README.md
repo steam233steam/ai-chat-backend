@@ -96,7 +96,7 @@ MySQL 是聊天数据的持久化主存储，Redis 只做 7 天热缓存：
 - 消息按自增 `id` 升序，避免同一秒内顺序不稳定；`id` 同时作为分页游标
 - 历史接口支持 `beforeId` + `limit` 游标分页，不传 `limit` 时保持全量返回
 - 只把最近 N 条历史送给模型（默认 20，`app.chat.context-max-messages` 可调），控制 Prompt 长度
-- 历史以"发言者 + 模型名（我/其他模型）"标注后作为 system message 注入，并保留基础人设 prompt
+- 历史以真实 `UserMessage` / `AssistantMessage` 传入，system prompt 只保留可信人设；按条数 + 字符预算裁剪（`app.chat.context-max-messages` / `app.chat.context-max-chars`）
 - 会话锁定的模型存 `tb_chat_session.model`，同一会话传不同模型直接 409
 - 每条消息记录实际使用的模型（`model` 列），历史接口会原样返回；旧消息该字段为 `null`
 - 缓存写失败只记录日志并删除可能不完整的缓存，读请求会回源 MySQL

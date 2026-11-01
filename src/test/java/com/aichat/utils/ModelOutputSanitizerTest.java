@@ -62,4 +62,24 @@ class ModelOutputSanitizerTest {
         String cleaned = ModelOutputSanitizer.sanitize(content);
         assertThat(cleaned).isEqualTo("前半段后半段");
     }
+
+    @Test
+    @DisplayName("大写/空白变体也要剥离")
+    void stripsUppercaseAndWhitespaceTag() {
+        String content = "前< DS_SAFETY >[内部]审核</ DS_SAFETY >后";
+        assertThat(ModelOutputSanitizer.sanitize(content)).isEqualTo("前后");
+    }
+
+    @Test
+    @DisplayName("标题净化：去标签/引号/换行/HTML")
+    void sanitizeTitleCleansDecorations() {
+        String title = "<ds_safety>[安全]</ds_safety>\n\"  <b>Java</b> 集合  \"";
+        assertThat(ModelOutputSanitizer.sanitizeTitle(title)).isEqualTo("Java 集合");
+    }
+
+    @Test
+    @DisplayName("标题只有标签时返回 null，调用方保留兜底标题")
+    void sanitizeTitleReturnsNullForOnlyTag() {
+        assertThat(ModelOutputSanitizer.sanitizeTitle("<ds_safety>[安全]</ds_safety>")).isNull();
+    }
 }

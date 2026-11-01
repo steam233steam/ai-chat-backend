@@ -74,6 +74,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+
+        <!-- Swagger / OpenAPI 在线接口文档：springdoc 自动扫描 @RequestMapping 生成
+             /swagger-ui.html（交互 UI）+ /v3/api-docs（JSON 规范）。
+             由 springdoc.enabled 开关控制（见 application.properties），生产可关。 -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.5.0</version>
+        </dependency>
         
         <dependency>
             <groupId>org.springframework.boot</groupId>

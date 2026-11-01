@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v6.1  
-> 最后更新：2026-10-28  
+> 文档版本：v6.2  
+> 最后更新：2026-11-01  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v6.1 - 会话锁模型 + 带发言人标注的历史 + 消息/会话返回 model 字段 + 409 错误码
+> 变更记录：v6.2 - 模型输出净化（剥 `<ds_safety>` 标签）+ 历史角色真实化 + 字符预算裁剪 + 线程安全加固
 
 ---
 
@@ -15,10 +15,11 @@
 5. [数据存储说明](#5-数据存储说明)
 6. [多模型说明](#6-多模型说明)
 7. [会话锁模型说明](#7-会话锁模型说明)
-8. [前端使用示例](#8-前端使用示例)
-9. [认证说明](#9-认证说明)
-10. [CORS 说明](#10-cors-说明)
-11. [本地开发说明](#11-本地开发说明)
+8. [模型输出净化说明](#8-模型输出净化说明)
+9. [前端使用示例](#9-前端使用示例)
+10. [认证说明](#10-认证说明)
+11. [CORS 说明](#11-cors-说明)
+12. [本地开发说明](#12-本地开发说明)
 
 ---
 
@@ -376,7 +377,7 @@ POST /user/code?phone=13800138000
 
 ### 3.2 发送消息（同步）
 
-获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。
+获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。回复内容经输出净化（剥安全标签）后落库。
 
 - **接口地址**：`POST /chat/ask`
 - **Content-Type**：`application/x-www-form-urlencoded`
@@ -427,15 +428,16 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 **说明**：
 - 首次发消息时自动创建会话并生成默认标题（取问题前 20 个字符）
 - 会话列表按最近活跃时间倒序排列
-- 只把最近 N 条历史送给模型（默认 20，`app.chat.context-max-messages` 可调）
-- AI 标题异步生成（不阻塞主流程），只有标题仍是兜底值时才覆盖
+- 历史按条数（默认 20）+ 字符预算（默认 24000）裁剪后以真实 User/Assistant 角色送入模型
+- 回复经 `ModelOutputSanitizer` 净化（剥 `<ds_safety>` 标签），落库和返回的都是干净内容
+- AI 标题异步生成（不阻塞主流程），标题也走净化
 - 会话锁模型：新会话锁到本次传入的模型；已有会话若传入模型与锁定模型不一致 → 409
 
 ---
 
 ### 3.3 发送消息（流式）
 
-使用 SSE（Server-Sent Events）流式返回 AI 回复，实现打字机效果。
+使用 SSE（Server-Sent Events）流式返回 AI 回复，实现打字机效果。回复经流式安全过滤器净化后发送。
 
 - **接口地址**：`GET /chat/ask-stream`
 - **Content-Type**：`text/event-stream`
@@ -477,7 +479,9 @@ data: [DONE]
 
 **说明**：
 - 客户端主动断开时，已生成的部分也会保存（避免上下文丢失）
-- 每条 AI 回复完整后落库（MySQL + Redis，含模型名）
+- 每条 AI 回复完整后落库（MySQL + Redis，含模型名 + 净化）
+- 流式输出经 `StreamingSafetyFilter` 跨 chunk 剥 `<ds_safety>` 标签
+- 模型调用失败时兜底文案不写入历史（避免污染下一轮上下文）
 - 模型名校验失败或会话锁模型冲突时报 400/409，不会进入流式
 
 ---
@@ -580,7 +584,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 **说明**：
 - `id`: 消息自增 ID（分页游标）
 - `role`: 消息角色（user/assistant）
-- `content`: 消息内容
+- `content`: 消息内容（已净化，不含安全标签）
 - `model`: 本轮使用的模型名（model 列上线前的历史消息为 null）
 - `timestamp`: 时间戳（毫秒）
 - 不传 `limit` 时返回全量历史（现有前端无需改动）
@@ -836,15 +840,18 @@ CREATE TABLE tb_chat_message (
 | 配置 | 默认值 | 说明 |
 |------|--------|------|
 | `app.chat.context-max-messages` | `20` | 送给模型的历史消息条数，<=0 表示不裁剪 |
+| `app.chat.context-max-chars` | `24000` | 送给模型的历史总字符预算，<=0 表示不限制 |
 
 **说明**：
-- 只把最近 N 条历史送给模型，控制 Prompt 长度
+- 按条数 + 字符预算双重控制，控制 Prompt 长度
+- 超预算时从最新往旧取，优先保留最近上下文
+- 单条消息自身超预算时保留其尾部（至少让模型看到最近上下文）
 - 历史接口仍返回全量/分页数据，裁剪只影响 AI 上下文
 - 长对话不会撑爆 Prompt
 
 ---
 
-## 7. 会话锁模型说明 ⭐ 新增
+## 7. 会话锁模型说明
 
 ### 7.1 设计目的
 
@@ -864,32 +871,47 @@ CREATE TABLE tb_chat_message (
 - 用户想换模型时，提示"新建会话"而不是切模型
 - 收到 409 错误时，引导用户新建会话
 
-### 7.4 带发言人标注的历史
+### 7.4 历史角色
 
-多模型切换时，同一会话的历史可能来自不同模型。后端把每条历史标注发言人，喂给当前模型时让其区分"哪些是我说的、哪些是别的模型说的"：
-
-```
-发言人: qwen2.5-coder:7b（其他模型）
-  用户: 写个快排
-发言人: qwen2.5-coder:7b（其他模型）
-  助手: public void quickSort...
-发言人: deepseek-chat（我）
-  用户: 那热门模型呢
-发言人: deepseek-chat（我）
-  助手: 当前热门的是...
-```
-
-**说明**：
-- 共享上下文（跨模型不断裂，指代能对上）
-- 不认领错误（不把别的模型的话当成自己的记忆/结论）
-- 旧消息缺少 model 时标记为"未知模型"
-- 弱模型防呆：明确告诉"其他模型的发言不是你说的话，仅供参考"
+- 历史消息以真实 `UserMessage` / `AssistantMessage` 角色送入模型（不拼进 system）
+- 当前问题作为最后一条 `UserMessage`
+- 安全边界：历史只作对话角色，绝不提升为系统指令（防提示注入）
+- 旧消息缺少 model 时正常处理，不作为缓存失效条件
 
 ---
 
-## 8. 前端使用示例
+## 8. 模型输出净化说明 ⭐ 新增
 
-### 8.1 登录流程
+### 8.1 背景
+
+部分模型（如 DeepSeek 的推理侧安全层）在特定输入下会把内部审核标签（形如 `<ds_safety>...</ds_safety>`）夹带进 `content`。正常 API 调用中这类标签不应出现在消息内容里。
+
+### 8.2 净化策略
+
+| 路径 | 处理 |
+|------|------|
+| 同步回复 | 落库前 `ModelOutputSanitizer.sanitize` 剥标签 |
+| 流式回复 | `StreamingSafetyFilter` 跨 chunk 剥标签（标签可能被拆成 "<ds_sa" + "fety>"） |
+| 标题生成 | `ModelOutputSanitizer.sanitizeTitle` 去安全标签 + HTML + 引号 + 换行 + 控制字符 |
+
+### 8.3 行为说明
+
+- 完整标签对：忽略大小写、支持跨行和标签内空白
+- 残缺标签开头（只吐了开标签没吐闭合）：从该处到末尾全丢
+- 清理后为空：用固定兜底文案"（模型回复被过滤，请稍后重试或换个问法）"，不存空消息
+- 流式调用失败时兜底文案不写入历史（避免污染下一轮上下文）
+
+### 8.4 前端影响
+
+- 前端收到的回复内容已净化，不会看到 `<ds_safety>` 等内部标签
+- 历史接口返回的 `content` 也是净化后的干净内容
+- 无需前端额外过滤
+
+---
+
+## 9. 前端使用示例
+
+### 9.1 登录流程
 
 ```javascript
 const API_BASE = 'http://localhost:8080';
@@ -978,7 +1000,7 @@ async function logout() {
 }
 ```
 
-### 8.2 新用户引导流程
+### 9.2 新用户引导流程
 
 ```javascript
 // 检查用户是否为新用户，如果是则引导设置密码
@@ -999,7 +1021,7 @@ async function setupPassword(phone, code, password) {
 }
 ```
 
-### 8.3 模型选择
+### 9.3 模型选择
 
 ```javascript
 // 获取可用模型（渲染下拉框）
@@ -1013,7 +1035,7 @@ async function getAvailableModels() {
 }
 ```
 
-### 8.4 聊天流程（含会话锁模型 + 分页）
+### 9.4 聊天流程（含会话锁模型 + 分页）
 
 ```javascript
 // 发送消息（同步，带模型）
@@ -1128,7 +1150,7 @@ async function clearSession(sessionId) {
 }
 ```
 
-### 8.5 会话模型展示（前端 UI 建议）
+### 9.5 会话模型展示（前端 UI 建议）
 
 ```javascript
 // 渲染会话列表时展示锁定的模型
@@ -1144,7 +1166,7 @@ async function renderSessionList() {
 }
 ```
 
-### 8.6 Axios 封装
+### 9.6 Axios 封装
 
 ```javascript
 import axios from 'axios';
@@ -1186,9 +1208,9 @@ export default api;
 
 ---
 
-## 9. 认证说明
+## 10. 认证说明
 
-### 9.1 Token 机制
+### 10.1 Token 机制
 
 1. 登录成功后，服务端生成 UUID Token
 2. Token 存储到 Redis，有效期 7 天
@@ -1196,7 +1218,7 @@ export default api;
 4. 每次请求自动刷新 Token 过期时间（续期）
 5. 登出时删除 Token
 
-### 9.2 新用户标记机制
+### 10.2 新用户标记机制
 
 1. 首次通过验证码登录的用户会被标记为"新用户"
 2. 新用户标记存储在 Redis，有效期 365 天
@@ -1204,7 +1226,7 @@ export default api;
 4. 设置密码后，新用户标记自动取消
 5. 前端可通过 `GET /user/me` 的 `isNewUser` 字段或 `GET /user/is-new-user` 检查
 
-### 9.3 安全特性
+### 10.3 安全特性
 
 | 特性 | 说明 |
 |------|------|
@@ -1218,12 +1240,15 @@ export default api;
 | 模型白名单 | 只能选白名单内的模型，否则报 400 |
 | 会话锁模型 | 已有会话切换模型报 409 |
 | @Valid 校验 | 手机号格式 + 非空 |
+| 模型输出净化 | 剥 `<ds_safety>` 标签，同步/流式/标题三路 |
+| 历史角色真实化 | 历史作 User/Assistant 角色，不拼 system（防提示注入） |
+| 线程安全 | 拦截器入口 + 出口双重清理 ThreadLocal，防 SSE/异步串用户 |
 
-### 9.4 拦截器说明
+### 10.4 拦截器说明
 
 | 拦截器 | 功能 | 拦截路径 |
 |--------|------|----------|
-| RefreshTokenInterceptor | 解析 Token，加载用户信息到 UserHolder，刷新过期时间 | `/**`（排除公开接口） |
+| RefreshTokenInterceptor | 入口清理 ThreadLocal，解析 Token，加载用户信息到 UserHolder，刷新过期时间；出口再清理 | `/**`（排除公开接口） |
 | LoginInterceptor | 校验登录态，未登录返回 401；CORS 预检放行 | `/chat/**`, `/user/**`（排除公开接口） |
 
 **公开接口**：
@@ -1234,7 +1259,7 @@ export default api;
 
 ---
 
-## 10. CORS 说明
+## 11. CORS 说明
 
 后端已配置 CORS，允许本地开发端口跨域：
 
@@ -1250,9 +1275,9 @@ export default api;
 
 ---
 
-## 11. 本地开发说明
+## 12. 本地开发说明
 
-### 11.1 环境架构
+### 12.1 环境架构
 
 ```
 Windows 宿主
@@ -1267,7 +1292,7 @@ Windows 宿主
     └── nginx   guest 80    ── NAT 转发 ──> 宿主 8082
 ```
 
-### 11.2 启动步骤
+### 12.2 启动步骤
 
 1. 复制并填写本地敏感配置：`cp src/main/resources/application-local.properties.example src/main/resources/application-local.properties`
 2. 使用 DeepSeek 时配置 key：`export DEEPSEEK_API_KEY=sk-xxx`
@@ -1283,7 +1308,7 @@ Windows 宿主
 
 详细步骤见 `docs/本地启动.md`。
 
-### 11.3 配置文件
+### 12.3 配置文件
 
 - `application.properties` - 默认配置（支持环境变量覆盖）
 - `application-local.properties` - 本地敏感配置（密码，已 gitignore）

@@ -25,8 +25,8 @@ public class ModelRouter {
 
     /**
      * 基础人设 system prompt。
-     * 必须公开：Spring AI 的 ChatClient.prompt().system(...) 会覆盖 defaultSystem，
-     * 带历史上下文调用时需要自己把这段基础人设拼回去，否则从第二条消息起人设会丢失。
+     * 必须公开：ChatService 每轮都会显式设置 system prompt；历史只作为真实
+     * UserMessage / AssistantMessage 传入，不再拼进 system。
      */
     public static final String SYSTEM_PROMPT = """
             你是一个乐于助人的 AI 助手。

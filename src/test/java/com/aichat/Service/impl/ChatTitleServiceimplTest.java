@@ -77,4 +77,25 @@ class ChatTitleServiceimplTest {
         verify(repository, never()).getTitle(anyString(), anyString());
         verify(repository, never()).saveTitle(anyString(), anyString(), anyString());
     }
+
+    @Test
+    void shouldSanitizeAiTitle() {
+        when(callResponseSpec.content())
+                .thenReturn("<ds_safety>[安全]</ds_safety>\n\"  Java 集合  \"");
+        when(repository.getTitle("u1", "s1")).thenReturn("原始问题");
+
+        service.generateTitleAsync("u1", "s1", "原始问题", "原始问题");
+
+        verify(repository).saveTitle("u1", "s1", "Java 集合");
+    }
+
+    @Test
+    void shouldKeepFallbackWhenAiTitleOnlyContainsSafetyTag() {
+        when(callResponseSpec.content()).thenReturn("<ds_safety>[安全]</ds_safety>");
+
+        service.generateTitleAsync("u1", "s1", "问题", "问题");
+
+        verify(repository, never()).getTitle(anyString(), anyString());
+        verify(repository, never()).saveTitle(anyString(), anyString(), anyString());
+    }
 }

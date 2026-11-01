@@ -32,6 +32,11 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        // 先清理线程上可能残留的用户。
+        // SSE/异步请求的 afterCompletion 可能不在原 Tomcat 线程执行，
+        // 若不在入口处清理，后续无 Token 请求可能复用到上一个请求的用户。
+        UserHolder.removeUser();
+
         // 1. 从请求头获取Token
         String token = request.getHeader("Authorization");
         
