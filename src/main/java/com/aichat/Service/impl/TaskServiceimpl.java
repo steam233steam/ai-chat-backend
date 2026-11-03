@@ -226,7 +226,9 @@ public class TaskServiceimpl implements TaskService {
     }
 
     private String normalizeRule(String recurrence, String rawRule) {
-        if ("once".equals(recurrence) || "daily".equals(recurrence)) {
+        // null/blank 视为 once/daily（无需 rule）；normalizeRecurrence 已保证只产出 once/daily/weekly
+        String rc = (recurrence == null || recurrence.isBlank()) ? "once" : recurrence.trim().toLowerCase();
+        if ("once".equals(rc) || "daily".equals(rc)) {
             return null;
         }
         // weekly：必须带 BYDAY=XX
