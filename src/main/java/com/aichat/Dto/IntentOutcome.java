@@ -21,40 +21,51 @@ public final class IntentOutcome {
     private final boolean rejected;
     private final String reply;
     private final ConfirmResult confirmResult;
+    /** 命中"提取出新候选并写 pending"时的 pending id（其它分支为 null）。供前端弹窗直连 confirm/reject。 */
+    private final Long pendingId;
 
     private IntentOutcome(boolean continueChat, boolean extracted, boolean confirmed,
-            boolean rejected, String reply, ConfirmResult confirmResult) {
+            boolean rejected, String reply, ConfirmResult confirmResult, Long pendingId) {
         this.continueChat = continueChat;
         this.extracted = extracted;
         this.confirmed = confirmed;
         this.rejected = rejected;
         this.reply = reply;
         this.confirmResult = confirmResult;
+        this.pendingId = pendingId;
     }
 
     /** 无意图：走正常聊天 */
     public static IntentOutcome chat() {
-        return new IntentOutcome(true, false, false, false, null, null);
+        return new IntentOutcome(true, false, false, false, null, null, null);
     }
 
-    /** 新提取出候选并写了 pending，返回确认文案 */
+    /** 新提取出候选并写了 pending，返回确认文案。 */
     public static IntentOutcome extracted(String reply) {
-        return new IntentOutcome(false, true, false, false, reply, null);
+        return new IntentOutcome(false, true, false, false, reply, null, null);
+    }
+
+    /**
+     * 新提取出候选并写了 pending，返回确认文案 + pending id。
+     * 前端靠 pendingId 直接弹窗/调 confirm/reject，不用再查 current。
+     */
+    public static IntentOutcome extracted(String reply, Long pendingId) {
+        return new IntentOutcome(false, true, false, false, reply, null, pendingId);
     }
 
     /** 确认了 pending，拿到落库结果 */
     public static IntentOutcome confirmed(ConfirmResult confirmResult, String reply) {
-        return new IntentOutcome(false, false, true, false, reply, confirmResult);
+        return new IntentOutcome(false, false, true, false, reply, confirmResult, null);
     }
 
     /** 拒绝了 pending */
     public static IntentOutcome rejected(String reply) {
-        return new IntentOutcome(false, false, false, true, reply, null);
+        return new IntentOutcome(false, false, false, true, reply, null, null);
     }
 
     /** 命中意图但无需落库/不调模型：直接回固定文案（过期、限流、提取空、冲突） */
     public static IntentOutcome replyOnly(String reply) {
-        return new IntentOutcome(false, false, false, false, reply, null);
+        return new IntentOutcome(false, false, false, false, reply, null, null);
     }
 
     public boolean shouldContinueChat() {
@@ -79,5 +90,10 @@ public final class IntentOutcome {
 
     public ConfirmResult getConfirmResult() {
         return confirmResult;
+    }
+
+    /** 命中"提取出新候选并写 pending"时的 pending id；其它分支为 null。 */
+    public Long getPendingId() {
+        return pendingId;
     }
 }

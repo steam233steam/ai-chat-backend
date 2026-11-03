@@ -28,6 +28,7 @@ import com.aichat.Service.ChatTitleService;
 import com.aichat.Service.IntentService;
 import com.aichat.utils.ChatHistoryBuilder;
 import com.aichat.utils.ModelOutputSanitizer;
+import com.aichat.utils.MbMarkers;
 import com.aichat.utils.PromptBuilder;
 import com.aichat.utils.StreamingSafetyFilter;
 import com.aichat.utils.UserHolder;
@@ -85,7 +86,9 @@ public class ChatServiceimpl implements ChatService {
         // M3 意图拦截（同步/流式同一套顺序，v3 4.5）：命中意图直接返回确认/结果文案，不再调聊天模型
         IntentOutcome outcome = interceptIntent(userId, sessionid, question, sourceMessageId);
         if (outcome != null) {
-            chatSessionRepository.save(userId, sessionid, new AssistantMessage(outcome.getReply()), model);
+            // 存库用去标记的干净文案（历史回显不暴露机器标记）；返回给前端带标记（据此弹窗）
+            chatSessionRepository.save(userId, sessionid,
+                    new AssistantMessage(MbMarkers.strip(outcome.getReply())), model);
             return outcome.getReply();
         }
 
@@ -173,7 +176,8 @@ public class ChatServiceimpl implements ChatService {
         // M3 意图拦截（流式与同步同一套顺序，v3 4.5）：命中意图时只发一条 data 事件后结束，不走模型流
         IntentOutcome outcome = interceptIntent(userId, sessionid, question, streamSourceMessageId);
         if (outcome != null) {
-            saveAssistantReply(userId, sessionid, outcome.getReply(), model);
+            // 存库去标记，SSE 事件带标记（前端解析 [[MB:pending=N]] 弹窗）
+            saveAssistantReply(userId, sessionid, MbMarkers.strip(outcome.getReply()), model);
             return Flux.just(outcome.getReply());
         }
 

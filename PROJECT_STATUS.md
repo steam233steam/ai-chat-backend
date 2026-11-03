@@ -2,11 +2,11 @@
 
 ## 项目概览
 - **项目名称**: aichat
-- **技术栈**: Spring Boot 3.2.5 + Spring AI (1.0.0-M5) + Redis + Ollama + DeepSeek (OpenAI 兼容) + MySQL + MyBatis
+- **技术栈**: Spring Boot 3.2.5 + Spring AI (1.0.0-M5) + Redis + Ollama + DeepSeek (OpenAI 兼容) + MySQL + MyBatis + Springdoc
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: 模型输出净化 + 历史真实角色 + 字符预算裁剪 + 线程安全加固 + Springdoc/Swagger 在线接口文档完成 ✅
+- **当前阶段**: MindButler P1（长期记忆 + 口语化任务 + 待确认动作）✅
 
 ## 架构分层
 
@@ -21,26 +21,52 @@ com.aichat/
 │   ├── AsyncConfig.java            # 异步线程池配置（标题生成专用）
 │   ├── WebMvcConfig.java           # MVC 配置（拦截器 + CORS）
 │   ├── LoginInterceptor.java       # 登录拦截器（CORS 预检放行）
-│   └── RefreshTokenInterceptor.java # Token 刷新拦截器（入口清理 ThreadLocal）
+│   ├── RefreshTokenInterceptor.java # Token 刷新拦截器（入口清理 ThreadLocal）
+│   ├── MindButlerProperties.java   # ⭐ MindButler P1 配置（app.mindbutler.*，启动校验时区）
+│   ├── IntentExecutorConfig.java   # ⭐ 意图提取线程池配置
+│   ├── MindButlerStartupValidator  # ⭐ 启动校验（模型白名单 / 时区）
+│   └── ClockConfig.java            # ⭐ 时钟配置（可测试）
 ├── Controller/
 │   ├── ChatController.java         # 聊天接口（/chat 前缀 + 参数校验 + 分页 + @Operation）
-│   └── UserController.java         # 用户接口（/user 前缀 + @Valid 校验 + @Operation）
+│   ├── UserController.java         # 用户接口（/user 前缀 + @Valid 校验 + @Operation）
+│   ├── TaskController.java         # ⭐ 用户任务/计划接口（/user/tasks，MindButler P1）
+│   ├── MemoryController.java       # ⭐ 用户记忆接口（/user/memories，MindButler P1）
+│   └── PendingActionController.java # ⭐ 待确认动作接口（/user/pending-actions，MindButler P1）
 ├── Dto/
 │   ├── Result.java                 # 统一返回结果（支持自定义 code）
-│   ├── SMessage.java              # 消息实体（含 id 游标 + model + 时间戳，去 Lombok）
+│   ├── SMessage.java               # 消息实体（含 id 游标 + model + 时间戳，去 Lombok）
 │   ├── User.java                   # 用户实体
-│   ├── UserDto.java               # 用户 DTO（含 isNewUser 字段）
-│   └── LoginFormDTO.java          # 登录表单 DTO（@NotBlank + @Pattern 校验）
+│   ├── UserDto.java                # 用户 DTO（含 isNewUser 字段）
+│   ├── LoginFormDTO.java           # 登录表单 DTO（@NotBlank + @Pattern 校验）
+│   ├── IntentOutcome.java          # ⭐ 意图处理结果（不可变，工厂方法构造）
+│   ├── IntentExtractionResult.java # ⭐ 提取器/解析器与 Service 的边界对象
+│   ├── MemoryCandidate.java        # ⭐ 记忆候选
+│   ├── TaskCandidate.java          # ⭐ 任务候选
+│   ├── PendingActionVO.java        # ⭐ 待确认动作 VO
+│   ├── ConfirmResult.java          # ⭐ 确认结果
+│   ├── MemoryVO.java               # ⭐ 记忆 VO
+│   ├── TaskVO.java                 # ⭐ 任务 VO
+│   ├── CreateMemoryRequest.java    # ⭐ 创建记忆请求
+│   ├── UpdateMemoryRequest.java    # ⭐ 更新记忆请求
+│   ├── CreateTaskRequest.java      # ⭐ 创建任务请求
+│   ├── UpdateTaskRequest.java      # ⭐ 更新任务请求
+│   └── CompleteTaskRequest.java    # ⭐ 完成任务请求
 ├── Entity/
 │   ├── ChatSession.java            # 会话实体（tb_chat_session，含 model 列）
-│   └── ChatMessage.java            # 消息实体（tb_chat_message，含 model 列）
+│   ├── ChatMessage.java            # 消息实体（tb_chat_message，含 model 列）
+│   ├── UserMemory.java             # ⭐ 用户长期记忆（tb_user_memory）
+│   ├── UserTask.java               # ⭐ 用户任务/计划（tb_user_task）
+│   └── PendingAction.java          # ⭐ 待确认动作（tb_pending_action）
 ├── Exception/
 │   ├── BusinessException.java      # 业务异常（含错误码）
 │   └── GlobalExceptionHandler.java # 全局异常处理器（含 @Valid/404/409/413）
 ├── Mapper/
 │   ├── UserMapper.java             # 用户 Mapper
 │   ├── ChatSessionMapper.java      # 会话 Mapper（upsert + 锁模型 + 按用户查询）
-│   └── ChatMessageMapper.java      # 消息 Mapper（游标分页查询 + model 列）
+│   ├── ChatMessageMapper.java      # 消息 Mapper（游标分页查询 + model 列）
+│   ├── UserMemoryMapper.java       # ⭐ 记忆 Mapper
+│   ├── UserTaskMapper.java         # ⭐ 任务 Mapper
+│   └── PendingActionMapper.java    # ⭐ 待确认动作 Mapper
 ├── Repository/
 │   ├── ChatSessionRepository.java  # 会话仓储接口（含分页 + 锁模型 + 批量取模型）
 │   ├── UserRepository.java         # 用户仓储接口
@@ -48,27 +74,48 @@ com.aichat/
 │       ├── ChatSessionRepositoryimpl.java  # MySQL 主存储 + Redis 缓存（id 游标 + 锁模型）
 │       └── UserRepositoryimpl.java
 ├── Service/
-│   ├── ChatService.java            # 聊天服务接口（含模型名 + 分页）
+│   ├── ChatService.java            # 聊天服务接口（含模型名 + 分页 + 意图拦截）
 │   ├── UserService.java            # 用户服务接口
 │   ├── ChatPersistenceService.java # 聊天持久化服务接口（MySQL 事务 + 锁模型）
 │   ├── ChatTitleService.java       # AI 标题生成服务接口
+│   ├── IntentService.java          # ⭐ 意图服务（口语 → 待确认动作，编排入口）
+│   ├── IntentExtractor.java        # ⭐ 意图提取器接口（LLM + timeout）
+│   ├── MemoryService.java          # ⭐ 用户长期记忆服务
+│   ├── TaskService.java            # ⭐ 用户任务/计划服务
+│   ├── PendingActionService.java   # ⭐ 待确认动作服务（v3 状态机）
+│   ├── support/                    # ⭐ Service 的协作组件（非业务接口）
+│   │   ├── IntentDailyLimiter.java   # 每用户每日意图提取限流
+│   │   └── IntentCandidateSanitizer  # 候选校验/截断/敏感词
 │   └── impl/
-│       ├── ChatServiceImpl.java    # 含历史角色 + 字符预算 + 输出净化 + 流式过滤
+│       ├── ChatServiceImpl.java    # 含历史角色 + 字符预算 + 输出净化 + 流式过滤 + 意图拦截
 │       ├── UserServiceimpl.java
 │       ├── ChatPersistenceServiceimpl.java
-│       └── ChatTitleServiceimpl.java # 异步标题生成（@Async 独立线程池 + 标题净化）
+│       ├── ChatTitleServiceimpl.java # 异步标题生成（@Async 独立线程池 + 标题净化）
+│       ├── IntentServiceimpl.java    # ⭐ 意图编排（粗筛 → 限流 → 提取 → 校验 → pending → 文案）
+│       ├── IntentExtractorimpl.java  # ⭐ LLM 提取 + timeout + 结构化解析
+│       ├── MemoryServiceimpl.java    # ⭐ 记忆 CRUD + 注入 + 导出 + 乐观锁
+│       ├── TaskServiceimpl.java      # ⭐ 任务 CRUD + 完成/重复滚动 + 到期查询
+│       └── PendingActionServiceimpl  # ⭐ pending 状态机 + 事务 + 原子确认
 └── Utils/
     ├── UserHolder.java             # 用户上下文（ThreadLocal）
     ├── PasswordUtils.java          # 密码工具（BCrypt）
     ├── RegexUtils.java             # 正则工具（含密码校验）
     ├── RegexPatterns.java          # 正则表达式常量
     ├── RedisConstants.java         # Redis Key 常量（含会话锁模型 Hash）
-    ├── ChatHistoryBuilder.java      # ⭐ 把持久化历史转换成真实 Spring AI 消息角色（条数 + 字符预算裁剪）
-    ├── ModelOutputSanitizer.java   # ⭐ 模型输出净化（剥 <ds_safety> 标签 + 标题净化）
-    └── StreamingSafetyFilter.java  # ⭐ 有状态流式过滤器（跨 chunk 剥安全标签）
+    ├── ChatHistoryBuilder.java     # 把持久化历史转换成真实 Spring AI 消息角色（条数 + 字符预算裁剪）
+    ├── ModelOutputSanitizer.java   # 模型输出净化（剥 <ds_safety> 标签 + 标题净化）
+    ├── StreamingSafetyFilter.java  # 有状态流式过滤器（跨 chunk 剥安全标签）
+    ├── IntentDetector.java         # ⭐ 意图粗筛（关键词触发，避免每条都走 LLM）
+    ├── IntentJsonParser.java       # ⭐ LLM JSON → DTO 解析
+    ├── IntentPayloadCodec.java     # ⭐ pending payload 编解码（唯一入口）
+    ├── IntentReplyFormatter.java   # ⭐ 确认/结果文案生成
+    ├── IntentPrompts.java          # ⭐ 意图提取 Prompt
+    ├── PromptBuilder.java          # ⭐ 注入画像 + 历史组装
+    ├── MemoryKey.java              # ⭐ 记忆 key 枚举（style/goal/schedule/relation）
+    └── SensitiveContentFilter.java # ⭐ 敏感词过滤
 ```
 
-## 当前状态（2026-11-01 13:08 更新）
+## 当前状态（2026-11-03 17:24 更新）
 
 ### ✅ 已完成功能
 #### 用户认证系统
@@ -83,7 +130,7 @@ com.aichat/
 - [x] @Valid 参数校验（NotBlank + Pattern）
 
 #### 聊天功能
-- [x] 同步对话（POST /chat/ask）+ 参数长度校验 + 输出净化
+- [x] 同步对话（POST /chat/ask）+ 参数长度校验 + 输出净化 + 意图拦截
 - [x] 流式对话（GET /chat/ask-stream）+ SSE + 流式安全过滤
 - [x] 获取会话历史（GET /chat/history）+ 时间戳 + 游标分页 + model 字段
 - [x] 获取会话列表（GET /chat/sessions）+ model 字段
@@ -103,138 +150,104 @@ com.aichat/
 - [x] `GET /chat/history` 支持 `beforeId` + `limit` 游标分页
 - [x] `limit` 不传时保持旧行为（返回全量历史），现有前端无需改动
 - [x] `beforeId` 必须配 `limit` 使用，`limit` 范围 1-100
-- [x] `ChatMessageMapper` 新增 `selectLatestBySession` 和 `selectBySessionBeforeId`
 - [x] 分页查询时不回写缓存（避免把"一页"当成全量历史）
 - [x] 旧版消息缓存缺少 `id` 时自动回源 MySQL 重建
 
-#### 上下文裁剪（2026-10-25 → 2026-11-01）
+#### 上下文裁剪（2026-11-01）
 - [x] 按条数裁剪：`app.chat.context-max-messages`（默认 20，<=0 不裁剪）
-- [x] 按字符预算裁剪：`app.chat.context-max-chars`（默认 24000，<=0 不限制）⭐ 2026-11-01
+- [x] 按字符预算裁剪：`app.chat.context-max-chars`（默认 24000，<=0 不限制）
 - [x] 历史接口仍返回全量/分页数据，裁剪只影响 AI 上下文
 
-#### 异步 AI 标题生成（2026-10-25 → 2026-11-01）
+#### 异步 AI 标题生成（2026-10-25）
 - [x] `ChatTitleService` - 会话标题生成接口
-- [x] `ChatTitleServiceimpl` - 使用默认模型（本地 Ollama，便宜快）异步生成标题
-- [x] `AsyncConfig` - 独立线程池（core=2, max=4, queue=100, CallerRunsPolicy）
-- [x] 首次对话时先写兜底标题落库，再提交异步 AI 标题任务
-- [x] 如果用户已手动修改标题（标题不再等于兜底值），跳过 AI 标题覆盖
-- [x] 标题生成失败时静默保留兜底标题，绝不影响主流程
-- [x] 标题用 `ModelOutputSanitizer.sanitizeTitle` 净化（去安全标签/HTML/引号/换行）⭐ 2026-11-01
+- [x] 使用默认模型（本地 Ollama，便宜快）异步生成标题
+- [x] 独立线程池（core=2, max=4, queue=100, CallerRunsPolicy）
+- [x] 用户已手动改名时跳过 AI 覆盖；失败静默保留兜底标题
+- [x] 标题走 `sanitizeTitle` 净化
 
 #### 会话锁模型（2026-10-28）
-- [x] `ChatMessage` / `ChatSession` 实体新增 `model` 字段
-- [x] `tb_chat_message.model` - 记录每条消息实际使用的模型
-- [x] `tb_chat_session.model` - 会话锁定的模型（首条消息写入后固定）
-- [x] `ChatSessionMapper.upsert` 使用 `COALESCE(model, #{model})` 实现锁模型
-- [x] `ChatServiceimpl.enforceModelLock` - 新会话锁模型，已有会话切换模型报 409
-- [x] `ChatSessionRepository.lockModel` / `getModel` / `getModels`
-- [x] `RedisConstants.SESSION_MODEL_KEY_PREFIX` - 会话锁模型 Hash 缓存
-- [x] `GET /chat/sessions` 返回 `model` 字段（批量取模型，避免逐会话查库）
-- [x] `GET /chat/history` 返回 `model` 字段
-- [x] 迁移脚本 `docs/migration/2026-10-28-add-chat-message-model.sql`
-- [x] 迁移脚本 `docs/migration/2026-10-28-add-chat-session-model.sql`
+- [x] 会话首条消息锁定模型，切换报 409
+- [x] `tb_chat_session.model` + `COALESCE(model, #{model})` upsert
+- [x] `GET /chat/sessions` / `GET /chat/history` 返回 model 字段
 
-#### 带发言人标注的历史（2026-10-28）
-- [x] `ChatHistoryFormatter` - 把带 model 标签的会话历史格式化成喂给大模型的文本块
-- [x] 每条历史标注"发言人: 模型名（我/其他模型）"
-- [x] 让当前模型能明确区分"哪些是我说的、哪些是别的模型说的"
-- [x] 共享上下文（跨模型不断裂）+ 不认领错误（不把别的模型的话当成自己的）
-- [x] `ChatServiceimpl.buildLabeledHistory` - 渲染带标注的历史文本块
-- [x] `ChatServiceimpl.withHistory` - 把带标注的历史挂到 prompt，保留基础人设
-- [x] 旧版本消息缺少 model 时标记为"未知模型"
+#### 模型输出净化（2026-11-01）
+- [x] `ModelOutputSanitizer` - 剥 `<ds_safety>` 标签 + 标题净化
+- [x] `StreamingSafetyFilter` - 跨 chunk 剥标签（标签可能被拆开）
+- [x] 同步/流式/标题三路净化，不存脏数据
 
-#### 历史角色真实化（2026-11-01）⭐
-- [x] 历史从"带标注文本块拼进 system"改为"真实 UserMessage / AssistantMessage 角色"
-- [x] 安全边界：历史只作为 User/Assistant 传入，绝不拼进 system prompt，避免用户历史被提升为系统指令
-- [x] 当前问题作为最后一条 UserMessage 追加
-- [x] `withHistory` 用 `chatClient.prompt().system(ModelRouter.SYSTEM_PROMPT).messages(historyMessages + [question])`
-- [x] 兜底文案不再污染下一轮上下文（失败时不写入历史）
+#### 历史角色真实化（2026-11-01）
+- [x] 历史以真实 User/Assistant 角色送入，不拼 system（防提示注入）
+- [x] 当前问题作为最后一条 UserMessage
 
-#### 模型输出净化（2026-11-01）⭐
-- [x] `ModelOutputSanitizer.sanitize` - 剥掉模型偶尔泄漏的内部 `<ds_safety>` 安全审核标签
-- [x] 同步回复落库前净化，避免脏数据进库/进前端
-- [x] 流式回复用 `StreamingSafetyFilter` 跨 chunk 剥标签（标签可能被拆成 "<ds_sa" + "fety>"）
-- [x] 清理后为空时用固定兜底文案（"（模型回复被过滤，请稍后重试或换个问法）"），不存空消息
-- [x] 标题专用净化 `sanitizeTitle`（去安全标签/HTML/引号/换行/控制字符）
+#### 线程安全加固（2026-11-01）
+- [x] `RefreshTokenInterceptor` 入口 + 出口双重清理 ThreadLocal
+- [x] 防 SSE/异步请求串用户
 
-#### 线程安全加固（2026-11-01）⭐
-- [x] `RefreshTokenInterceptor.preHandle` 入口先 `UserHolder.removeUser()`
-- [x] SSE/异步请求的 `afterCompletion` 可能不在原 Tomcat 线程执行，若不在入口清理，后续无 Token 请求可能复用到上一个请求的用户（串用户）
-- [x] 配合 `afterCompletion` 清理，双重保障防止 ThreadLocal 内存泄漏 + 用户串号
-
-#### 数据持久化（2026-10-22）
-- [x] `tb_chat_session` 表（会话元数据）
-- [x] `tb_chat_message` 表（聊天消息）
-- [x] `ChatPersistenceService` - MySQL 事务写入
-- [x] `ChatSessionRepositoryimpl` - 先写 MySQL，再写 Redis；读未命中回源
-- [x] 旧库 password NOT NULL 迁移脚本
-
-#### 安全与工具
-- [x] Token 拦截器（RefreshTokenInterceptor，入口清理 ThreadLocal）
-- [x] 登录拦截器（LoginInterceptor）+ CORS 预检放行
-- [x] BCrypt 密码加密
-- [x] 手机号/验证码/密码正则校验
-- [x] ThreadLocal 用户上下文（入口 + 出口双重清理）
-- [x] 新用户标记功能
-- [x] 全局异常处理器（含 @Valid/404/409/413）
-- [x] 验证码发送防刷冷却（60 秒）
-- [x] 会话数据用户隔离
-- [x] CORS 配置（本地开发端口）
-- [x] 验证码日志脱敏（只打前 2 位，避免手机号 + 验证码成对泄露）
-- [x] `app.sms.dev-mode` 默认 false（生产安全）
-- [x] 模型输出净化（剥安全标签 + 流式过滤 + 标题净化）
-
-#### 在线接口文档（2026-11-01）⭐
-- [x] `pom.xml` 新增 `springdoc-openapi-starter-webmvc-ui`（2.5.0）
-- [x] `ChatController` / `UserController` 全部接口加 `@Tag` + `@Operation` 注解
-- [x] `application.properties` 新增 springdoc 开关（`springdoc.enabled` 默认 true，可用 `SPRINGDOC_ENABLED=false` 关掉）
+#### 在线接口文档（2026-11-01）
+- [x] `springdoc-openapi-starter-webmvc-ui`（2.5.0）
+- [x] 全部接口加 `@Tag` + `@Operation` 注解
 - [x] Swagger UI：`http://localhost:8080/swagger-ui.html`
 - [x] OpenAPI JSON：`http://localhost:8080/v3/api-docs`
-- [x] 生产环境可关闭，不暴露文档
+- [x] 生产可用 `SPRINGDOC_ENABLED=false` 关掉
 
-#### 测试基础设施（2026-11-01）⭐
-- [x] `pom.xml` 新增 `httpclient5`（test scope）
-- [x] 集成测试的 RestTemplate 正确处理 4xx 响应（JDK 默认工厂对 4xx 会抛 HttpRetryException）
+#### MindButler P1：长期记忆 + 口语化任务 ⭐（2026-11-03）
+- [x] 新增 `tb_user_memory` 表（结构化画像，固定 schema + status 生命周期 + expires_at 过期）
+- [x] 新增 `tb_user_task` 表（任务/计划，due_at + recurrence + 乐观锁 + 软删）
+- [x] 新增 `tb_pending_action` 表（AI 提案，确认后才写入 memory/task；pending_slot 生成列保证同 user+session 只有一个 pending）
+- [x] `MemoryController` - 记忆 CRUD + 注入查询 + 导出（`/user/memories`）
+- [x] `TaskController` - 任务 CRUD + 完成 + 到期查询（`/user/tasks`）
+- [x] `PendingActionController` - 待确认动作 当前查询/确认/拒绝（`/user/pending-actions`）
+- [x] `IntentService` - 口语 → 待确认动作编排（粗筛 → 限流 → 提取 → 校验 → pending → 文案）
+- [x] `IntentExtractor` - LLM 提取（deepseek-chat 结构化能力强）+ timeout
+- [x] `IntentDetector` - 关键词粗筛，避免每条消息都走 LLM
+- [x] `IntentDailyLimiter` - 每用户每日提取限流（默认 50 次）
+- [x] `IntentCandidateSanitizer` - 候选校验/截断/敏感词过滤
+- [x] `IntentPayloadCodec` - pending payload 编解码（唯一入口）
+- [x] `IntentReplyFormatter` - 确认/结果文案
+- [x] `SensitiveContentFilter` - 敏感词过滤
+- [x] `PromptBuilder` - 注入画像 + 历史组装
+- [x] `MindButlerProperties` - 配置绑定 + 启动校验（时区只允许 Asia/Shanghai）
+- [x] `IntentExecutorConfig` - 意图提取线程池
+- [x] `MindButlerStartupValidator` - 启动校验（模型白名单）
+- [x] `ClockConfig` - 时钟可测试化
+- [x] 迁移脚本 `docs/migration/2026-11-02-mindbutler-p1.sql`
+- [x] 设计文档 `docs/MindButler-P1设计.md` / `docs/MindButler-P1设计-v2.md`
+- [x] 上线验收清单 `docs/P1-上线验收清单.md`
+- [x] 代码结构说明 `docs/P1-代码结构.md`
+- [x] 评测集 `docs/eval/mindbutler-intent-eval.json`
+- [x] 聊天拦截：`ChatServiceimpl` 在 sendSession 前调 `IntentService.handle`，命中意图时返回文案 + pending，不继续正常聊天
 
-#### 工程化
-- [x] `README.md` - 项目说明 + API 总览 + 配置项
-- [x] `.github/workflows/ci.yml` - CI（单元测试 + 打包）
-- [x] `docs/踩坑记录.md` - 开发踩坑记录
-- [x] `docs/INTERVIEW_ROADMAP.md` - 面试路线图
-- [x] `docs/聊天记录持久化设计.md` - 持久化设计
-- [x] `docs/本地启动.md` - 本地启动指南
-- [x] `docs/schema.sql` - 数据库初始化脚本
-- [x] `docs/DEVELOPMENT_PLAN.md` - 后续开发计划
+### 📝 核心改进（2026-11-03 MindButler P1）
 
-### 📝 核心改进（2026-11-01 更新）
+**1. 长期记忆（结构化画像，不用向量库）**
+- `tb_user_memory`：固定 schema（memKey 是有限枚举 style/goal/schedule/relation）+ status 生命周期（active/superseded/deleted）+ expires_at 过期（dynamic 记忆 90 天，stable 不过期）
+- confidence 仅用于排序/审计，不决定生效（生效只由用户确认决定）
+- 注入：`listForInjection` 按 stable/dynamic 分开配额（各 5 条）+ 总字符预算（1200），`PromptBuilder` 拼进 system
+- 安全：`SensitiveContentFilter` 过滤敏感词；stable 强制 expiresAt=null；手动创建 confidence=1.00
 
-**1. 模型输出净化（输出侧防御层）**
-- 部分模型（如 DeepSeek 的推理侧安全层）在特定输入下会把内部审核标签（形如 `<ds_safety>...</ds_safety>`）夹带进 content
-- 正常 API 调用中这类标签不应出现在 `message.content` 里
-- `ModelOutputSanitizer.sanitize`：完整标签对（忽略大小写、支持跨行和标签内空白）剥离；残缺标签开头（只吐了开标签没吐闭合）从该处到末尾全丢；清理后为空用固定兜底文案
-- `StreamingSafetyFilter`：有状态流式过滤器，保留少量尾部缓冲，等标签完整或流结束后再决定，避免对每个 chunk 单独调用导致被拆开的标签漏过
-- 同步/流式/标题三条路径都走净化，不存脏数据
+**2. 口语化任务（"记得周五交周报" → 任务）**
+- `tb_user_task`：due_at（可空）+ recurrence（once/daily/weekly，monthly 预留 P1.5）+ 乐观锁 + 软删（status 与 deleted_at 分离）
+- 完成：once → done；daily/weekly → 保持 pending + due_at 滚动到下一次
+- 到期查询：`GET /user/tasks/due`（status=pending、有 due_at 且已到期，按 due_at 升序；P1 只读不回写 last_notified_at）
+- 时区：P1 固定 Asia/Shanghai（启动校验，配置错在启动时失败）
 
-**2. 历史角色真实化（安全边界）**
-- 历史从"带标注文本块拼进 system"改为"真实 UserMessage / AssistantMessage 角色"
-- 安全边界：历史只作为 User/Assistant 传入模型，绝不拼进 system prompt，否则用户历史会被提升为系统指令（提示注入风险）
-- `ChatHistoryBuilder.build(history, maxMessages, maxChars)` 负责按条数 + 字符预算裁剪
-- 当前问题作为最后一条 UserMessage，保持"当前问题只通过最后一条进入上下文"避免重复发送
+**3. 待确认动作（v3 状态机）**
+- LLM 提取的记忆/任务候选先落 `tb_pending_action`（status=pending），用户确认后才写进 tb_user_memory / tb_user_task
+- `pending_slot` 生成列（`CONCAT(user_id, ':', session_id)` 当 status=pending）+ 唯一键，保证同一 user+session 只有一个 pending
+- 确认原子 + 幂等：重复确认返回 alreadyConfirmed=true（不重复建）；已拒绝/过期 409
+- actionType（memory/task/mixed）由 payload 内容推导，只用于展示/索引，不参与确认分支（确认时按实际 memories/tasks 分三路落库）
 
-**3. 字符预算裁剪**
-- 新增 `app.chat.context-max-chars`（默认 24000），历史总字符预算
-- `ChatHistoryBuilder` 从最新往旧取，保证超预算时优先保留最近上下文
-- 单条消息自身超预算时保留其尾部（至少让模型看到最近上下文）
-- 每条消息有固定开销 `MESSAGE_OVERHEAD=16` 用于字符预
+**4. 意图编排（聊天拦截）**
+- `ChatServiceimpl.sendSession` 先调 `IntentService.handle(sessionId, message, sourceMessageId)`
+- 编排顺序：`IntentDetector` 粗筛（NONE → 走正常聊天；CONFIRM → confirm；REJECT → reject；MEMORY/TASK → 提取）→ `IntentDailyLimiter` 限流 → `IntentExtractor` LLM 提取 → `IntentCandidateSanitizer` 校验 → `IntentPayloadCodec` 写 pending → `IntentReplyFormatter` 文案
+- 提取失败/空候选 → 兜底文案（不让聊天 500，不污染上下文）
+- `IntentOutcome` 是服务返回结果（不可变，工厂方法构造），放 Dto 不放 Service
 
-**4. 线程安全加固**
-- `RefreshTokenInterceptor` 入口先 `UserHolder.removeUser()`
-- SSE/异步请求的 `afterCompletion` 可能不在原 Tomcat 线程执行，若不在入口清理，后续无 Token 请求可能复用到上一个请求的用户（串用户）
-- 配合 `afterCompletion` 清理，双重防止 ThreadLocal 内存泄漏 + 用户串号
-
-**5. 失败兜底文案不污染上下文**
-- 流式调用失败时（`failed` 标志），兜底文案不写入历史，避免污染下一轮上下文
-- 只有正常结束或客户端主动断开时才保存已生成部分
+**5. 包结构修正（复盘）**
+- `IntentOutcome` / `IntentExtractionResult` 放 `Dto`（不是 Service）
+- `IntentDailyLimiter` / `IntentCandidateSanitizer` 放 `Service.support`（协作组件，非业务接口）
+- `IntentPayloadCodec` 是 pending payload 唯一编解码入口（IntentService 和 PendingActionService 不各写 ObjectMapper）
+- 启动校验从 `IntentExtractorimpl` 的 @PostConstruct 拆到 `Config.MindButlerStartupValidator`
 
 ### API 接口总览（对外行为）
 
@@ -254,12 +267,42 @@ com.aichat/
 | 方法 | 路径 | 参数 | 说明 |
 |------|------|------|------|
 | GET | /chat/models | - | 可用模型白名单（公开接口） |
-| POST | /chat/ask | sessionid, question, modelName? | 发送聊天消息（同步，会话锁模型，输出净化） |
+| POST | /chat/ask | sessionid, question, modelName? | 发送聊天消息（同步，会话锁模型，输出净化，意图拦截） |
 | GET | /chat/ask-stream | sessionid, question, modelName? | 流式发送聊天消息（SSE，会话锁模型，流式安全过滤） |
 | GET | /chat/history | sessionid, beforeId?, limit? | 获取会话历史（含时间戳 + model + 分页） |
 | GET | /chat/sessions | - | 获取会话列表（含 model） |
 | PUT | /chat/title | sessionid, title | 更新会话标题 |
 | DELETE | /chat/clear-session | sessionid | 清空会话 |
+
+#### MindButler P1 接口（/user 前缀）
+
+**用户任务 `/user/tasks`**
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | /user/tasks/due | limit? | 到期待办（pending + 有 due_at + 已到期，due_at 升序） |
+| GET | /user/tasks | status?, beforeId?, limit? | 任务列表（游标分页） |
+| GET | /user/tasks/{id} | - | 查单条任务（含 overdue 计算；非本人/已删 404） |
+| POST | /user/tasks | body | 手动创建任务（不走 LLM） |
+| PUT | /user/tasks/{id} | body | 更新任务（乐观锁，只能改 pending，version 不匹配 409） |
+| POST | /user/tasks/{id}/complete | body | 完成任务（once→done；daily/weekly 滚动到下次） |
+| DELETE | /user/tasks/{id} | - | 删除任务（软删，幂等） |
+
+**用户记忆 `/user/memories`**
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | /user/memories | limit? | 查询生效记忆（active 且未过期，limit 1-100） |
+| GET | /user/memories/export | - | 导出全部记忆（含 superseded，隐私查看/迁移） |
+| GET | /user/memories/{id} | - | 查单条记忆（含 status/expired 计算；非本人/已删 404） |
+| POST | /user/memories | body | 手动创建记忆（source=manual，confidence=1.00） |
+| PUT | /user/memories/{id} | body | 更新记忆（乐观锁，只能改 active 未过期，409） |
+| DELETE | /user/memories/{id} | - | 删除记忆（软删，幂等） |
+
+**待确认动作 `/user/pending-actions`**
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | /user/pending-actions/current | sessionId | 当前会话的待确认动作（没有/已过期 data=null） |
+| POST | /user/pending-actions/{id}/confirm | - | 确认（原子，幂等；重复确认 alreadyConfirmed；已拒绝/过期 409） |
+| POST | /user/pending-actions/{id}/reject | - | 拒绝（幂等；已拒绝静默成功；已确认/过期 409） |
 
 ### 技术要点
 1. **MySQL 是聊天数据持久化主存储**，Redis 只做 7 天热缓存
@@ -273,12 +316,15 @@ com.aichat/
 9. 双拦截器：Token 刷新（入口清理 ThreadLocal）+ 登录校验，CORS 预检放行
 10. 参数校验：长度限制 + 格式校验 + 归属校验 + @Valid
 11. 多模型路由：`ModelRouter` 按白名单分发 Ollama / DeepSeek
-12. 上下文裁剪：按条数（默认 20）+ 字符预算（默认 24000）双重控制
+12. 上下文裁剪：条数（默认 20）+ 字符预算（默认 24000）双重控制
 13. 异步标题：独立线程池，不阻塞主流程，标题走净化
 14. 会话锁模型：首条消息锁定，切换报 409
 15. 历史角色真实化：User/Assistant 消息，不拼 system（防提示注入）
 16. 模型输出净化：剥 `<ds_safety>` 标签，同步/流式/标题三路
 17. 线程安全：拦截器入口 + 出口双重清理 ThreadLocal
+18. 在线 Swagger：springdoc + @Operation 注解
+19. MindButler P1：长期记忆（结构化画像）+ 口语化任务 + 待确认动作（v3 状态机）
+20. 意图编排：粗筛 → 限流 → LLM 提取 → 校验 → pending → 文案，不污染聊天上下文
 
 ## 数据库表结构
 
@@ -317,9 +363,73 @@ CREATE TABLE tb_chat_message (
   session_id  VARCHAR(64) NOT NULL COMMENT '所属会话',
   role        VARCHAR(16) NOT NULL COMMENT 'user/assistant/system',
   content     TEXT NOT NULL COMMENT '消息内容',
-  model       VARCHAR(64) COMMENT '本轮使用的模型名（多模型切换后每条消息记录实际走的是哪个模型）',
+  model       VARCHAR(64) COMMENT '本轮使用的模型名',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间',
   KEY idx_user_session (user_id, session_id, id)
+);
+```
+
+### tb_user_memory 表 ⭐ MindButler P1
+```sql
+CREATE TABLE tb_user_memory (
+  id                BIGINT NOT NULL AUTO_INCREMENT,
+  user_id           VARCHAR(32) NOT NULL COMMENT '用户 uid',
+  mem_key           VARCHAR(32) NOT NULL COMMENT 'P1: style|goal|schedule|relation',
+  content           VARCHAR(512) NOT NULL COMMENT '记忆内容（应用层限制 256 字符）',
+  mem_type          ENUM('stable','dynamic') NOT NULL DEFAULT 'stable',
+  status            ENUM('active','superseded','deleted') NOT NULL DEFAULT 'active',
+  confidence        DECIMAL(3,2) NOT NULL DEFAULT 1.00 COMMENT '仅排序/审计，不决定生效',
+  source            ENUM('manual','ai') NOT NULL DEFAULT 'manual',
+  source_message_id BIGINT NULL COMMENT '来源聊天消息 id',
+  replaces_id       BIGINT NULL COMMENT '替换的旧记忆 id（旧条置 superseded）',
+  expires_at        DATETIME NULL COMMENT 'dynamic 过期时间；stable 为 NULL',
+  version           INT NOT NULL DEFAULT 0 COMMENT '乐观锁',
+  create_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);
+```
+
+### tb_user_task 表 ⭐ MindButler P1
+```sql
+CREATE TABLE tb_user_task (
+  id                BIGINT NOT NULL AUTO_INCREMENT,
+  user_id           VARCHAR(32) NOT NULL,
+  title             VARCHAR(128) NOT NULL,
+  due_at            DATETIME NULL COMMENT '无截止时间可为 NULL',
+  timezone          VARCHAR(40) NOT NULL DEFAULT 'Asia/Shanghai',
+  recurrence        ENUM('once','daily','weekly','monthly') NOT NULL DEFAULT 'once',
+  recurrence_rule   VARCHAR(128) NULL COMMENT 'weekly: BYDAY=MO；monthly P1.5: BYMONTHDAY=31',
+  status            ENUM('pending','done','cancelled') NOT NULL DEFAULT 'pending',
+  deleted_at        DATETIME NULL COMMENT '软删；非 NULL 表示已删除',
+  last_notified_at  DATETIME NULL COMMENT 'P3 推送用；P1 GET /due 不回写',
+  completed_at      DATETIME NULL,
+  raw_input         VARCHAR(512) NULL COMMENT '触发句截断，最大 512 字符',
+  source_message_id BIGINT NULL,
+  version           INT NOT NULL DEFAULT 0,
+  create_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);
+```
+
+### tb_pending_action 表 ⭐ MindButler P1
+```sql
+CREATE TABLE tb_pending_action (
+  id                BIGINT NOT NULL AUTO_INCREMENT,
+  user_id           VARCHAR(32) NOT NULL,
+  session_id        VARCHAR(64) NOT NULL,
+  action_type       ENUM('memory','task','mixed') NOT NULL,
+  payload           JSON NOT NULL COMMENT '提案内容（memories + tasks），限制 16KB',
+  status            ENUM('pending','confirmed','rejected','expired') NOT NULL DEFAULT 'pending',
+  expires_at        DATETIME NOT NULL,
+  source_message_id BIGINT NULL,
+  pending_slot      VARCHAR(140) GENERATED ALWAYS AS (
+                    CASE WHEN status = 'pending' THEN CONCAT(user_id, ':', session_id) ELSE NULL END
+                  ) STORED COMMENT '保证同一 user+session 只有一个 pending；非 pending 为 NULL',
+  create_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
 );
 ```
 
@@ -328,6 +438,7 @@ CREATE TABLE tb_chat_message (
 - `docs/migration/2026-10-22-fix-tb-user-password-null.sql`
 - `docs/migration/2026-10-28-add-chat-message-model.sql`
 - `docs/migration/2026-10-28-add-chat-session-model.sql`
+- `docs/migration/2026-11-02-mindbutler-p1.sql` ⭐
 
 ## 依赖项
 ```xml
@@ -336,11 +447,13 @@ CREATE TABLE tb_chat_message (
 - spring-boot-starter-data-redis
 - spring-ai-ollama-spring-boot-starter
 - spring-ai-openai-spring-boot-starter  (DeepSeek)
+- springdoc-openapi-starter-webmvc-ui (2.5.0)
 - mysql-connector-j (8.0.33)
 - mybatis-spring-boot-starter (3.0.3)
 - hutool-core (5.8.25)
 - hutool-crypto (5.8.25)
 - spring-boot-starter-test
+- httpclient5 (test scope，集成测试 4xx 处理)
 ```
 
 ## 配置项说明
@@ -352,49 +465,65 @@ app.models.available=qwen2.5-coder:7b,deepseek-chat
 app.models.default-model=qwen2.5-coder:7b
 app.models.ollama-models=qwen2.5-coder:7b
 
-# 上下文裁剪（条数 + 字符预算）
+# 上下文裁剪
 app.chat.context-max-messages=20
 app.chat.context-max-chars=24000
 
 # 验证码开发模式（默认关闭，本地在 application-local.properties 显式设 true）
 app.sms.dev-mode=${APP_SMS_DEV_MODE:false}
 
-# DeepSeek（OpenAI 兼容协议）
-spring.ai.openai.base-url=${DEEPSEEK_BASE_URL:https://api.deepseek.com}
-spring.ai.openai.api-key=${DEEPSEEK_API_KEY:sk-deepseek-placeholder}
-spring.ai.openai.chat.options.model=deepseek-chat
+# MindButler P1（长期记忆 + 口语化任务 + 意图提取）
+app.mindbutler.enabled=true
+app.mindbutler.intent.enabled=true
+app.mindbutler.intent.extract-model=deepseek-chat
+app.mindbutler.intent.timeout-ms=5000
+app.mindbutler.intent.daily-limit=50
+app.mindbutler.intent.max-memories=5
+app.mindbutler.intent.max-tasks=5
+app.mindbutler.memory.dynamic-ttl-days=90
+app.mindbutler.memory.max-per-user=100
+app.mindbutler.memory.inject-max-stable=5
+app.mindbutler.memory.inject-max-dynamic=5
+app.mindbutler.memory.inject-max-chars=1200
+app.mindbutler.task.zone=Asia/Shanghai
+app.mindbutler.task.max-per-user=500
+app.mindbutler.task.due-limit=50
+app.mindbutler.pending.ttl-minutes=10
+app.mindbutler.pending.payload-max-bytes=16384
 
-# Ollama（本地模型）
-spring.ai.ollama.base-url=${OLLAMA_BASE_URL:http://localhost:11434}
-spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
+# Swagger / OpenAPI
+springdoc.enabled=true
+springdoc.api-docs.path=/v3/api-docs
+springdoc.swagger-ui.path=/swagger-ui.html
 ```
 
 ### 环境变量
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 服务地址 |
-| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | 默认 Ollama 模型 |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek API 地址 |
 | `DEEPSEEK_API_KEY` | - | DeepSeek API Key（不提交 Git） |
-| `REDIS_HOST` | `localhost` | Redis 地址 |
-| `REDIS_PORT` | `16379` | Redis 端口 |
-| `REDIS_PASSWORD` | - | Redis 密码 |
+| `REDIS_HOST` / `REDIS_PORT` | `localhost:16379` | Redis 地址/端口 |
 | `MYSQL_URL` | `jdbc:mysql://localhost:13306/aichat` | MySQL 连接串 |
-| `MYSQL_USERNAME` | `root` | MySQL 用户名 |
-| `MYSQL_PASSWORD` | - | MySQL 密码 |
-| `APP_CHAT_CONTEXT_MAX_MESSAGES` | `20` | 送给模型的历史消息条数，<=0 不裁剪 |
-| `APP_CHAT_CONTEXT_MAX_CHARS` | `24000` | 送给模型的历史总字符预算，<=0 不限制 |
+| `SPRINGDOC_ENABLED` | `true` | Swagger 开关（生产可关） |
+| `APP_MINDBUTLER_ENABLED` | `true` | MindButler 总开关 |
+| `APP_MINDBUTLER_INTENT_ENABLED` | `true` | 意图提取开关（关闭后聊天不拦截） |
+| `APP_MINDBUTLER_INTENT_EXTRACT_MODEL` | `deepseek-chat` | 意图提取器模型 |
 
 ## 文档
 - `README.md` - 项目说明 + API 总览 + 配置项
 - `docs/API.md` - 后端接口文档（供前端使用）
 - `docs/DEVELOPMENT_PLAN.md` - 后续开发计划
 - `docs/INTERVIEW_ROADMAP.md` - 面试路线图
+- `docs/MindButler-P1设计.md` - MindButler P1 设计（v2）
+- `docs/P1-代码结构.md` - P1 代码结构说明（包职责 + 意图链路类图）
+- `docs/P1-上线验收清单.md` - P1 上线验收清单
 - `docs/聊天记录持久化设计.md` - 持久化设计
 - `docs/踩坑记录.md` - 开发踩坑记录
 - `docs/schema.sql` - 数据库初始化脚本
 - `docs/本地启动.md` - 本地启动指南
 - `docs/migration/` - 数据库迁移脚本
+- `docs/eval/mindbutler-intent-eval.json` - 意图提取评测集
+- `docs/refs/mika/` - 参考资料
 - `docs/学习笔记.md` - 项目学习笔记
 - `docs/备注.md` - 开发备注
 - `PROJECT_STATUS.md` - 项目状态记录
@@ -405,9 +534,10 @@ spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
 - Ollama：`127.0.0.1:11434`（qwen2.5-coder:7b）
 - MySQL：`127.0.0.1:13306`（VirtualBox 虚拟机 studybox 的 NAT 转发）
 - Redis：`127.0.0.1:16379`（同上）
+- Swagger UI：`http://localhost:8080/swagger-ui.html`
 - 敏感配置放 `application-local.properties`（.gitignore 中不提交）
 
-## 下一步计划（见 DEVELOPMENT_PLAN.md）
+## 下一步计划（见 DEVELOPMENT_PLAN.md / MindButler-P1设计.md）
 - [x] 聊天数据持久化（MySQL 主存储 + Redis 缓存）✅ 2026-10-22
 - [x] 多模型路由（Ollama + DeepSeek）✅ 2026-10-25
 - [x] 历史消息分页 ✅ 2026-10-25
@@ -417,18 +547,13 @@ spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
 - [x] 验证码日志脱敏 + dev-mode 默认关闭 ✅ 2026-10-27
 - [x] 模型输出净化 + 历史角色真实化 + 字符预算 + 线程安全 ✅ 2026-11-01
 - [x] Springdoc/Swagger 在线接口文档 + httpclient5 测试依赖 ✅ 2026-11-01
-- [x] **MindButler P1**：长期记忆（4 维度画像）+ 口语化任务 + pending 确认状态机 + 意图拦截 ✅ 2026-11-02（M1）→ 2026-11-03（M2/M3/M4，P1 主链路完成；收尾项见下）
-- [x] MindButler P1 单测/集成 209 绿（含真 MySQL 链路 + 40 条口语评测桩链路）✅ 2026-11-03（2026-11-03 验收补丁后）
-- [x] MindButler P1 收尾：意图提取超时/日限流（`intent.timeout-ms` / `intent.daily-limit`）接线、启动校验、固定兜底文案 ✅ 2026-11-03
-- [x] 聊天“假更新任务”防护：UPDATE/NO_PENDING 意图固定提示、敏感信息明确拒绝、system prompt 禁止自称已改任务 ✅ 2026-11-03
-- [ ] MindButler P1.5：自然语言更新/删除、monthly、真实 LLM 准确率评测
+- [x] MindButler P1（长期记忆 + 口语化任务 + 待确认动作）✅ 2026-11-03
 - [ ] 聊天/登录接口限流 + 安全加固
+- [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
 - [ ] Docker Compose 部署
-- [ ] RAG 知识库（可选加分项；P1 刻意不引向量库，留 P1.5 数据量验证）
+- [ ] RAG 知识库（可选加分项）
 - [ ] Micrometer 可观测性 + 压测
-- [ ] MindButler P2：MCP 只读公开数据源（如米游社资源/回复量）+ 风控感知（参考 Mika）
-- [ ] MindButler P3：微信/QQ AI 客服提醒（最小权限：只读提醒、不能加计划）
-- [x] springdoc-openapi 接口文档 ✅ 2026-11-01
+- [ ] MindButler P1.5（monthly 重复任务 + 推送 + last_notified_at 回写）
 
 ---
-*最后更新: 2026-11-03 16:10*
+*最后更新: 2026-11-03 17:24*

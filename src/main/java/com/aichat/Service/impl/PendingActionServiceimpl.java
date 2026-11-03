@@ -99,6 +99,23 @@ public class PendingActionServiceimpl implements PendingActionService {
     }
 
     @Override
+    public PendingActionVO getById(long id) {
+        String userId = currentUserId();
+        PendingAction action = pendingActionMapper.selectById(id, userId);
+        if (action == null) {
+            return null; // 非本人或不存在
+        }
+        // 懒过期：pending 但已到期 → 顺手置 expired 返回 null（与 current 一致）
+        LocalDateTime now = LocalDateTime.now(clock);
+        if ("pending".equals(action.getStatus())
+                && action.getExpiresAt() != null && !action.getExpiresAt().isAfter(now)) {
+            pendingActionMapper.expireSession(action.getUserId(), action.getSessionId());
+            return null;
+        }
+        return toVO(action, now);
+    }
+
+    @Override
     @Transactional
     public ConfirmResult confirm(long id) {
         String userId = currentUserId();

@@ -25,6 +25,7 @@ import com.aichat.utils.IntentDetector;
 import com.aichat.utils.IntentDetector.Intent;
 import com.aichat.utils.IntentPayloadCodec;
 import com.aichat.utils.IntentReplyFormatter;
+import com.aichat.utils.MbMarkers;
 import com.aichat.utils.SensitiveContentFilter;
 import com.aichat.utils.UserHolder;
 
@@ -89,6 +90,10 @@ public class IntentServiceimpl implements IntentService {
     // ---------- 提取 → 校验 → 写 pending → 确认文案 ----------
 
     private IntentOutcome extract(Intent intent, String sessionId, String message, Long sourceMessageId) {
+        // 记忆类消息如果本身含密码/Token 等敏感信息，连提取模型都不要调用，避免把敏感内容发给第三方模型
+        if (intent == Intent.MEMORY && SensitiveContentFilter.detectSensitive(message) != null) {
+            return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
+        }
         String userId = currentUserId();
         if (!intentDailyLimiter.tryAcquire(userId)) {
             return IntentOutcome.replyOnly("今天的意图识别次数已用完，明天再试。");
@@ -97,7 +102,7 @@ public class IntentServiceimpl implements IntentService {
         IntentExtractionResult extracted = intentExtractor.extract(intent, message);
         if (extracted == null || extracted.isEmpty()) {
             // 提取器可能按 prompt 规则主动不提取敏感信息；这时仍要给用户明确提示
-            if (SensitiveContentFilter.detectSensitive(message) != null) {
+            if (intent == Intent.MEMORY && SensitiveContentFilter.detectSensitive(message) != null) {
                 return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
             }
             return IntentOutcome.replyOnly(EXTRACT_FALLBACK); // v3 8.4：固定兜底，不调聊天模型
@@ -107,7 +112,7 @@ public class IntentServiceimpl implements IntentService {
         List<TaskCandidate> tasks = candidateSanitizer.sanitizeTasks(extracted.getTasks());
         if (memories.isEmpty() && tasks.isEmpty()) {
             if (candidateSanitizer.containsSensitiveMemory(extracted.getMemories())
-                    || SensitiveContentFilter.detectSensitive(message) != null) {
+                    || (intent == Intent.MEMORY && SensitiveContentFilter.detectSensitive(message) != null)) {
                 return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
             }
             return IntentOutcome.replyOnly(EXTRACT_FALLBACK);
@@ -124,10 +129,10 @@ public class IntentServiceimpl implements IntentService {
             return IntentOutcome.replyOnly("刚才的提案发生冲突，请再试一次。");
         }
 
-        String reply = IntentReplyFormatter.buildConfirmReply(memories, tasks);
+        String reply = MbMarkers.appendPending(IntentReplyFormatter.buildConfirmReply(memories, tasks), pendingId);
         log.info("intent 提取: session={}, pendingId={}, memories={}, tasks={}",
                 sessionId, pendingId, memories.size(), tasks.size());
-        return IntentOutcome.extracted(reply);
+        return IntentOutcome.extracted(reply, pendingId);
     }
 
     // ---------- 确认 / 拒绝 ----------

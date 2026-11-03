@@ -367,15 +367,17 @@ class ChatServiceimplTest {
     @Test
     void shouldInterceptIntentAndSkipChatModel() {
         when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
-        // IntentService 返回"已提取出候选并写了 pending"（非 chat）
+        // IntentService 返回"已提取出候选并写了 pending"（非 chat），带 pendingId 标记
+        String markedReply = "我识别到 1 个任务，确认吗？\n[[MB:pending=77]]";
         when(intentService.handle(eq("s1"), eq("明天 9 点交作业"), any()))
-                .thenReturn(com.aichat.Dto.IntentOutcome.extracted("我识别到 1 个任务，确认吗？"));
+                .thenReturn(com.aichat.Dto.IntentOutcome.extracted(markedReply, 77L));
 
         String answer = service.sendSession("s1", new UserMessage("明天 9 点交作业"), null);
 
-        // 命中意图：直接返回确认文案，不走模型
-        assertThat(answer).contains("确认吗？");
-        // 助手回复被保存
+        // 命中意图：返回给前端带标记（前端据此弹窗）
+        assertThat(answer).isEqualTo(markedReply);
+        assertThat(answer).contains("[[MB:pending=77]]");
+        // 存库的是去掉标记的干净文案（历史回显不暴露机器标记）
         verify(repository).save("u1", "s1", new AssistantMessage("我识别到 1 个任务，确认吗？"), "qwen2.5-coder:7b");
         // 聊天模型未被调用
         verify(requestSpec, never()).messages(anyList());
@@ -390,7 +392,9 @@ class ChatServiceimplTest {
 
         String answer = service.sendSession("s1", new UserMessage("对"), null);
 
+        // 确认/拒绝/兜底分支不带 pending 标记
         assertThat(answer).contains("已为你保存");
+        assertThat(answer).doesNotContain("[[MB:pending");
         verify(requestSpec, never()).messages(anyList());
     }
 }

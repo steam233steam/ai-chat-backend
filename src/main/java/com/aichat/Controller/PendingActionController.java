@@ -28,11 +28,19 @@ public class PendingActionController {
     @Autowired
     private PendingActionService pendingActionService;
 
-    @Operation(summary = "当前会话的待确认动作",
+    @Operation(summary = "查当前会话的待确认动作",
             description = "没有/已过期返回 data=null；前端据此渲染确认卡片")
     @GetMapping("/current")
     public Result<PendingActionVO> current(@RequestParam String sessionId) {
         return Result.success(pendingActionService.current(sessionId));
+    }
+
+    @Operation(summary = "按 id 查单条待确认动作",
+            description = "前端拿到 /chat/ask 文案里的 pendingId 后调本接口拉弹窗详情；"
+                    + "非本人/不存在/已过期返回 data=null（懒过期语义同 current）")
+    @GetMapping("/{id}")
+    public Result<PendingActionVO> getById(@PathVariable long id) {
+        return Result.success(pendingActionService.getById(id));
     }
 
     @Operation(summary = "确认待确认动作",

@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v6.4  
+> 文档版本：v7.0  
 > 最后更新：2026-11-03  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v6.4 - MindButler P1 接口（长期记忆 + 口语化任务 + 待确认动作，§13）；v6.3 - Springdoc/Swagger 在线接口文档（`/swagger-ui.html` + `/v3/api-docs`），全部接口加 @Operation 注解
+> 变更记录：v7.0 - MindButler P1（长期记忆 `/user/memories` + 口语化任务 `/user/tasks` + 待确认动作 `/user/pending-actions`），聊天意图拦截（命中意图时返回确认文案 + pending，不继续正常聊天）
 
 ---
 
@@ -11,16 +11,16 @@
 1. [统一响应格式](#1-统一响应格式)
 2. [用户接口](#2-用户接口)
 3. [聊天接口](#3-聊天接口)
-4. [错误码说明](#4-错误码说明)
-5. [数据存储说明](#5-数据存储说明)
-6. [多模型说明](#6-多模型说明)
-7. [会话锁模型说明](#7-会话锁模型说明)
-8. [模型输出净化说明](#8-模型输出净化说明)
-9. [前端使用示例](#9-前端使用示例)
-10. [认证说明](#10-认证说明)
-11. [CORS 说明](#11-cors-说明)
-12. [本地开发说明](#12-本地开发说明)
-13. [MindButler P1 接口（长期记忆 + 口语化任务）⭐ 新增](#13-mindbutler-p1-接口)
+4. [MindButler P1 接口](#4-mindbutler-p1-接口)
+5. [错误码说明](#5-错误码说明)
+6. [数据存储说明](#6-数据存储说明)
+7. [多模型说明](#7-多模型说明)
+8. [会话锁模型说明](#8-会话锁模型说明)
+9. [模型输出净化说明](#9-模型输出净化说明)
+10. [前端使用示例](#10-前端使用示例)
+11. [认证说明](#11-认证说明)
+12. [CORS 说明](#12-cors-说明)
+13. [本地开发说明](#13-本地开发说明)
 
 ---
 
@@ -380,6 +380,8 @@ POST /user/code?phone=13800138000
 
 获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。回复内容经输出净化（剥安全标签）后落库。
 
+> ⭐ **意图拦截**：`POST /chat/ask` 发送前会先走 `IntentService.handle`。若命中意图（记忆/任务/确认/拒绝），只返回一条确认文案 + 写 pending，**不继续走模型聊天**；否则走正常聊天。前端需根据返回内容判断是否渲染"确认卡片"（见 4.3）。
+
 - **接口地址**：`POST /chat/ask`
 - **Content-Type**：`application/x-www-form-urlencoded`
 
@@ -433,12 +435,15 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - 回复经 `ModelOutputSanitizer` 净化（剥 `<ds_safety>` 标签），落库和返回的都是干净内容
 - AI 标题异步生成（不阻塞主流程），标题也走净化
 - 会话锁模型：新会话锁到本次传入的模型；已有会话若传入模型与锁定模型不一致 → 409
+- 命中意图时，`data` 是确认文案（如"已为你提取 1 条记忆 + 1 条任务，确认后生效？"），此时不产生 AI 模型回复
 
 ---
 
 ### 3.3 发送消息（流式）
 
 使用 SSE（Server-Sent Events）流式返回 AI 回复，实现打字机效果。回复经流式安全过滤器净化后发送。
+
+> ⭐ **意图拦截**：与同步一致，命中意图时只发一条 `data` 事件（确认文案）后结束，不走模型流。
 
 - **接口地址**：`GET /chat/ask-stream`
 - **Content-Type**：`text/event-stream`
@@ -484,6 +489,7 @@ data: [DONE]
 - 流式输出经 `StreamingSafetyFilter` 跨 chunk 剥 `<ds_safety>` 标签
 - 模型调用失败时兜底文案不写入历史（避免污染下一轮上下文）
 - 模型名校验失败或会话锁模型冲突时报 400/409，不会进入流式
+- 命中意图时，只发一条 `data` 事件（确认文案）后结束，不走模型流
 
 ---
 
@@ -505,11 +511,6 @@ data: [DONE]
       "sessionId": "s001",
       "title": "你好，请介绍...",
       "model": "deepseek-chat"
-    },
-    {
-      "sessionId": "s002",
-      "title": "Java 多线程编程",
-      "model": "qwen2.5-coder:7b"
     }
   ]
 }
@@ -536,26 +537,6 @@ data: [DONE]
 | sessionid | String | 是 | 会话 ID |
 | beforeId | Long | 否 | 分页游标（传该 ID 之前的一页），需配 limit |
 | limit | Integer | 否 | 每页条数（1-100），不传时返回全量历史 |
-
-#### 请求示例
-
-全量历史（兼容旧行为）：
-```bash
-GET /chat/history?sessionid=s001
-Authorization: 550e8400-e29b-41d4-a716-446655440000
-```
-
-分页（取最新 20 条）：
-```bash
-GET /chat/history?sessionid=s001&limit=20
-Authorization: 550e8400-e29b-41d4-a716-446655440000
-```
-
-分页（取更早一页，游标为上一页最小的 id）：
-```bash
-GET /chat/history?sessionid=s001&beforeId=100&limit=20
-Authorization: 550e8400-e29b-41d4-a716-446655440000
-```
 
 #### 响应示例
 
@@ -593,24 +574,6 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - `limit` 范围 1-100
 - 分页查询不回写缓存（避免把"一页"当成全量历史）
 - 响应顺序：`beforeId` 之前的最近 `limit` 条，按 id 升序
-
-#### 错误响应
-
-```json
-{
-  "code": 400,
-  "message": "beforeId 需要配合 limit 使用",
-  "data": null
-}
-```
-
-```json
-{
-  "code": 400,
-  "message": "limit 必须在 1-100 之间",
-  "data": null
-}
-```
 
 ---
 
@@ -691,33 +654,295 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 
 ---
 
-## 4. 错误码说明
+## 4. MindButler P1 接口 ⭐ 新增
+
+> 前缀：`/user`，需要登录，请求头携带 Token：`Authorization: {token}`  
+> MindButler P1 = 长期记忆（结构化画像）+ 口语化任务 + 待确认动作（v3 状态机）  
+> 所有接口按当前登录用户隔离；跨用户访问统一 404（避免枚举）
+
+### 4.1 用户任务 `/user/tasks`
+
+口语化任务的 manual CRUD + 完成 + 到期查询；AI 创建走 M3 意图提取器 → pending → 本服务 create。
+
+#### 4.1.1 到期待办
+
+- **接口地址**：`GET /user/tasks/due`
+- **说明**：`status=pending`、有 `due_at` 且已到期，按 `due_at` 升序；P1 只读不回写 `last_notified_at`，前端按 `(id, dueAt)` 去重
+
+| 参数名 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
+| limit | int | 否 | 50 | 条数上限，不超过 `app.mindbutler.task.due-limit` |
+
+#### 响应示例
+
+```json
+{
+  "code": 200,
+  "message": "成功",
+  "data": [
+    {
+      "id": 1,
+      "title": "交周报",
+      "dueAt": "2026-11-05T09:00:00",
+      "timezone": "Asia/Shanghai",
+      "recurrence": "weekly",
+      "recurrenceRule": "BYDAY=MO",
+      "status": "pending",
+      "overdue": false,
+      "version": 0
+    }
+  ]
+}
+```
+
+#### 4.1.2 任务列表
+
+- **接口地址**：`GET /user/tasks`
+
+| 参数名 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
+| status | String | 否 | pending | pending / done / cancelled |
+| beforeId | Long | 否 | - | 游标（id < beforeId，升序返回） |
+| limit | int | 否 | 50 | 1-100 |
+
+#### 4.1.3 查单条任务
+
+- **接口地址**：`GET /user/tasks/{id}`
+- 含 `overdue` 计算字段；非本人或已软删返回 404
+
+#### 4.1.4 手动创建任务（兜底）
+
+- **接口地址**：`POST /user/tasks`
+- 不走 LLM；`recurrence` 默认 `once`；`weekly` 必须带 `recurrenceRule`；`recurring` 必须有 `dueAt`
+
+```json
+{
+  "title": "周五交周报",
+  "dueAt": "2026-11-06T09:00:00",
+  "recurrence": "weekly",
+  "recurrenceRule": "BYDAY=FR",
+  "rawInput": "记得周五交周报"
+}
+```
+
+#### 4.1.5 更新任务（乐观锁）
+
+- **接口地址**：`PUT /user/tasks/{id}`
+- 只能改 `pending` 任务；`status` 只允许 `pending/cancelled`；`version` 不匹配返回 409
+
+```json
+{
+  "title": "改期到下周五",
+  "dueAt": "2026-11-13T09:00:00",
+  "version": 0
+}
+```
+
+#### 4.1.6 完成任务
+
+- **接口地址**：`POST /user/tasks/{id}/complete`
+- `once` → `done`；`daily/weekly` → 保持 `pending` 且 `due_at` 滚动到下一次；`version` 不匹配 409
+
+```json
+{
+  "version": 0
+}
+```
+
+#### 4.1.7 删除任务（软删）
+
+- **接口地址**：`DELETE /user/tasks/{id}`
+- 幂等；已是删除态返回 404
+
+**TaskVO 字段**：`id, title, dueAt, timezone, recurrence, recurrenceRule, status, deletedAt, completedAt, rawInput, version, createTime, updateTime, overdue`
+
+---
+
+### 4.2 用户记忆 `/user/memories`
+
+长期记忆（结构化画像，固定 schema，不用向量库）的 manual CRUD + 注入查询 + 导出。
+
+#### 4.2.1 查询生效记忆
+
+- **接口地址**：`GET /user/memories`
+- 返回当前用户 active 且未过期的记忆，按类型 + 更新时间倒序；`limit` 控制总数 1-100
+
+#### 4.2.2 导出全部记忆
+
+- **接口地址**：`GET /user/memories/export`
+- 导出当前用户全部未删除记忆（含 `superseded`），用于隐私查看 / 数据迁移
+
+#### 4.2.3 查单条记忆
+
+- **接口地址**：`GET /user/memories/{id}`
+- 含 `status` 与 `expired` 计算字段；非本人或已删除返回 404
+
+#### 4.2.4 手动创建记忆
+
+- **接口地址**：`POST /user/memories`
+- `source=manual`、`confidence=1.00`；`stable` 不可设过期；内容命中敏感词直接拒绝；同一用户已有完全相同的 active 内容 → 409
+
+```json
+{
+  "memKey": "goal",
+  "content": "用户目标是转后端开发",
+  "memType": "stable"
+}
+```
+
+**说明**：
+- `memKey`：`style | goal | schedule | relation`（P1 枚举）
+- `memType`：`stable`（长存）/ `dynamic`（会过期）
+- `content` 上限 256 字符
+
+#### 4.2.5 更新记忆（乐观锁）
+
+- **接口地址**：`PUT /user/memories/{id}`
+- 只能改 active 且未过期的记忆；`version` 不匹配返回 409
+
+```json
+{
+  "content": "用户目标改为全栈",
+  "memType": "stable",
+  "version": 0
+}
+```
+
+#### 4.2.6 删除记忆（软删）
+
+- **接口地址**：`DELETE /user/memories/{id}`
+- 幂等；已是删除态返回 404
+
+**MemoryVO 字段**：`id, memKey, content, memType, status, confidence, source, sourceMessageId, replacesId, expiresAt, version, createTime, updateTime, expired`
+
+---
+
+### 4.3 待确认动作 `/user/pending-actions`
+
+M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端用"确认/取消"。这里的 REST 是"确认卡片"入口（用户点确认/取消）+ 当前 pending 查询。
+
+#### 4.3.1 当前会话的待确认动作
+
+- **接口地址**：`GET /user/pending-actions/current`
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| sessionId | String | 是 | 会话 ID |
+
+没有 / 已过期返回 `data=null`；前端据此渲染确认卡片。
+
+#### 响应示例
+
+```json
+{
+  "code": 200,
+  "message": "成功",
+  "data": {
+    "id": 42,
+    "actionType": "mixed",
+    "status": "pending",
+    "memories": [
+      { "key": "goal", "value": "转后端", "memType": "stable", "confidence": 0.9 }
+    ],
+    "tasks": [
+      { "action": "create", "title": "周五交周报", "dueAt": "2026-11-06T09:00:00", "recurrence": "weekly", "recurrenceRule": "BYDAY=FR" }
+    ],
+    "preview": "将记住你的目标，并新建 1 个每周任务，确认？",
+    "expiresAt": "2026-11-03T17:36:00"
+  }
+}
+```
+
+#### 4.3.2 按 id 查单条待确认动作
+
+- **接口地址**：`GET /user/pending-actions/{id}`
+- 前端拿到 `/chat/ask` 文案里的 pendingId 后调本接口拉弹窗详情
+- 非本人 / 不存在 / 已过期 → `data=null`（懒过期语义同 current）
+
+#### 4.3.3 聊天文案里的 pending 标记（前端弹窗契约）⭐
+
+`POST /chat/ask` 命中"提取出新候选并写 pending"时，返回的 `data` 文案**尾部**会带一个机器可读标记：
+
+```
+我识别到 1 个任务「周五交周报」：2026-11-06（周五）09:00，每周。确认吗？
+[[MB:pending=42]]
+```
+
+| 项目 | 说明 |
+|---|---|
+| 标记格式 | `[[MB:pending={pendingId}]]`（待确认动作的自增 id） |
+| 前端检测 | 正则 `\[ \[ MB:pending=(\d+) ]\]`，捕获到 id 就弹窗 |
+| 弹窗数据源 | `GET /user/pending-actions/{pendingId}`（或 `GET /current?sessionId=`） |
+| 确认 / 拒绝 | `POST /user/pending-actions/{pendingId}/confirm` / `reject` |
+| 展示 | 标记是给机器读的，前端展示文案时**剥离** `[[MB:pending=...]]` 行 |
+| 不带标记 | 普通聊天、确认/拒绝/过期/限流等所有兜底文案都**没有**标记 → 不弹窗 |
+
+> 设计取舍：带 id 是为了让前端一次 `/chat/ask` 请求就能拿到弹窗所需的全部信息（pendingId + 文案），
+> 不必再额外调一次 `current` 来解析。标记同时会随文案落库进历史（历史回显时前端同样应剥离）。
+
+#### 4.3.4 确认待确认动作
+
+- **接口地址**：`POST /user/pending-actions/{id}/confirm`
+- 原子确认；重复确认返回 `alreadyConfirmed=true`（不重复建）；已拒绝 / 过期 409
+- 确认时按 payload 实际内容（memories/tasks）分 memory-only / task-only / mixed 三路落库
+
+```json
+{
+  "code": 200,
+  "message": "成功",
+  "data": {
+    "alreadyConfirmed": false,
+    "memories": [ { "id": 7, "memKey": "goal", "content": "转后端" } ],
+    "tasks": [ { "id": 3, "title": "周五交周报" } ]
+  }
+}
+```
+
+#### 4.3.5 拒绝待确认动作
+
+- **接口地址**：`POST /user/pending-actions/{id}/reject`
+- 幂等；已拒绝静默成功；已确认 / 过期 409
+
+**PendingActionVO 字段**：`id, actionType, status, memories[], tasks[], preview, expiresAt`  
+**MemoryCandidate**：`key, value, memType, confidence, replacesId`  
+**TaskCandidate**：`action, title, dueAt, timezone, recurrence, recurrenceRule`  
+**ConfirmResult**：`alreadyConfirmed, memories[], tasks[]`
+
+---
+
+## 5. 错误码说明
 
 | 错误码 | 说明 | 处理建议 |
 |--------|------|----------|
 | 200 | 请求成功 | - |
 | 400 | 请求参数错误 | 检查参数格式、长度、模型名 |
 | 401 | 未登录 | 请先登录 |
-| 404 | 接口不存在 | 检查路径 |
-| 409 | 会话锁模型冲突 | 该会话已锁定某模型，切换模型请新建会话 |
+| 404 | 接口不存在 / 资源不存在 | 检查路径或资源归属 |
+| 409 | 冲突（锁模型 / 乐观锁 / pending 状态 / 重复记忆） | 刷新数据或新建会话 |
 | 413 | 上传文件过大 | 检查文件大小 |
 | 500 | 系统错误 | AI 服务不可用或服务器异常 |
 
+**409 常见场景**：
+- 会话锁模型冲突（切换模型需新建会话）
+- 乐观锁 version 不匹配（任务 / 记忆更新）
+- pending 已确认 / 已拒绝 / 过期（重复确认）
+- 手动创建记忆内容已存在
+
 ---
 
-## 5. 数据存储说明
+## 6. 数据存储说明
 
-### 5.1 存储职责
+### 6.1 存储职责
 
 | 存储 | 角色 | 内容 |
 |------|------|------|
-| MySQL | 持久化主存储 | `tb_user`、`tb_chat_session`、`tb_chat_message` |
+| MySQL | 持久化主存储 | `tb_user`、`tb_chat_session`、`tb_chat_message`、`tb_user_memory`、`tb_user_task`、`tb_pending_action` |
 | Redis | 7 天热缓存 | 消息 List、会话 ZSet、标题 Hash、锁模型 Hash、Token、验证码 |
 
 **原则**：先写 MySQL，再更新 Redis；读 Redis 未命中时回源 MySQL 并回填。  
 Redis 故障或过期不影响数据正确性，只影响性能。
 
-### 5.2 数据库表结构
+### 6.2 数据库表结构
 
 ```sql
 -- 用户表
@@ -736,7 +961,7 @@ CREATE TABLE tb_chat_session (
   user_id VARCHAR(32) NOT NULL,
   session_id VARCHAR(64) NOT NULL,
   title VARCHAR(100) DEFAULT NULL,
-  model VARCHAR(64) DEFAULT NULL,  -- 会话锁定的模型
+  model VARCHAR(64) DEFAULT NULL,
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_user_session (user_id, session_id),
@@ -750,15 +975,73 @@ CREATE TABLE tb_chat_message (
   session_id VARCHAR(64) NOT NULL,
   role VARCHAR(16) NOT NULL,
   content TEXT NOT NULL,
-  model VARCHAR(64),  -- 本轮使用的模型名
+  model VARCHAR(64),
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_user_session (user_id, session_id, id)
+);
+
+-- 用户长期记忆（结构化画像；固定 schema + status 生命周期 + expires_at 过期）
+CREATE TABLE tb_user_memory (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  user_id VARCHAR(32) NOT NULL,
+  mem_key VARCHAR(32) NOT NULL,
+  content VARCHAR(512) NOT NULL,
+  mem_type ENUM('stable','dynamic') NOT NULL DEFAULT 'stable',
+  status ENUM('active','superseded','deleted') NOT NULL DEFAULT 'active',
+  confidence DECIMAL(3,2) NOT NULL DEFAULT 1.00,
+  source ENUM('manual','ai') NOT NULL DEFAULT 'manual',
+  source_message_id BIGINT NULL,
+  replaces_id BIGINT NULL,
+  expires_at DATETIME NULL,
+  version INT NOT NULL DEFAULT 0,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);
+
+-- 用户任务/计划（due_at + recurrence + 乐观锁 + 软删）
+CREATE TABLE tb_user_task (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  user_id VARCHAR(32) NOT NULL,
+  title VARCHAR(128) NOT NULL,
+  due_at DATETIME NULL,
+  timezone VARCHAR(40) NOT NULL DEFAULT 'Asia/Shanghai',
+  recurrence ENUM('once','daily','weekly','monthly') NOT NULL DEFAULT 'once',
+  recurrence_rule VARCHAR(128) NULL,
+  status ENUM('pending','done','cancelled') NOT NULL DEFAULT 'pending',
+  deleted_at DATETIME NULL,
+  last_notified_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  raw_input VARCHAR(512) NULL,
+  source_message_id BIGINT NULL,
+  version INT NOT NULL DEFAULT 0,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);
+
+-- 待确认动作（AI 提案，用户确认后才写进 memory/task；确认态独立状态机）
+CREATE TABLE tb_pending_action (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  user_id VARCHAR(32) NOT NULL,
+  session_id VARCHAR(64) NOT NULL,
+  action_type ENUM('memory','task','mixed') NOT NULL,
+  payload JSON NOT NULL,
+  status ENUM('pending','confirmed','rejected','expired') NOT NULL DEFAULT 'pending',
+  expires_at DATETIME NOT NULL,
+  source_message_id BIGINT NULL,
+  pending_slot VARCHAR(140) GENERATED ALWAYS AS (
+    CASE WHEN status = 'pending' THEN CONCAT(user_id, ':', session_id) ELSE NULL END
+  ) STORED,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
 );
 ```
 
 完整脚本见 `docs/schema.sql`。
 
-### 5.3 Redis 缓存结构
+### 6.3 Redis 缓存结构
 
 | Key | 类型 | 说明 | TTL |
 |-----|------|------|-----|
@@ -771,22 +1054,12 @@ CREATE TABLE tb_chat_message (
 | `aichat:chat:title:{userId}` | Hash | 会话标题（field=sessionId） | 7 天 |
 | `aichat:chat:sessionmodel:{userId}` | Hash | 会话锁模型（field=sessionId） | 7 天 |
 
-**消息结构（SMessage）**：
-```json
-{
-  "id": 100,
-  "text": "消息内容",
-  "type": "user|assistant|system",
-  "model": "qwen2.5-coder:7b",
-  "timestamp": 1727356800000
-}
-```
-
 **说明**：
 - `model` 为 null 表示该消息产生于 model 列上线之前（历史数据）
 - 标题和锁模型统一用 Hash 结构（key 到 userId，field 用 sessionId）
+- 记忆 / 任务 / 待确认动作是 MySQL 持久化主存储，不走 Redis 缓存（P1 范围）
 
-### 5.4 缓存一致性策略
+### 6.4 缓存一致性策略
 
 | 场景 | 处理 |
 |------|------|
@@ -802,9 +1075,9 @@ CREATE TABLE tb_chat_message (
 
 ---
 
-## 6. 多模型说明
+## 7. 多模型说明
 
-### 6.1 模型路由
+### 7.1 模型路由
 
 后端支持多个模型，通过 `ModelRouter` 按模型名分发：
 
@@ -819,7 +1092,7 @@ CREATE TABLE tb_chat_message (
 3. 其余白名单模型 → 走 OpenAI 兼容协议（DeepSeek）
 4. 模型名不在 `app.models.available` 白名单 → 报 400（不静默兜底）
 
-### 6.2 配置项
+### 7.2 配置项
 
 | 配置 | 默认值 | 说明 |
 |------|--------|------|
@@ -827,7 +1100,7 @@ CREATE TABLE tb_chat_message (
 | `app.models.default-model` | `qwen2.5-coder:7b` | 默认模型 |
 | `app.models.ollama-models` | `qwen2.5-coder:7b` | 走 Ollama 的模型，其余走 OpenAI 兼容协议 |
 
-### 6.3 环境变量
+### 7.3 环境变量
 
 | 变量 | 说明 |
 |------|------|
@@ -836,7 +1109,7 @@ CREATE TABLE tb_chat_message (
 | `OLLAMA_BASE_URL` | Ollama 服务地址（默认 `http://localhost:11434`） |
 | `OLLAMA_MODEL` | 默认 Ollama 模型 |
 
-### 6.4 上下文裁剪
+### 7.4 上下文裁剪
 
 | 配置 | 默认值 | 说明 |
 |------|--------|------|
@@ -848,17 +1121,16 @@ CREATE TABLE tb_chat_message (
 - 超预算时从最新往旧取，优先保留最近上下文
 - 单条消息自身超预算时保留其尾部（至少让模型看到最近上下文）
 - 历史接口仍返回全量/分页数据，裁剪只影响 AI 上下文
-- 长对话不会撑爆 Prompt
 
 ---
 
-## 7. 会话锁模型说明
+## 8. 会话锁模型说明
 
-### 7.1 设计目的
+### 8.1 设计目的
 
 避免同一会话反复切换模型导致"分布外上下文"污染、弱模型身份漂移。
 
-### 7.2 锁模型规则
+### 8.2 锁模型规则
 
 | 场景 | 行为 |
 |------|------|
@@ -866,13 +1138,13 @@ CREATE TABLE tb_chat_message (
 | 已有会话且传入模型 == 锁定模型 | 放行 |
 | 已有会话且传入模型 != 锁定模型 | 报 409，提示"要换模型请新建会话" |
 
-### 7.3 前端使用建议
+### 8.3 前端使用建议
 
 - 发送消息前先 `GET /chat/sessions` 查看会话锁定的模型
 - 用户想换模型时，提示"新建会话"而不是切模型
 - 收到 409 错误时，引导用户新建会话
 
-### 7.4 历史角色
+### 8.4 历史角色
 
 - 历史消息以真实 `UserMessage` / `AssistantMessage` 角色送入模型（不拼进 system）
 - 当前问题作为最后一条 `UserMessage`
@@ -881,13 +1153,13 @@ CREATE TABLE tb_chat_message (
 
 ---
 
-## 8. 模型输出净化说明 ⭐ 新增
+## 9. 模型输出净化说明
 
-### 8.1 背景
+### 9.1 背景
 
 部分模型（如 DeepSeek 的推理侧安全层）在特定输入下会把内部审核标签（形如 `<ds_safety>...</ds_safety>`）夹带进 `content`。正常 API 调用中这类标签不应出现在消息内容里。
 
-### 8.2 净化策略
+### 9.2 净化策略
 
 | 路径 | 处理 |
 |------|------|
@@ -895,14 +1167,14 @@ CREATE TABLE tb_chat_message (
 | 流式回复 | `StreamingSafetyFilter` 跨 chunk 剥标签（标签可能被拆成 "<ds_sa" + "fety>"） |
 | 标题生成 | `ModelOutputSanitizer.sanitizeTitle` 去安全标签 + HTML + 引号 + 换行 + 控制字符 |
 
-### 8.3 行为说明
+### 9.3 行为说明
 
 - 完整标签对：忽略大小写、支持跨行和标签内空白
 - 残缺标签开头（只吐了开标签没吐闭合）：从该处到末尾全丢
 - 清理后为空：用固定兜底文案"（模型回复被过滤，请稍后重试或换个问法）"，不存空消息
 - 流式调用失败时兜底文案不写入历史（避免污染下一轮上下文）
 
-### 8.4 前端影响
+### 9.4 前端影响
 
 - 前端收到的回复内容已净化，不会看到 `<ds_safety>` 等内部标签
 - 历史接口返回的 `content` 也是净化后的干净内容
@@ -910,9 +1182,9 @@ CREATE TABLE tb_chat_message (
 
 ---
 
-## 9. 前端使用示例
+## 10. 前端使用示例
 
-### 9.1 登录流程
+### 10.1 登录流程
 
 ```javascript
 const API_BASE = 'http://localhost:8080';
@@ -1001,7 +1273,7 @@ async function logout() {
 }
 ```
 
-### 9.2 新用户引导流程
+### 10.2 新用户引导流程
 
 ```javascript
 // 检查用户是否为新用户，如果是则引导设置密码
@@ -1011,18 +1283,9 @@ async function checkAndGuideNewUser() {
     showPasswordSetupGuide(); // 显示设置密码引导
   }
 }
-
-// 新用户设置密码流程
-async function setupPassword(phone, code, password) {
-  const result = await setPassword(phone, code, password);
-  if (result.code === 200) {
-    await getMe(); // 刷新用户信息
-  }
-  return result;
-}
 ```
 
-### 9.3 模型选择
+### 10.3 模型选择
 
 ```javascript
 // 获取可用模型（渲染下拉框）
@@ -1036,10 +1299,10 @@ async function getAvailableModels() {
 }
 ```
 
-### 9.4 聊天流程（含会话锁模型 + 分页）
+### 10.4 聊天流程（含会话锁模型 + 分页 + 意图拦截）
 
 ```javascript
-// 发送消息（同步，带模型）
+// 发送消息（同步，带模型 + 意图拦截）
 async function sendMessage(sessionId, question, modelName) {
   const token = localStorage.getItem('token');
   const params = new URLSearchParams({ sessionid: sessionId, question });
@@ -1053,121 +1316,136 @@ async function sendMessage(sessionId, question, modelName) {
   // 处理 409 会话锁模型冲突
   if (result.code === 409) {
     alert('该会话已锁定其他模型，要换模型请新建会话');
-    // 可引导用户新建会话
+  }
+  
+  // 命中意图时，返回的是确认文案（不产生模型回复）
+  // 前端可据此检查当前会话是否有 pending，渲染确认卡片
+  return result;
+}
+
+// 检查当前会话的待确认动作（渲染确认卡片）
+async function getCurrentPending(sessionId) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/pending-actions/current?sessionId=${sessionId}`, {
+    headers: { 'Authorization': token }
+  });
+  const result = await response.json();
+  if (result.code === 200 && result.data) {
+    renderConfirmCard(result.data); // 渲染确认卡片
   }
   return result;
 }
 
-// 流式发送消息（带模型）
-async function streamSendMessage(sessionId, question, modelName, onChunk, onComplete) {
+// 确认待确认动作
+async function confirmPending(id) {
   const token = localStorage.getItem('token');
-  const params = new URLSearchParams({ sessionid: sessionId, question });
-  if (modelName) params.append('modelName', modelName);
-  
-  const response = await fetch(`${API_BASE}/chat/ask-stream?${params}`, {
-    headers: { 'Authorization': token }
-  });
-  
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6);
-        if (data === '[DONE]') {
-          onComplete();
-          return;
-        }
-        onChunk(data);
-      }
-    }
-  }
-}
-
-// 获取会话列表（含锁模型）
-async function getSessions() {
-  const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/sessions`, {
-    headers: { 'Authorization': token }
-  });
-  return await response.json();
-  // 返回的 data 里每项含 model 字段，可用于展示"该会话用的什么模型"
-}
-
-// 获取会话历史（全量，兼容旧行为，含 model 字段）
-async function getHistory(sessionId) {
-  const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/history?sessionid=${sessionId}`, {
+  const response = await fetch(`${API_BASE}/user/pending-actions/${id}/confirm`, {
+    method: 'POST',
     headers: { 'Authorization': token }
   });
   return await response.json();
 }
 
-// 获取会话历史（分页：取最新一页）
-async function getHistoryLatest(sessionId, limit = 20) {
+// 拒绝待确认动作
+async function rejectPending(id) {
   const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/history?sessionid=${sessionId}&limit=${limit}`, {
-    headers: { 'Authorization': token }
-  });
-  return await response.json();
-}
-
-// 获取会话历史（分页：取更早一页，游标为上一页最小的 id）
-async function getHistoryBefore(sessionId, beforeId, limit = 20) {
-  const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/history?sessionid=${sessionId}&beforeId=${beforeId}&limit=${limit}`, {
-    headers: { 'Authorization': token }
-  });
-  return await response.json();
-}
-
-// 更新会话标题
-async function updateTitle(sessionId, title) {
-  const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/title?sessionid=${sessionId}&title=${encodeURIComponent(title)}`, {
-    method: 'PUT',
-    headers: { 'Authorization': token }
-  });
-  return await response.json();
-}
-
-// 清空会话
-async function clearSession(sessionId) {
-  const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}/chat/clear-session?sessionid=${sessionId}`, {
-    method: 'DELETE',
+  const response = await fetch(`${API_BASE}/user/pending-actions/${id}/reject`, {
+    method: 'POST',
     headers: { 'Authorization': token }
   });
   return await response.json();
 }
 ```
 
-### 9.5 会话模型展示（前端 UI 建议）
+### 10.5 用户任务（MindButler P1）
 
 ```javascript
-// 渲染会话列表时展示锁定的模型
-async function renderSessionList() {
-  const result = await getSessions();
-  const sessions = result.data;
-  
-  sessions.forEach(s => {
-    const modelLabel = s.model || '未锁定';
-    // 显示 "s.title - modelLabel"
-    // 如果用户想换模型，提示新建会话
+// 获取到期待办
+async function getDueTasks(limit = 50) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/tasks/due?limit=${limit}`, {
+    headers: { 'Authorization': token }
   });
+  return await response.json();
+}
+
+// 获取任务列表（游标分页）
+async function getTasks(status = 'pending', beforeId, limit = 50) {
+  const token = localStorage.getItem('token');
+  const params = new URLSearchParams({ status, limit });
+  if (beforeId) params.append('beforeId', beforeId);
+  const response = await fetch(`${API_BASE}/user/tasks?${params}`, {
+    headers: { 'Authorization': token }
+  });
+  return await response.json();
+}
+
+// 手动创建任务（兜底）
+async function createTask(request) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/tasks`, {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': token
+    },
+    body: JSON.stringify(request)
+  });
+  return await response.json();
+}
+
+// 完成任务（once → done；daily/weekly 滚动到下次）
+async function completeTask(id, version) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/tasks/${id}/complete`, {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': token
+    },
+    body: JSON.stringify({ version })
+  });
+  return await response.json();
 }
 ```
 
-### 9.6 Axios 封装
+### 10.6 用户记忆（MindButler P1）
+
+```javascript
+// 获取生效记忆
+async function getMemories(limit = 100) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/memories?limit=${limit}`, {
+    headers: { 'Authorization': token }
+  });
+  return await response.json();
+}
+
+// 导出全部记忆（隐私查看 / 迁移）
+async function exportMemories() {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/memories/export`, {
+    headers: { 'Authorization': token }
+  });
+  return await response.json();
+}
+
+// 手动创建记忆
+async function createMemory(request) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/memories`, {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': token
+    },
+    body: JSON.stringify(request)
+  });
+  return await response.json();
+}
+```
+
+### 10.7 Axios 封装
 
 ```javascript
 import axios from 'axios';
@@ -1205,13 +1483,13 @@ export default api;
 ```
 
 **说明**：使用 axios 时注意，后端错误响应（400/404/409/500）也会进入响应拦截器的 error 分支，
-`error.response.data` 中即为 `Result` 格式的错误体。409 表示会话锁模型冲突。
+`error.response.data` 中即为 `Result` 格式的错误体。409 表示会话锁模型冲突 / 乐观锁冲突 / pending 状态冲突 / 重复记忆。
 
 ---
 
-## 10. 认证说明
+## 11. 认证说明
 
-### 10.1 Token 机制
+### 11.1 Token 机制
 
 1. 登录成功后，服务端生成 UUID Token
 2. Token 存储到 Redis，有效期 7 天
@@ -1219,7 +1497,7 @@ export default api;
 4. 每次请求自动刷新 Token 过期时间（续期）
 5. 登出时删除 Token
 
-### 10.2 新用户标记机制
+### 11.2 新用户标记机制
 
 1. 首次通过验证码登录的用户会被标记为"新用户"
 2. 新用户标记存储在 Redis，有效期 365 天
@@ -1227,7 +1505,7 @@ export default api;
 4. 设置密码后，新用户标记自动取消
 5. 前端可通过 `GET /user/me` 的 `isNewUser` 字段或 `GET /user/is-new-user` 检查
 
-### 10.3 安全特性
+### 11.3 安全特性
 
 | 特性 | 说明 |
 |------|------|
@@ -1244,8 +1522,12 @@ export default api;
 | 模型输出净化 | 剥 `<ds_safety>` 标签，同步/流式/标题三路 |
 | 历史角色真实化 | 历史作 User/Assistant 角色，不拼 system（防提示注入） |
 | 线程安全 | 拦截器入口 + 出口双重清理 ThreadLocal，防 SSE/异步串用户 |
+| 跨用户隔离 | MindButler P1 接口按当前用户隔离，跨用户访问统一 404（避免枚举） |
+| 乐观锁 | 任务 / 记忆更新用 version 字段，不匹配报 409 |
+| 待确认状态机 | pending 确认原子 + 幂等，重复确认返回 alreadyConfirmed |
+| 敏感词过滤 | 记忆内容命中敏感词直接拒绝 |
 
-### 10.4 拦截器说明
+### 11.4 拦截器说明
 
 | 拦截器 | 功能 | 拦截路径 |
 |--------|------|----------|
@@ -1260,7 +1542,7 @@ export default api;
 
 ---
 
-## 11. CORS 说明
+## 12. CORS 说明
 
 后端已配置 CORS，允许本地开发端口跨域：
 
@@ -1276,9 +1558,9 @@ export default api;
 
 ---
 
-## 12. 本地开发说明
+## 13. 本地开发说明
 
-### 12.1 在线接口文档（Swagger / OpenAPI）⭐ 新增
+### 13.1 在线接口文档（Swagger / OpenAPI）
 
 后端已接入 `springdoc-openapi`，提供在线接口文档：
 
@@ -1293,7 +1575,7 @@ export default api;
 - 生产环境可用 `SPRINGDOC_ENABLED=false` 关掉，Swagger UI 和 OpenAPI 端点都不暴露
 - 本地开发直接用 Swagger UI 联调接口即可，无需手写 curl
 
-### 12.2 环境架构
+### 13.2 环境架构
 
 ```
 Windows 宿主
@@ -1308,7 +1590,7 @@ Windows 宿主
     └── nginx   guest 80    ── NAT 转发 ──> 宿主 8082
 ```
 
-### 12.2 启动步骤
+### 13.3 启动步骤
 
 1. 复制并填写本地敏感配置：`cp src/main/resources/application-local.properties.example src/main/resources/application-local.properties`
 2. 使用 DeepSeek 时配置 key：`export DEEPSEEK_API_KEY=sk-xxx`
@@ -1318,13 +1600,14 @@ Windows 宿主
    - `docs/migration/2026-10-22-fix-tb-user-password-null.sql`
    - `docs/migration/2026-10-28-add-chat-message-model.sql`
    - `docs/migration/2026-10-28-add-chat-session-model.sql`
+   - `docs/migration/2026-11-02-mindbutler-p1.sql` ⭐
 6. 确认 Ollama：`ollama list`（需有 qwen2.5-coder:7b）
 7. 启动后端：`mvn spring-boot:run`
 8. 启动前端：`npm install && npm run dev`
 
 详细步骤见 `docs/本地启动.md`。
 
-### 12.3 配置文件
+### 13.4 配置文件
 
 - `application.properties` - 默认配置（支持环境变量覆盖）
 - `application-local.properties` - 本地敏感配置（密码，已 gitignore）
@@ -1332,154 +1615,28 @@ Windows 宿主
 **说明**：本地开发需在 `application-local.properties` 里显式设 `app.sms.dev-mode=true`，
 否则默认关闭（生产安全），验证码不会打印到日志。
 
----
+### 13.5 MindButler P1 配置项
 
-## 13. MindButler P1 接口（长期记忆 + 口语化任务）⭐ 新增
-
-P1 三大能力（按设计文档 §8 接口契约落地）：
-- **13.1 长期记忆**（`/user/memories`）：手动 CRUD + 注入查询；`mem_key` 固定 4 维度（style/goal/schedule/relation）
-- **13.2 口语化任务**（`/user/tasks`）：CRUD + 完成/重复滚动 + 到期查询
-- **13.3 待确认动作**（`/user/pending-actions`）：口语提取出的记忆/任务候选走 pending 状态机，用户"确认/拒绝"后落库
-
-**数据表**：`tb_user_memory`、`tb_user_task`、`tb_pending_action`（见 `docs/schema.sql` + `docs/migration/2026-11-02-mindbutler-p1.sql`）。
-**迁移**：现有库执行 `docs/migration/2026-11-02-mindbutler-p1.sql`；全新库直接 `docs/schema.sql`（已含 3 表）。
-
----
-
-### 13.1 长期记忆（/user/memories）
-
-**13.1.1 创建记忆**  `POST /user/memories`
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| memKey | string | 是 | `style`/`goal`/`schedule`/`relation` 之一 |
-| content | string | 是 | 记忆内容（≤256 字） |
-| memType | string | 否 | `stable`（默认）/`dynamic` |
-| expiresAt | datetime | 否 | dynamic 可显式指定；stable 必须空 |
-
-- 手动创建 `source=manual`、`confidence=1.00`
-- 同一用户已有完全相同 active 内容 → 409
-- 命中敏感词（密码/证件/银行卡）→ 400 拒绝
-
-**响应**：`{ "code":200, "data":{ id, memKey, content, memType, status, confidence, source, replacesId, expiresAt, version, createTime, updateTime, expired } }`
-
-**13.1.2 记忆列表**  `GET /user/memories?limit=50`
-
-- 只返回 `active` 且未过期（`expires_at IS NULL OR expires_at > now`）；limit 1-100
-- 返回项带 `expired`（瞬态，`expires_at <= now` 计算）；历史/被替换条目走 `/export`
-
-**13.1.3 导出**  `GET /user/memories/export`
-
-- 全部未删除记忆（含 superseded），供隐私/迁移
-
-**13.1.4 查单条**  `GET /user/memories/{id}`
-
-- 非本人或已软删 → 404
-
-**13.1.5 更新**  `PUT /user/memories/{id}`
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| content | string | 是 | 新内容 |
-| memType | string | 是 | `stable`/`dynamic` |
-| expiresAt | datetime | 否 | dynamic 可指定 |
-| version | int | 是 | 乐观锁（不匹配 409） |
-
-**13.1.6 软删除**  `DELETE /user/memories/{id}`（幂等；`status=deleted`）
-
----
-
-### 13.2 口语化任务（/user/tasks）
-
-**13.2.1 任务列表**  `GET /user/tasks?status=pending&beforeId=100&limit=50`
-
-- `status`：`pending`（默认）/`done`/`cancelled`；排除软删
-- 游标分页：`beforeId` 排他（取比它更早的最近 `limit` 条），Service 层反转为升序返回
-
-**13.2.2 到期待办**  `GET /user/tasks/due?limit=50`
-
-- `status=pending` 且有 `due_at` 且已到期（`due_at <= now`），按 `due_at` 升序
-- 返回项带 `overdue`（瞬态计算字段）
-
-**13.2.3 查单条**  `GET /user/tasks/{id}`（非本人/已软删 → 404）
-
-**13.2.4 创建**  `POST /user/tasks`
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| title | string | 是 | 任务标题（≤128 字） |
-| dueAt | datetime | 条件 | `once` 可空；`daily/weekly` 必填 |
-| recurrence | string | 否 | `once`（默认）/`daily`/`weekly`；`monthly` 预留 P1.5，传了 400 |
-| recurrenceRule | string | 条件 | `weekly` 必填，格式 `BYDAY=MO`（MO/TU/WE/TH/FR/SA/SU） |
-| rawInput | string | 否 | 口语原句（≤512 字，溯源用） |
-
-**13.2.5 更新**  `PUT /user/tasks/{id}`（乐观锁 `version`，不匹配 409；`done/cancelled` 不可更新）
-
-**13.2.6 完成**  `POST /user/tasks/{id}/complete`
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| version | int | 是 | 乐观锁 |
-
-- `once` → `status=done`，保留原始 `due_at`（便于已完成列表展示/统计）
-- `daily/weekly` → 保持 `pending`，`due_at` 滚动到下一个未来时间点；`last_notified_at` 清空（P1 不写，P3 推送用）
-
-**13.2.7 软删除**  `DELETE /user/tasks/{id}`（幂等；`deleted_at` 落库）
-
----
-
-### 13.3 待确认动作（/user/pending-actions）
-
-口语提取出的记忆/任务候选先写 pending（10 分钟 TTL），用户确认后才落库。
-同一 `user_id + session_id` 同时最多一个 pending（`pending_slot` 生成列唯一键兜底）。
-
-**13.3.1 查当前 pending**  `GET /user/pending-actions/current?sessionId=s-1`
-
-- 返回 `PendingActionVO`（`id`/`actionType`/`status`/`memories[]`/`tasks[]`/`preview`/`expiresAt`）
-- 无 pending 或已过期 → `data` 为 `null`（过期会顺手置 `expired`）
-
-**13.3.2 确认**  `POST /user/pending-actions/{id}/confirm`
-
-- 原子 + 幂等：重复确认返回 `alreadyConfirmed=true`，不重复建记忆/任务
-- 已拒绝/已过期 → 409（提示重新发起）
-- 按 payload 实际内容分 `memory-only`/`task-only`/`mixed` 落库（`action_type` 仅展示）
-- 响应 `ConfirmResult`：`{ alreadyConfirmed, memories:[{id,action,key,value}], tasks:[{id,action,title,dueAt,recurrence,recurrenceRule}] }`
-
-**13.3.3 拒绝**  `POST /user/pending-actions/{id}/reject`
-
-- 幂等；已确认 → 409
-
-**确认状态机**：
-
-```
-pending --confirm--> confirmed
-pending --reject --> rejected
-pending --10min----> expired
-pending --新意图----> expired（同 session 只留一个 pending）
-```
-
----
-
-### 13.4 配置项（app.mindbutler.*）
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `enabled` | true | 总开关；关闭只保留手动 CRUD，不做提取/注入 |
-| `intent.enabled` | true | 意图拦截开关；关闭后聊天不拦截（手动 CRUD 仍可用） |
-| `memory.dynamic-ttl-days` | 90 | dynamic 记忆默认有效期（天） |
-| `memory.max-per-user` | 100 | 每用户 active 记忆上限 |
-| `memory.inject-max-stable` / `inject-max-dynamic` | 5 / 5 | 注入画像配额 |
-| `memory.inject-max-chars` | 1200 | 注入总字符预算 |
-| `task.zone` | Asia/Shanghai | P1 固定时区 |
-| `task.max-per-user` | 500 | 每用户任务上限 |
-| `task.due-limit` | 50 | 到期查询默认/最大条数 |
-| `pending.ttl-minutes` | 10 | pending 有效期（分钟） |
-| `pending.payload-max-bytes` | 16384 | pending payload 上限 |
-| `intent.extract-model` | deepseek-chat | 意图提取器模型（需在 `app.models.available` 白名单；启动时校验） |
-| `intent.timeout-ms` | 5000 | 提取超时；超时返回固定兜底，不阻塞聊天 |
-| `intent.daily-limit` | 50 | 每用户每日提取次数；0=不限 |
-| `intent.max-memories` / `intent.max-tasks` | 5 / 5 | 单条消息最多候选数（超出截断） |
-| `eval.real-model` | false | M4 评测 runner 是否真跑 LLM（false=桩模式，链路确定性） |
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `app.mindbutler.enabled` | `true` | 总开关；关闭后只保留手动 CRUD，不做意图提取/注入 |
+| `app.mindbutler.intent.enabled` | `true` | 意图提取开关；关闭后聊天不拦截（手动 CRUD 仍可用） |
+| `app.mindbutler.intent.extract-model` | `deepseek-chat` | 意图提取器模型（结构化 JSON 能力更强） |
+| `app.mindbutler.intent.timeout-ms` | `5000` | 提取超时（0=不限） |
+| `app.mindbutler.intent.daily-limit` | `50` | 每用户每日提取次数（0=不限） |
+| `app.mindbutler.intent.max-memories` | `5` | 单条消息最多记忆候选（超出截断） |
+| `app.mindbutler.intent.max-tasks` | `5` | 单条消息最多任务候选（超出截断） |
+| `app.mindbutler.memory.dynamic-ttl-days` | `90` | dynamic 记忆默认有效期；stable 不过期 |
+| `app.mindbutler.memory.max-per-user` | `100` | 每用户 active 记忆上限 |
+| `app.mindbutler.memory.inject-max-stable` | `5` | 注入 stable 画像上限 |
+| `app.mindbutler.memory.inject-max-dynamic` | `5` | 注入 dynamic 画像上限 |
+| `app.mindbutler.memory.inject-max-chars` | `1200` | 注入记忆总字符预算 |
+| `app.mindbutler.task.zone` | `Asia/Shanghai` | P1 固定时区（启动校验只允许此值） |
+| `app.mindbutler.task.max-per-user` | `500` | 每用户未删除任务上限 |
+| `app.mindbutler.task.due-limit` | `50` | `GET /user/tasks/due` 默认/最大条数 |
+| `app.mindbutler.pending.ttl-minutes` | `10` | 待确认动作有效期（过期需重新发起） |
+| `app.mindbutler.pending.payload-max-bytes` | `16384` | 待确认动作 payload 上限（字节） |
+| `app.mindbutler.eval.real-model` | `false` | M4 评测 runner：false=桩模式（100% 确定性），true=真跑 LLM |
 
 ---
 

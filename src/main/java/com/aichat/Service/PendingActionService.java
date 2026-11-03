@@ -26,6 +26,13 @@ public interface PendingActionService {
     PendingActionVO current(String sessionId);
 
     /**
+     * 按 id 查单条待确认动作（前端弹窗按标记里的 pendingId 拉详情）。
+     * 非本人 / 不存在 → 返回 null（Controller 转 404）。
+     * 已过期会顺手置 expired 并返回 null（和 current 一致的懒过期语义）。
+     */
+    PendingActionVO getById(long id);
+
+    /**
      * 原子确认：仅 pending 可确认。
      * - 重复确认 → alreadyConfirmed=true（不重复建记忆/任务）
      * - 已过期/已拒绝 → 409 提示重新发起

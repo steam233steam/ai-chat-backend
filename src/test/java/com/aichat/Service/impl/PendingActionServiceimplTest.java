@@ -290,6 +290,34 @@ class PendingActionServiceimplTest {
                 .hasMessageContaining("不存在");
     }
 
+    // ---------- getById ----------
+
+    @Test
+    void shouldGetByIdWhenFresh() {
+        PendingAction p = pending(9L, "{}", NOW.plusMinutes(5));
+        when(mapper.selectById(9L, UID)).thenReturn(p);
+
+        PendingActionVO vo = service.getById(9L);
+        assertThat(vo).isNotNull();
+        assertThat(vo.getId()).isEqualTo(9L);
+        verify(mapper, never()).expireSession(anyString(), anyString());
+    }
+
+    @Test
+    void shouldGetByIdReturnNullWhenNotOwner() {
+        when(mapper.selectById(404L, UID)).thenReturn(null);
+        assertThat(service.getById(404L)).isNull();
+    }
+
+    @Test
+    void shouldLazyExpireWhenGetByIdPastDue() {
+        PendingAction p = pending(9L, "{}", NOW.minusMinutes(1)); // 已过期
+        when(mapper.selectById(9L, UID)).thenReturn(p);
+
+        assertThat(service.getById(9L)).isNull();
+        verify(mapper).expireSession(UID, SES);
+    }
+
     // ---------- reject ----------
 
     @Test
