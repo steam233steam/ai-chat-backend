@@ -49,6 +49,9 @@ public class MindButlerProperties {
     /** 意图提取器用的模型名（默认 deepseek-chat，结构化 JSON 能力更强；需在 app.models.available 白名单里）。 */
     private String intentExtractModel = "deepseek-chat";
 
+    /** M4 评测 runner：true=真跑 LLM 统计提取准确率；false=桩模式（喂期望 JSON，链路确定性验证）。 */
+    private boolean evalRealModel = false;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -139,6 +142,14 @@ public class MindButlerProperties {
 
     public void setIntentExtractModel(String intentExtractModel) {
         this.intentExtractModel = intentExtractModel;
+    }
+
+    public boolean isEvalRealModel() {
+        return evalRealModel;
+    }
+
+    public void setEvalRealModel(boolean evalRealModel) {
+        this.evalRealModel = evalRealModel;
     }
 
     public void setPendingPayloadMaxBytes(int pendingPayloadMaxBytes) {

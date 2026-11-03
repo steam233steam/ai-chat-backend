@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v6.3  
-> 最后更新：2026-11-01  
+> 文档版本：v6.4  
+> 最后更新：2026-11-03  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v6.3 - Springdoc/Swagger 在线接口文档（`/swagger-ui.html` + `/v3/api-docs`），全部接口加 @Operation 注解
+> 变更记录：v6.4 - MindButler P1 接口（长期记忆 + 口语化任务 + 待确认动作，§13）；v6.3 - Springdoc/Swagger 在线接口文档（`/swagger-ui.html` + `/v3/api-docs`），全部接口加 @Operation 注解
 
 ---
 
@@ -20,6 +20,7 @@
 10. [认证说明](#10-认证说明)
 11. [CORS 说明](#11-cors-说明)
 12. [本地开发说明](#12-本地开发说明)
+13. [MindButler P1 接口（长期记忆 + 口语化任务）⭐ 新增](#13-mindbutler-p1-接口)
 
 ---
 
@@ -1330,6 +1331,151 @@ Windows 宿主
 
 **说明**：本地开发需在 `application-local.properties` 里显式设 `app.sms.dev-mode=true`，
 否则默认关闭（生产安全），验证码不会打印到日志。
+
+---
+
+## 13. MindButler P1 接口（长期记忆 + 口语化任务）⭐ 新增
+
+P1 三大能力（按设计文档 §8 接口契约落地）：
+- **13.1 长期记忆**（`/user/memories`）：手动 CRUD + 注入查询；`mem_key` 固定 4 维度（style/goal/schedule/relation）
+- **13.2 口语化任务**（`/user/tasks`）：CRUD + 完成/重复滚动 + 到期查询
+- **13.3 待确认动作**（`/user/pending-actions`）：口语提取出的记忆/任务候选走 pending 状态机，用户"确认/拒绝"后落库
+
+**数据表**：`tb_user_memory`、`tb_user_task`、`tb_pending_action`（见 `docs/schema.sql` + `docs/migration/2026-11-02-mindbutler-p1.sql`）。
+**迁移**：现有库执行 `docs/migration/2026-11-02-mindbutler-p1.sql`；全新库直接 `docs/schema.sql`（已含 3 表）。
+
+---
+
+### 13.1 长期记忆（/user/memories）
+
+**13.1.1 创建记忆**  `POST /user/memories`
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| memKey | string | 是 | `style`/`goal`/`schedule`/`relation` 之一 |
+| content | string | 是 | 记忆内容（≤256 字） |
+| memType | string | 否 | `stable`（默认）/`dynamic` |
+| expiresAt | datetime | 否 | dynamic 可显式指定；stable 必须空 |
+
+- 手动创建 `source=manual`、`confidence=1.00`
+- 同一用户已有完全相同 active 内容 → 409
+- 命中敏感词（密码/证件/银行卡）→ 400 拒绝
+
+**响应**：`{ "code":200, "data":{ id, memKey, content, memType, status, confidence, source, replacesId, expiresAt, version, createTime, updateTime, expired } }`
+
+**13.1.2 记忆列表**  `GET /user/memories?limit=50`
+
+- 含 `active` + `superseded`（排除 `deleted`）；limit 1-100
+- 返回项带 `expired`（瞬态，`expires_at <= now` 计算）
+
+**13.1.3 导出**  `GET /user/memories/export`
+
+- 全部未删除记忆（含 superseded），供隐私/迁移
+
+**13.1.4 查单条**  `GET /user/memories/{id}`
+
+- 非本人或已软删 → 404
+
+**13.1.5 更新**  `PUT /user/memories/{id}`
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| content | string | 是 | 新内容 |
+| memType | string | 是 | `stable`/`dynamic` |
+| expiresAt | datetime | 否 | dynamic 可指定 |
+| version | int | 是 | 乐观锁（不匹配 409） |
+
+**13.1.6 软删除**  `DELETE /user/memories/{id}`（幂等；`status=deleted`）
+
+---
+
+### 13.2 口语化任务（/user/tasks）
+
+**13.2.1 任务列表**  `GET /user/tasks?status=pending&beforeId=100&limit=50`
+
+- `status`：`pending`（默认）/`done`/`cancelled`；排除软删
+- 游标分页：`beforeId` 排他（取比它更早的最近 `limit` 条），Service 层反转为升序返回
+
+**13.2.2 到期待办**  `GET /user/tasks/due?limit=50`
+
+- `status=pending` 且有 `due_at` 且已到期（`due_at <= now`），按 `due_at` 升序
+- 返回项带 `overdue`（瞬态计算字段）
+
+**13.2.3 查单条**  `GET /user/tasks/{id}`（非本人/已软删 → 404）
+
+**13.2.4 创建**  `POST /user/tasks`
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| title | string | 是 | 任务标题（≤128 字） |
+| dueAt | datetime | 条件 | `once` 可空；`daily/weekly` 必填 |
+| recurrence | string | 否 | `once`（默认）/`daily`/`weekly`；`monthly` 预留 P1.5，传了 400 |
+| recurrenceRule | string | 条件 | `weekly` 必填，格式 `BYDAY=MO`（MO/TU/WE/TH/FR/SA/SU） |
+| rawInput | string | 否 | 口语原句（≤512 字，溯源用） |
+
+**13.2.5 更新**  `PUT /user/tasks/{id}`（乐观锁 `version`，不匹配 409；`done/cancelled` 不可更新）
+
+**13.2.6 完成**  `POST /user/tasks/{id}/complete`
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| version | int | 是 | 乐观锁 |
+
+- `once` → `status=done`，`due_at` 清空
+- `daily/weekly` → 保持 `pending`，`due_at` 滚动到下一个未来时间点（`last_notified_at` 记录本次完成时间）
+
+**13.2.7 软删除**  `DELETE /user/tasks/{id}`（幂等；`deleted_at` 落库）
+
+---
+
+### 13.3 待确认动作（/user/pending-actions）
+
+口语提取出的记忆/任务候选先写 pending（10 分钟 TTL），用户确认后才落库。
+同一 `user_id + session_id` 同时最多一个 pending（`pending_slot` 生成列唯一键兜底）。
+
+**13.3.1 查当前 pending**  `GET /user/pending-actions/current?sessionId=s-1`
+
+- 返回 `PendingActionVO`（`id`/`actionType`/`status`/`memories[]`/`tasks[]`/`preview`/`expiresAt`）
+- 无 pending 或已过期 → `data` 为 `null`（过期会顺手置 `expired`）
+
+**13.3.2 确认**  `POST /user/pending-actions/{id}/confirm`
+
+- 原子 + 幂等：重复确认返回 `alreadyConfirmed=true`，不重复建记忆/任务
+- 已拒绝/已过期 → 409（提示重新发起）
+- 按 payload 实际内容分 `memory-only`/`task-only`/`mixed` 落库（`action_type` 仅展示）
+- 响应 `ConfirmResult`：`{ alreadyConfirmed, memories:[{id,action}], tasks:[{id,action}] }`
+
+**13.3.3 拒绝**  `POST /user/pending-actions/{id}/reject`
+
+- 幂等；已确认 → 409
+
+**确认状态机**：
+
+```
+pending --confirm--> confirmed
+pending --reject --> rejected
+pending --10min----> expired
+pending --新意图----> expired（同 session 只留一个 pending）
+```
+
+---
+
+### 13.4 配置项（app.mindbutler.*）
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `enabled` | true | 总开关；关闭只保留手动 CRUD，不做提取/注入 |
+| `memory.dynamic-ttl-days` | 90 | dynamic 记忆默认有效期（天） |
+| `memory.max-per-user` | 100 | 每用户 active 记忆上限 |
+| `memory.inject-max-stable` / `inject-max-dynamic` | 5 / 5 | 注入画像配额 |
+| `memory.inject-max-chars` | 1200 | 注入总字符预算 |
+| `task.zone` | Asia/Shanghai | P1 固定时区 |
+| `task.max-per-user` | 500 | 每用户任务上限 |
+| `task.due-limit` | 50 | 到期查询默认/最大条数 |
+| `pending.ttl-minutes` | 10 | pending 有效期（分钟） |
+| `pending.payload-max-bytes` | 16384 | pending payload 上限 |
+| `intent.extract-model` | deepseek-chat | 意图提取器模型（需在 `app.models.available` 白名单） |
+| `eval.real-model` | false | M4 评测 runner 是否真跑 LLM（false=桩模式，链路确定性） |
 
 ---
 

@@ -23,6 +23,21 @@ Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama / OpenAI 兼容) · DeepSeek · 
 - **工程化**：三层架构 + 全局异常处理 + 拦截器链 + 参数校验
 - **一体化集成测试**：`FullFlowIntegrationTest` 13 步全链路端到端验收测试（真实连 MySQL/Redis/Ollama，不 Mock）
 
+## MindButler P1（长期记忆 + 口语化任务）⭐
+
+P1 把"省用户惦记时间"做进聊天：固定 4 维度结构化画像（`style/goal/schedule/relation`）+ 口语化任务，
+候选先走 pending 状态机（10 分钟 TTL），用户"确认/拒绝"后才落库——不连向量库、可解释可审计。
+
+| 能力 | 接口 | 说明 |
+|------|------|------|
+| 长期记忆 | `/user/memories` | 手动 CRUD + 注入查询；4 维度 mem_key + `confidence` 仅排序 + `replaces_id` 替换 + dynamic TTL |
+| 口语化任务 | `/user/tasks` | CRUD + 完成/重复滚动 + 到期查询（`once/daily/weekly`，weekly 带 `BYDAY=XX`） |
+| 待确认动作 | `/user/pending-actions` | pending→confirmed/rejected/expired 状态机；确认按 payload 实际内容分 memory/task/mixed 落库 |
+| 意图拦截 | `/chat/ask` 内置 | 说"明天 9 点交作业 / 记住我喜欢简洁"→ LLM 提取候选 → 写 pending → 二次确认；普通聊天不受影响 |
+
+**迁移**：现有库跑 `docs/migration/2026-11-02-mindbutler-p1.sql`；全新库直接 `docs/schema.sql`（已含 3 表）。
+**设计文档**：`docs/MindButler-P1设计.md`。
+
 ## 快速启动
 
 **依赖服务**：MySQL (aichat 库) · Redis · Ollama
@@ -59,14 +74,34 @@ mvn spring-boot:run
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/chat/models` | 可用模型白名单 |
-| POST | `/chat/ask` | 同步对话 |
+| POST | `/chat/ask` | 同步对话（含 MindButler 意图拦截：命中记忆/任务意图直接返回确认文案，不调聊天模型） |
 | GET | `/chat/ask-stream` | 流式对话 (SSE) |
 | GET | `/chat/history` | 会话历史（可选 `beforeId` + `limit` 分页） |
 | GET | `/chat/sessions` | 会话列表 |
 | PUT | `/chat/title` | 更新标题 |
 | DELETE | `/chat/clear-session` | 清空会话 |
 
-完整接口文档见 `docs/API.md`。
+### MindButler P1 接口
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/user/memories` | 创建记忆（4 维度 mem_key + mem_type + 敏感词过滤） |
+| GET | `/user/memories` | 记忆列表（active + superseded，含 `expired` 瞬态字段） |
+| GET | `/user/memories/export` | 全量导出（含 superseded，供隐私/迁移） |
+| GET | `/user/memories/{id}` | 查单条记忆 |
+| PUT | `/user/memories/{id}` | 更新记忆（乐观锁 version） |
+| DELETE | `/user/memories/{id}` | 软删记忆（幂等） |
+| GET | `/user/tasks` | 任务列表（游标分页 beforeId + limit） |
+| GET | `/user/tasks/due` | 到期待办查询 |
+| GET | `/user/tasks/{id}` | 查单条任务 |
+| POST | `/user/tasks` | 创建任务（once/daily/weekly，weekly 必带 BYDAY=XX） |
+| PUT | `/user/tasks/{id}` | 更新任务（乐观锁 version） |
+| POST | `/user/tasks/{id}/complete` | 完成任务（once→done；daily/weekly→滚动到下一次） |
+| DELETE | `/user/tasks/{id}` | 软删任务（幂等） |
+| GET | `/user/pending-actions/current?sessionId=` | 查当前待确认动作（懒过期） |
+| POST | `/user/pending-actions/{id}/confirm` | 确认（原子 + 幂等；按 payload 内容分 memory/task/mixed 落库） |
+| POST | `/user/pending-actions/{id}/reject` | 拒绝（幂等） |
+
+完整接口文档见 `docs/API.md` §13。
 
 ## 架构设计
 
@@ -148,6 +183,8 @@ GitHub Actions 在每次 push 时执行单元测试与打包（`.github/workflow
 
 `AichatApplicationTests` 是 `@SpringBootTest`，启动需要真实的 Redis / MySQL / Ollama，因此未纳入 CI；CI 只跑不依赖外部服务的单元测试。
 
+`MindButlerFlowIntegrationTest` / `MindButlerEvalRunnerTest` 连接虚拟机 MySQL(13306)，也走 CI 排除清单。
+
 ### 一体化集成测试
 
 `FullFlowIntegrationTest` 是不 Mock、真实连 MySQL/Redis/Ollama 的端到端验收测试（17 步全链路）。本地运行：
@@ -167,11 +204,16 @@ mvn test -Dtest=FullFlowIntegrationTest
 | `app.models.default-model` | `qwen2.5-coder:7b` | 默认模型 |
 | `app.models.ollama-models` | `qwen2.5-coder:7b` | 走 Ollama 的模型，其余走 OpenAI 兼容协议 |
 | `app.chat.context-max-messages` | `20` | 送给模型的历史消息条数，`<=0` 表示不裁剪 |
+| `app.mindbutler.enabled` | `true` | MindButler P1 总开关；关闭后只保留手动 CRUD，不做意图提取/注入 |
+| `app.mindbutler.intent.extract-model` | `deepseek-chat` | 意图提取器模型（需在模型白名单内） |
 
 ## 文档
 
-- `docs/API.md` — 接口文档
+- `docs/API.md` — 接口文档（含 §13 MindButler P1 接口）
 - `docs/schema.sql` — 数据库脚本
+- `docs/MindButler-P1设计.md` — MindButler P1 建设设计（长期记忆 + 口语化任务 + 确认状态机）
+- `docs/migration/2026-11-02-mindbutler-p1.sql` — MindButler P1 三表迁移脚本
+- `docs/eval/mindbutler-intent-eval.json` — 口语意图提取评测集（40 条，M4 验收指标）
 - `docs/聊天持久化设计.md` — 持久化、缓存一致性与面试讲点
 - `docs/DEVELOPMENT_PLAN.md` — 后续开发与求职准备计划
 - `docs/本地启动.md` — 本地运行指南

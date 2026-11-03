@@ -417,11 +417,14 @@ spring.ai.ollama.chat.options.model=${OLLAMA_MODEL:qwen2.5-coder:7b}
 - [x] 验证码日志脱敏 + dev-mode 默认关闭 ✅ 2026-10-27
 - [x] 模型输出净化 + 历史角色真实化 + 字符预算 + 线程安全 ✅ 2026-11-01
 - [x] Springdoc/Swagger 在线接口文档 + httpclient5 测试依赖 ✅ 2026-11-01
+- [x] **MindButler P1**：长期记忆（4 维度画像）+ 口语化任务 + pending 确认状态机 + 意图拦截 ✅ 2026-11-02（M1）→ 2026-11-03（M2/M3/M4，P1 全量完成）
+- [x] MindButler P1 单测 153 绿 + `MindButlerFlowIntegrationTest`（真 MySQL 链路）+ `MindButlerEvalRunnerTest`（40 条口语评测）✅ 2026-11-03
 - [ ] 聊天/登录接口限流 + 安全加固
-- [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
 - [ ] Docker Compose 部署
-- [ ] RAG 知识库（可选加分项）
+- [ ] RAG 知识库（可选加分项；P1 刻意不引向量库，留 P1.5 数据量验证）
 - [ ] Micrometer 可观测性 + 压测
+- [ ] MindButler P2：MCP 只读公开数据源（如米游社资源/回复量）+ 风控感知（参考 Mika）
+- [ ] MindButler P3：微信/QQ AI 客服提醒（最小权限：只读提醒、不能加计划）
 - [x] springdoc-openapi 接口文档 ✅ 2026-11-01
 
 ---

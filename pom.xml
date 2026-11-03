@@ -114,6 +114,14 @@
             <artifactId>httpclient5</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Testcontainers（可选集成测试基建；Docker 不可用时相关用例自动 @Disabled，不阻断 CI） -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>1.19.8</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     
     <build>

@@ -1,0 +1,51 @@
+{
+  "note": "MindButler P1 口语意图提取评测集（M4）。40 条：每条含原始口语 + 期望提取出的记忆/任务候选。用途：M4 用真实 LLM 跑提取器，统计 key 命中/任务标题/dueAt 准确率。",
+  "cases": [
+    { "id": 1, "input": "记住我喜欢简洁一点", "type": "memory", "expectKey": "style", "expectValueContains": "简洁", "expectMemType": "stable" },
+    { "id": 2, "input": "帮我记住我一般在晚上十点睡觉", "type": "memory", "expectKey": "schedule", "expectValueContains": "睡觉", "expectMemType": "stable" },
+    { "id": 3, "input": "记住我正在准备双十一大促", "type": "memory", "expectKey": "goal", "expectValueContains": "双十一", "expectMemType": "dynamic" },
+    { "id": 4, "input": "记住我朋友叫我小林就行", "type": "memory", "expectKey": "relation", "expectValueContains": "小林", "expectMemType": "stable" },
+    { "id": 5, "input": "记住我对海鲜过敏", "type": "memory", "expectKey": "style", "expectValueContains": "过敏", "expectMemType": "stable" },
+    { "id": 6, "input": "我最近在学 Rust，记一下", "type": "memory", "expectKey": "goal", "expectValueContains": "Rust", "expectMemType": "dynamic" },
+    { "id": 7, "input": "记住我每天早上八点喝咖啡", "type": "memory", "expectKey": "schedule", "expectValueContains": "咖啡", "expectMemType": "stable" },
+    { "id": 8, "input": "记一下我下周要出差北京", "type": "memory", "expectKey": "goal", "expectValueContains": "北京", "expectMemType": "dynamic" },
+
+    { "id": 9, "input": "明天 9 点交作业", "type": "task", "expectTitleContains": "交作业", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 10, "input": "后天下午 3 点提醒我提交方案", "type": "task", "expectTitleContains": "提交方案", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 11, "input": "每周一交周报", "type": "task", "expectTitleContains": "周报", "expectRecurrence": "weekly", "expectRule": "BYDAY=MO" },
+    { "id": 12, "input": "每天八点半锻炼", "type": "task", "expectTitleContains": "锻炼", "expectRecurrence": "daily", "expectDueHasDate": true },
+    { "id": 13, "input": "周五下班前把代码提交了", "type": "task", "expectTitleContains": "提交", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 14, "input": "每周五晚上八点提醒我交健身房费用", "type": "task", "expectTitleContains": "健身房", "expectRecurrence": "weekly", "expectRule": "BYDAY=FR" },
+    { "id": 15, "input": "下周三 10 点开会", "type": "task", "expectTitleContains": "开会", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 16, "input": "记得明天早上给我妈打个电话", "type": "task", "expectTitleContains": "电话", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 17, "input": "每周六上午十点半提醒我练琴", "type": "task", "expectTitleContains": "练琴", "expectRecurrence": "weekly", "expectRule": "BYDAY=SA" },
+    { "id": 18, "input": "周五之前把书看完", "type": "task", "expectTitleContains": "书", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 19, "input": "每天睡前背二十个单词", "type": "task", "expectTitleContains": "单词", "expectRecurrence": "daily", "expectDueHasDate": true },
+    { "id": 20, "input": "周四 17 点提醒我买牛奶", "type": "task", "expectTitleContains": "买牛奶", "expectRecurrence": "once", "expectDueHasDate": true },
+
+    { "id": 21, "input": "明天上午十点交房租", "type": "task", "expectTitleContains": "房租", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 22, "input": "下周一早上九点半提醒我开会", "type": "task", "expectTitleContains": "开会", "expectRecurrence": "once", "expectDueHasDate": true },
+    { "id": 23, "input": "每隔一天喝水，今天就开始", "type": "task", "expectTitleContains": "喝水", "expectRecurrence": "daily", "expectDueHasDate": true },
+    { "id": 24, "input": "每周日晚上提醒我清理购物车", "type": "task", "expectTitleContains": "购物车", "expectRecurrence": "weekly", "expectRule": "BYDAY=SU" },
+    { "id": 25, "input": "三天后的下午两点交报告", "type": "task", "expectTitleContains": "交报告", "expectRecurrence": "once", "expectDueHasDate": true },
+
+    { "id": 26, "input": "记住我说话喜欢简洁，另外明天交论文", "type": "mixed", "expectMemoryKey": "style", "expectTaskTitleContains": "论文" },
+    { "id": 27, "input": "我最近在准备面试，帮我每周三晚上复盘一次", "type": "mixed", "expectMemoryKey": "goal", "expectTaskTitleContains": "复盘", "expectTaskRecurrence": "weekly", "expectTaskRule": "BYDAY=WE" },
+    { "id": 28, "input": "记住我一般十点半睡，还有今天早上八点吃药", "type": "mixed", "expectMemoryKey": "schedule", "expectTaskTitleContains": "吃药" },
+    { "id": 29, "input": "记一下我朋友叫小美，后天下午提醒我请她吃饭", "type": "mixed", "expectMemoryKey": "relation", "expectTaskTitleContains": "吃饭" },
+    { "id": 30, "input": "我目标是年底减重五公斤，每天跑步半小时", "type": "mixed", "expectMemoryKey": "goal", "expectTaskTitleContains": "跑步", "expectTaskRecurrence": "daily" },
+
+    { "id": 31, "input": "今天天气怎么样", "type": "none" },
+    { "id": 32, "input": "随便聊聊", "type": "none" },
+    { "id": 33, "input": "帮我讲个笑话", "type": "none" },
+    { "id": 34, "input": "你好呀", "type": "none" },
+    { "id": 35, "input": "什么是大模型", "type": "none" },
+
+    { "id": 36, "input": "记住我的密码是 abc123", "type": "reject_sensitive" },
+    { "id": 37, "input": "记一下我的身份证号 11010119900101001X", "type": "reject_sensitive" },
+    { "id": 38, "input": "记住我的银行卡号 6222020200112233445", "type": "reject_sensitive" },
+
+    { "id": 39, "input": "对", "type": "confirm" },
+    { "id": 40, "input": "取消", "type": "reject" }
+  ]
+}
