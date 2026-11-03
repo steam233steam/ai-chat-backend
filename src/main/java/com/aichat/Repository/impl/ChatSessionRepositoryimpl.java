@@ -44,6 +44,18 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
 
     @Override
     public void save(String userId, String sessionid, Message message, String model) {
+        saveInternal(userId, sessionid, message, model);
+    }
+
+    @Override
+    public Long saveUserMessageAndReturnId(String userId, String sessionid, Message message, String model) {
+        return saveInternal(userId, sessionid, message, model);
+    }
+
+    /**
+     * 实际保存逻辑；返回 MySQL 自增 id（save 不用则丢弃，saveUserMessageAndReturnId 用它溯源）。
+     */
+    private Long saveInternal(String userId, String sessionid, Message message, String model) {
         String type = getMessageType(message);
         long now = System.currentTimeMillis();
 
@@ -81,6 +93,7 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
             invalidateMessageCache(userId, sessionid);
             invalidateSessionsCache(userId);
         }
+        return saved.getId();
     }
 
     @Override

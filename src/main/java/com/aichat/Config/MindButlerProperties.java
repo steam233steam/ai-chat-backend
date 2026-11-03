@@ -46,6 +46,9 @@ public class MindButlerProperties {
     /** 待确认动作 payload 上限（字节）。 */
     private int pendingPayloadMaxBytes = 16384;
 
+    /** 意图提取器用的模型名（默认 deepseek-chat，结构化 JSON 能力更强；需在 app.models.available 白名单里）。 */
+    private String intentExtractModel = "deepseek-chat";
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -128,6 +131,14 @@ public class MindButlerProperties {
 
     public int getPendingPayloadMaxBytes() {
         return pendingPayloadMaxBytes;
+    }
+
+    public String getIntentExtractModel() {
+        return intentExtractModel;
+    }
+
+    public void setIntentExtractModel(String intentExtractModel) {
+        this.intentExtractModel = intentExtractModel;
     }
 
     public void setPendingPayloadMaxBytes(int pendingPayloadMaxBytes) {

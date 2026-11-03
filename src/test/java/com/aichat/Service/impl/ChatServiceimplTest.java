@@ -37,6 +37,7 @@ import com.aichat.Config.ModelRouter;
 import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.SMessage;
 import com.aichat.Dto.UserDto;
+import com.aichat.Dto.ConfirmResult;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
@@ -58,6 +59,7 @@ class ChatServiceimplTest {
     private ModelRouter modelRouter;
     private PromptBuilder promptBuilder;
     private MemoryService memoryService;
+    private com.aichat.Service.IntentService intentService;
     private ChatClientRequestSpec requestSpec;
     private ChatServiceimpl service;
 
@@ -83,10 +85,15 @@ class ChatServiceimplTest {
         when(modelRouter.resolve("deepseek-chat")).thenReturn("deepseek-chat");
         when(modelRouter.client(anyString())).thenReturn(chatClient);
 
+        // M3 意图服务：mock 一个"无意图"的实现，让测试聚焦聊天路径（意图拦截另有专测）
+        intentService = mock(com.aichat.Service.IntentService.class);
+        when(intentService.handle(anyString(), anyString(), any())).thenReturn(com.aichat.Service.IntentOutcome.chat());
+
         service = new ChatServiceimpl();
         ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
         ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
         ReflectionTestUtils.setField(service, "chatTitleService", chatTitleService);
+        ReflectionTestUtils.setField(service, "intentService", intentService);
         // PromptBuilder：mock 一个"无画像"的版本，让 system prompt 返回基础人设（不影响历史注入断言）
         memoryService = mock(MemoryService.class);
         when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(java.util.List.of());
@@ -145,7 +152,7 @@ class ChatServiceimplTest {
         assertThat(system).doesNotContain("【历史】");
         assertThat(system).doesNotContain("上一轮");
 
-        verify(repository).save("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
+        verify(repository).saveUserMessageAndReturnId("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
         verify(repository).save("u1", "s1", new AssistantMessage("你好"), "qwen2.5-coder:7b");
         verifyNoInteractions(chatTitleService);
     }
@@ -211,7 +218,7 @@ class ChatServiceimplTest {
         InOrder order = inOrder(repository, chatTitleService);
         order.verify(repository).saveTitle("u1", "s1", "新问题");
         order.verify(chatTitleService).generateTitleAsync("u1", "s1", "新问题", "新问题");
-        order.verify(repository).save("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
+        order.verify(repository).saveUserMessageAndReturnId("u1", "s1", new UserMessage("新问题"), "qwen2.5-coder:7b");
         order.verify(repository).save("u1", "s1", new AssistantMessage("你好"), "qwen2.5-coder:7b");
     }
 
@@ -225,7 +232,7 @@ class ChatServiceimplTest {
 
         verify(modelRouter).resolve("deepseek-chat");
         verify(modelRouter).client("deepseek-chat");
-        verify(repository).save("u1", "s1", new UserMessage("新问题"), "deepseek-chat");
+        verify(repository).saveUserMessageAndReturnId("u1", "s1", new UserMessage("新问题"), "deepseek-chat");
         verify(repository).save("u1", "s1", new AssistantMessage("你好"), "deepseek-chat");
         // 模型一致，不应重新锁定
         verify(repository, never()).lockModel(anyString(), anyString(), anyString());
@@ -353,5 +360,37 @@ class ChatServiceimplTest {
         Thread.sleep(300);
         verify(repository, never()).save(
                 eq("u1"), eq("s1"), isA(AssistantMessage.class), anyString());
+    }
+
+    // ---------- M3 意图拦截 ----------
+
+    @Test
+    void shouldInterceptIntentAndSkipChatModel() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        // IntentService 返回"已提取出候选并写了 pending"（非 chat）
+        when(intentService.handle(eq("s1"), eq("明天 9 点交作业"), any()))
+                .thenReturn(com.aichat.Service.IntentOutcome.extracted("我识别到 1 个任务，确认吗？"));
+
+        String answer = service.sendSession("s1", new UserMessage("明天 9 点交作业"), null);
+
+        // 命中意图：直接返回确认文案，不走模型
+        assertThat(answer).contains("确认吗？");
+        // 助手回复被保存
+        verify(repository).save("u1", "s1", new AssistantMessage("我识别到 1 个任务，确认吗？"), "qwen2.5-coder:7b");
+        // 聊天模型未被调用
+        verify(requestSpec, never()).messages(anyList());
+    }
+
+    @Test
+    void shouldInterceptConfirmIntent() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        ConfirmResult cr = new ConfirmResult(false, List.of(), List.of());
+        when(intentService.handle(eq("s1"), eq("对"), any()))
+                .thenReturn(com.aichat.Service.IntentOutcome.confirmed(cr, "已为你保存 1 条。"));
+
+        String answer = service.sendSession("s1", new UserMessage("对"), null);
+
+        assertThat(answer).contains("已为你保存");
+        verify(requestSpec, never()).messages(anyList());
     }
 }

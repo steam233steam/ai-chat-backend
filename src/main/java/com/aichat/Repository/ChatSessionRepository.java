@@ -19,6 +19,12 @@ public interface ChatSessionRepository {
      */
     void save(String userId, String sessionid, Message message, String model);
 
+    /**
+     * 保存一条用户消息并返回其 MySQL 自增 id（供 M3 意图提取溯源 source_message_id）。
+     * 语义与 {@link #save} 一致，仅额外把生成的 id 返回给调用方。
+     */
+    Long saveUserMessageAndReturnId(String userId, String sessionid, Message message, String model);
+
     List<SMessage> getMessageHistory(String userId, String sessionid);
 
     /**
