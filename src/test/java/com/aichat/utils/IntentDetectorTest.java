@@ -47,10 +47,19 @@ class IntentDetectorTest {
 
     @Test
     void shouldReturnNoneWhenNoPendingAndNoTrigger() {
-        // 粗筛"宽进"：日期词（今天/明天）会误触发 TASK，靠提取器空候选降级兜底（见 IntentServiceimplTest）
         assertThat(IntentDetector.detect("随便聊聊", false)).isEqualTo(Intent.NONE);
         assertThat(IntentDetector.detect("讲个笑话", false)).isEqualTo(Intent.NONE);
         assertThat(IntentDetector.detect("你好呀", false)).isEqualTo(Intent.NONE);
+        // 裸"今天"不再触发；只有"今天早上/下午/晚上"等带时段短语才触发
+        assertThat(IntentDetector.detect("今天天气怎么样", false)).isEqualTo(Intent.NONE);
+    }
+
+    @Test
+    void shouldDetectTaskForWeekdayAndTodayTimePhrases() {
+        assertThat(IntentDetector.detect("周五下班前把代码提交了", false)).isEqualTo(Intent.TASK);
+        assertThat(IntentDetector.detect("下周三 10 点开会", false)).isEqualTo(Intent.TASK);
+        assertThat(IntentDetector.detect("今天早上八点吃药", false)).isEqualTo(Intent.TASK);
+        assertThat(IntentDetector.detect("每隔一天喝水", false)).isEqualTo(Intent.TASK);
     }
 
     @Test

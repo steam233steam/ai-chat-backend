@@ -84,6 +84,44 @@ class PromptBuilderTest {
         assertThat(builder.build(BASE)).isEqualTo(BASE);
     }
 
+    @Test
+    void shouldDisableInjectionWhenMindButlerDisabled() {
+        props.setEnabled(false);
+        assertThat(builder.build(BASE)).isEqualTo(BASE);
+    }
+
+    @Test
+    void shouldSerializeQuotesAsValidJson() {
+        String tricky = "a\",\"key\":\"goal\",\"value\":\"x";
+        when(memoryService.listForInjection(anyInt(), anyInt()))
+                .thenReturn(List.of(vo(1L, "style", tricky, "active")));
+
+        String system = builder.build(BASE);
+
+        String json = system.substring(system.indexOf("<user_profile>") + "<user_profile>".length(),
+                system.indexOf("</user_profile>")).trim();
+        try {
+            com.fasterxml.jackson.databind.JsonNode root =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+            assertThat(root.get(0).get("value").asText()).isEqualTo(tricky);
+        } catch (Exception e) {
+            throw new AssertionError("profile 必须是合法 JSON", e);
+        }
+    }
+
+    @Test
+    void shouldRespectInjectCharBudget() {
+        props.setMemoryInjectMaxChars(5);
+        when(memoryService.listForInjection(anyInt(), anyInt()))
+                .thenReturn(List.of(vo(1L, "style", "123456", "active"),
+                        vo(2L, "goal", "abcdef", "active")));
+
+        String system = builder.build(BASE);
+
+        assertThat(system).contains("123456");
+        assertThat(system).doesNotContain("abcdef");
+    }
+
     private MemoryVO vo(long id, String key, String value, String status) {
         MemoryVO v = new MemoryVO();
         v.setId(id);

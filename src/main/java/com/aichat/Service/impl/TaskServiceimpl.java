@@ -1,12 +1,13 @@
 package com.aichat.Service.impl;
 
 import java.time.Clock;
-import java.time.Duration;
+import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +42,7 @@ public class TaskServiceimpl implements TaskService {
         String userId = currentUserId();
         int cap = Math.max(1, Math.min(limit, 100));
         long cursor = (beforeId == null) ? Long.MAX_VALUE : beforeId;
-        String st = normalizeStatus(status, "pending");
+        String st = normalizeListStatus(status);
         LocalDateTime now = nowLocal();
 
         // 游标语义：id < beforeId，倒序取 limit 条，调用方（本方法）再反转成升序
@@ -66,10 +67,13 @@ public class TaskServiceimpl implements TaskService {
     @Override
     public TaskVO create(CreateTaskRequest request) {
         String userId = currentUserId();
+        if (userTaskMapper.countByUser(userId) >= props.getTaskMaxPerUser()) {
+            throw new BusinessException("任务数量已达上限（" + props.getTaskMaxPerUser() + " 条），请先删除旧任务");
+        }
         String title = normalizeTitle(request.getTitle());
         String recurrence = normalizeRecurrence(request.getRecurrence(), request.getDueAt());
         String rule = normalizeRule(request.getRecurrence(), request.getRecurrenceRule());
-        LocalDateTime dueAt = normalizeDueAt(recurrence, request.getDueAt(), userId);
+        LocalDateTime dueAt = normalizeDueAt(recurrence, rule, request.getDueAt());
 
         UserTask task = new UserTask();
         task.setUserId(userId);
@@ -108,18 +112,25 @@ public class TaskServiceimpl implements TaskService {
         upd.setId(id);
         upd.setUserId(userId);
         upd.setTitle(request.getTitle() != null ? normalizeTitle(request.getTitle()) : current.getTitle());
-        upd.setDueAt(request.getDueAt() != null ? request.getDueAt() : current.getDueAt());
         upd.setTimezone(current.getTimezone());
-        upd.setRecurrence(request.getRecurrence() != null ? normalizeRecurrence(request.getRecurrence(), upd.getDueAt()) : current.getRecurrence());
-        upd.setRecurrenceRule(normalizeRule(upd.getRecurrence(),
-                request.getRecurrenceRule() != null ? request.getRecurrenceRule() : current.getRecurrenceRule()));
+
+        String newRecurrence = request.getRecurrence() != null
+                ? normalizeRecurrence(request.getRecurrence(),
+                        request.getDueAt() != null ? request.getDueAt() : current.getDueAt())
+                : current.getRecurrence();
+        String newRule = normalizeRule(newRecurrence,
+                request.getRecurrenceRule() != null ? request.getRecurrenceRule() : current.getRecurrenceRule());
+        boolean scheduleChanged = request.getDueAt() != null || request.getRecurrence() != null
+                || request.getRecurrenceRule() != null;
+        LocalDateTime newDue = request.getDueAt() != null ? request.getDueAt() : current.getDueAt();
+        if (scheduleChanged) {
+            newDue = normalizeDueAt(newRecurrence, newRule, newDue);
+        }
+        upd.setDueAt(newDue);
+        upd.setRecurrence(newRecurrence);
+        upd.setRecurrenceRule(newRule);
         upd.setStatus(normalizeStatus(request.getStatus(), current.getStatus()));
         upd.setVersion(request.getVersion());
-
-        if ("pending".equals(upd.getStatus()) && upd.getRecurrence() != null && upd.getRecurrence().equals("weekly")
-                && upd.getRecurrenceRule() == null) {
-            throw new BusinessException("weekly 任务必须带 recurrenceRule（如 BYDAY=MO）");
-        }
 
         int rows = userTaskMapper.updateByIdAndVersion(upd);
         if (rows == 0) {
@@ -132,7 +143,8 @@ public class TaskServiceimpl implements TaskService {
     public boolean delete(long id) {
         String userId = currentUserId();
         int rows = userTaskMapper.softDelete(id, userId);
-        return rows > 0;
+        // 幂等：已软删也算成功（v3 8.2）
+        return rows > 0 || userTaskMapper.countById(id, userId) > 0;
     }
 
     @Override
@@ -154,7 +166,8 @@ public class TaskServiceimpl implements TaskService {
         LocalDateTime newDue;
         if ("once".equals(current.getRecurrence())) {
             newStatus = "done";
-            newDue = null;
+            // 保留原始截止时间，便于"已完成"列表展示/统计；不再清空 due_at
+            newDue = current.getDueAt();
         } else {
             // recurring：保持 pending，due_at 从当前值滚动到下一次 > now
             newStatus = "pending";
@@ -173,7 +186,7 @@ public class TaskServiceimpl implements TaskService {
         String userId = currentUserId();
         int cap = Math.max(1, Math.min(limit, 100));
         LocalDateTime now = nowLocal();
-        return userTaskMapper.selectDue(userId, cap).stream().map(t -> toVO(t, now)).toList();
+        return userTaskMapper.selectDue(userId, now, cap).stream().map(t -> toVO(t, now)).toList();
     }
 
     // ---------- 内部辅助 ----------
@@ -214,7 +227,7 @@ public class TaskServiceimpl implements TaskService {
     }
 
     private String normalizeRecurrence(String raw, LocalDateTime dueAt) {
-        String r = (raw == null || raw.isBlank()) ? "once" : raw.trim().toLowerCase();
+        String r = (raw == null || raw.isBlank()) ? "once" : raw.trim().toLowerCase(Locale.ROOT);
         if (!r.equals("once") && !r.equals("daily") && !r.equals("weekly")) {
             throw new BusinessException("P1 只支持 once/daily/weekly 重复");
         }
@@ -242,8 +255,16 @@ public class TaskServiceimpl implements TaskService {
         return r;
     }
 
+    private String normalizeListStatus(String raw) {
+        String s = (raw == null || raw.isBlank()) ? "pending" : raw.trim().toLowerCase(Locale.ROOT);
+        if (!s.equals("pending") && !s.equals("done") && !s.equals("cancelled")) {
+            throw new BusinessException("status 只允许 pending/done/cancelled");
+        }
+        return s;
+    }
+
     private String normalizeStatus(String raw, String fallback) {
-        String s = (raw == null || raw.isBlank()) ? fallback : raw.trim().toLowerCase();
+        String s = (raw == null || raw.isBlank()) ? fallback : raw.trim().toLowerCase(Locale.ROOT);
         if (!s.equals("pending") && !s.equals("cancelled")) {
             throw new BusinessException("status 只允许 pending/cancelled（done 走 complete 接口）");
         }
@@ -256,16 +277,49 @@ public class TaskServiceimpl implements TaskService {
      * - once 允许 null（"记得买牛奶"无时间）；过去时间允许（补录场景，前端展示为 overdue）
      * P1 固定 Asia/Shanghai，前端直接传 LocalDateTime 即可。
      */
-    private LocalDateTime normalizeDueAt(String recurrence, LocalDateTime dueAt, String userId) {
+    private LocalDateTime normalizeDueAt(String recurrence, String rule, LocalDateTime dueAt) {
         if ("once".equals(recurrence)) {
-            return dueAt; // 可空
+            return dueAt; // 可空；过去时间允许（补录场景，前端展示为 overdue）
         }
-        // recurring：必须有截止时间
+        // recurring：必须有截止时间，并从解析结果推进到下一次 > now
         if (dueAt == null) {
             throw new BusinessException("daily/weekly 任务必须指定截止时间");
         }
-        // recurring 的 due_at 作为"下一个发生点"，滚到 > now 由 create 时兜底（roll 逻辑在 complete 里）
-        return dueAt;
+        return rollForward(recurrence, rule, dueAt, nowLocal());
+    }
+
+    /** 把 recurring 的 due_at 从解析结果推进到 > now；weekly 按 BYDAY 对齐。 */
+    private LocalDateTime rollForward(String recurrence, String rule, LocalDateTime dueAt, LocalDateTime now) {
+        ZoneId zone = ZoneId.of(props.getTaskZone());
+        ZonedDateTime cursor = dueAt.atZone(zone);
+        ZonedDateTime target = now.atZone(zone);
+        if ("weekly".equals(recurrence)) {
+            DayOfWeek day = parseByDay(rule);
+            while (!cursor.getDayOfWeek().equals(day) || !cursor.isAfter(target)) {
+                cursor = cursor.plusDays(1);
+            }
+            return cursor.toLocalDateTime();
+        }
+        while (!cursor.isAfter(target)) {
+            cursor = cursor.plusDays(1);
+        }
+        return cursor.toLocalDateTime();
+    }
+
+    private DayOfWeek parseByDay(String rule) {
+        if (rule == null || !rule.startsWith("BYDAY=")) {
+            throw new BusinessException("weekly 任务必须指定 recurrenceRule（如 BYDAY=MO）");
+        }
+        return switch (rule.substring("BYDAY=".length())) {
+            case "MO" -> DayOfWeek.MONDAY;
+            case "TU" -> DayOfWeek.TUESDAY;
+            case "WE" -> DayOfWeek.WEDNESDAY;
+            case "TH" -> DayOfWeek.THURSDAY;
+            case "FR" -> DayOfWeek.FRIDAY;
+            case "SA" -> DayOfWeek.SATURDAY;
+            case "SU" -> DayOfWeek.SUNDAY;
+            default -> throw new BusinessException("recurrenceRule 格式应为 BYDAY=MO（周一）");
+        };
     }
 
     private String trimTo(String s, int max) {

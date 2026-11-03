@@ -21,6 +21,7 @@ import com.aichat.Dto.MemoryVO;
 import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
 import com.aichat.Dto.TaskVO;
+import com.aichat.Dto.UpdateMemoryRequest;
 import com.aichat.Dto.UserDto;
 import com.aichat.Entity.UserMemory;
 import com.aichat.Mapper.UserMemoryMapper;
@@ -85,6 +86,7 @@ class MindButlerFlowIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        DbTestSupport.assumeMysqlAvailable(jdbc);
         userId = "MBF_TEST_" + System.nanoTime();
         sessionId = "mbf_s_" + System.nanoTime();
         UserHolder.saveUser(selfUser());
@@ -198,6 +200,23 @@ class MindButlerFlowIntegrationTest {
         ConfirmResult dup = pendingActionService.confirm(pid);
         assertThat(dup.isAlreadyConfirmed()).isTrue();
         assertThat(dup.getMemories()).isEmpty();
+    }
+
+    @Test
+    void shouldUpdateMemoryWithOptimisticLock() {
+        CreateMemoryRequest req = new CreateMemoryRequest();
+        req.setMemKey("style");
+        req.setContent("简洁");
+        req.setMemType("stable");
+        MemoryVO created = memoryService.create(req);
+
+        UpdateMemoryRequest upd = new UpdateMemoryRequest();
+        upd.setContent("非常简洁");
+        upd.setVersion(created.getVersion());
+        MemoryVO updated = memoryService.update(created.getId(), upd);
+
+        assertThat(updated.getContent()).isEqualTo("非常简洁");
+        assertThat(updated.getVersion()).isEqualTo(created.getVersion() + 1);
     }
 
     @Test

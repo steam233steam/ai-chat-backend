@@ -1,6 +1,9 @@
 package com.aichat.Service.impl;
 
+import java.time.DayOfWeek;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,7 +15,9 @@ import com.aichat.Dto.ConfirmResult;
 import com.aichat.Dto.MemoryCandidate;
 import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
+import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
+import com.aichat.Service.IntentDailyLimiter;
 import com.aichat.Service.IntentExtractor;
 import com.aichat.Service.IntentOutcome;
 import com.aichat.Service.IntentService;
@@ -23,6 +28,7 @@ import com.aichat.utils.IntentJsonParser;
 import com.aichat.utils.IntentJsonParser.Parsed;
 import com.aichat.utils.MemoryKey;
 import com.aichat.utils.SensitiveContentFilter;
+import com.aichat.utils.UserHolder;
 
 /**
  * 意图服务实现：粗筛 → 提取 → 校验 → 写 pending → 出确认文案。
@@ -37,17 +43,27 @@ import com.aichat.utils.SensitiveContentFilter;
 public class IntentServiceimpl implements IntentService {
     private static final Logger log = LoggerFactory.getLogger(IntentServiceimpl.class);
 
+    private static final DateTimeFormatter CONFIRM_TIME =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
+    private static final String EXTRACT_FALLBACK =
+            "我没识别出要保存的记忆或任务。可以再说具体一点，比如“记住我喜欢简洁”或“明天 9 点提醒我交作业”。";
+    private static final String CONFIRM_EXPIRED_FALLBACK =
+            "这条确认已过期或已失效，请重新说一遍。";
+
     @Autowired
     private PendingActionService pendingActionService;
     @Autowired
     private IntentExtractor intentExtractor;
     @Autowired
     private MindButlerProperties props;
+    @Autowired
+    private IntentDailyLimiter intentDailyLimiter;
 
     @Override
     public IntentOutcome handle(String sessionId, String message, Long sourceMessageId) {
-        // 总开关关闭：只保留手动 CRUD，不做意图提取/确认
-        if (!props.isEnabled()) {
+        // 总开关/意图开关关闭：只保留手动 CRUD，不做意图提取/确认
+        if (!props.isEnabled() || !props.isIntentEnabled()) {
             return IntentOutcome.chat();
         }
 
@@ -72,22 +88,33 @@ public class IntentServiceimpl implements IntentService {
     // ---------- 提取 → 校验 → 写 pending → 确认文案 ----------
 
     private IntentOutcome extract(Intent intent, String sessionId, String message, Long sourceMessageId) {
+        String userId = currentUserId();
+        if (!intentDailyLimiter.tryAcquire(userId)) {
+            return IntentOutcome.replyOnly("今天的意图识别次数已用完，明天再试。");
+        }
         Parsed parsed = intentExtractor.extract(intent, message);
         if (parsed == null || parsed.isEmpty()) {
-            return IntentOutcome.chat(); // 没识别出候选，回退正常聊天（不 500）
+            return IntentOutcome.replyOnly(EXTRACT_FALLBACK); // 设计 8.4：固定兜底，不调聊天模型
         }
 
         // 校验：过滤敏感内容 + 非法 memKey + 非 create 任务
         List<MemoryCandidate> memories = sanitizeMemories(parsed.memories);
         List<TaskCandidate> tasks = sanitizeTasks(parsed.tasks);
         if (memories.isEmpty() && tasks.isEmpty()) {
-            return IntentOutcome.chat(); // 全部被过滤掉，回退正常聊天
+            return IntentOutcome.replyOnly(EXTRACT_FALLBACK); // 全部被过滤掉，也给固定兜底
         }
 
         // 写 pending（旧 pending 自动 expired；action_type 按实际内容分 memory/task/mixed）
         String actionType = (memories.isEmpty() ? "task" : tasks.isEmpty() ? "memory" : "mixed");
         String payload = buildPayload(memories, tasks, message);
-        long pendingId = pendingActionService.create(sessionId, actionType, payload, sourceMessageId);
+        long pendingId;
+        try {
+            pendingId = pendingActionService.create(sessionId, actionType, payload, sourceMessageId);
+        } catch (BusinessException e) {
+            // 并发 pending_slot 冲突 / payload 超限：不要让 ChatService 回退去调聊天模型
+            log.warn("写 pending 失败（{}）: session={}", e.getMessage(), sessionId);
+            return IntentOutcome.replyOnly("刚才的提案发生冲突，请再试一次。");
+        }
 
         // 出确认文案（复用 PendingActionVO 的 preview 风格）
         String reply = buildConfirmReply(pendingId, memories, tasks);
@@ -107,9 +134,9 @@ public class IntentServiceimpl implements IntentService {
         try {
             cr = pendingActionService.confirm(pending.getId());
         } catch (BusinessException e) {
-            // 409 已拒绝/已过期：给一句说明，不当聊天
+            // 409 已拒绝/已过期：固定说明，不调聊天模型
             log.info("confirm 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
-            return IntentOutcome.chat();
+            return IntentOutcome.replyOnly(CONFIRM_EXPIRED_FALLBACK);
         }
         if (cr.isAlreadyConfirmed()) {
             return IntentOutcome.confirmed(cr, "刚才已经确认过了，没有重复创建。");
@@ -126,7 +153,7 @@ public class IntentServiceimpl implements IntentService {
             pendingActionService.reject(pending.getId());
         } catch (BusinessException e) {
             log.info("reject 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
-            return IntentOutcome.chat();
+            return IntentOutcome.replyOnly(CONFIRM_EXPIRED_FALLBACK);
         }
         return IntentOutcome.rejected("好的，已取消这条待确认。");
     }
@@ -138,14 +165,41 @@ public class IntentServiceimpl implements IntentService {
         if (in == null) {
             return out;
         }
+        int max = Math.max(0, props.getIntentMaxMemories());
         for (MemoryCandidate c : in) {
-            if (c == null || !MemoryKey.isValid(c.getKey())) {
+            if (out.size() >= max) {
+                break; // 超出单条消息上限，截断
+            }
+            if (c == null || c.getKey() == null) {
+                continue;
+            }
+            String key = c.getKey().trim().toLowerCase(Locale.ROOT);
+            if (!MemoryKey.isValid(key)) {
                 continue; // 非法/缺 key 的候选丢弃
             }
-            String sensitive = SensitiveContentFilter.detectSensitive(c.getValue());
-            if (sensitive != null) {
-                log.warn("跳过含{}的记忆候选: key={}", sensitive, c.getKey());
+            String value = SensitiveContentFilter.stripControlChars(c.getValue());
+            if (value.isEmpty()) {
                 continue;
+            }
+            int len = value.codePointCount(0, value.length());
+            if (len > 256) {
+                value = value.substring(0, value.offsetByCodePoints(0, 256));
+            }
+            String sensitive = SensitiveContentFilter.detectSensitive(value);
+            if (sensitive != null) {
+                log.warn("跳过含{}的记忆候选: key={}", sensitive, key);
+                continue;
+            }
+            String memType = (c.getMemType() == null || c.getMemType().isBlank())
+                    ? "stable" : c.getMemType().trim().toLowerCase(Locale.ROOT);
+            if (!"stable".equals(memType) && !"dynamic".equals(memType)) {
+                continue; // 非法 memType 丢弃，避免确认时才 400
+            }
+            c.setKey(key);
+            c.setValue(value);
+            c.setMemType(memType);
+            if (c.getConfidence() != null) {
+                c.setConfidence(Math.max(0.0, Math.min(1.0, c.getConfidence())));
             }
             out.add(c);
         }
@@ -157,14 +211,56 @@ public class IntentServiceimpl implements IntentService {
         if (in == null) {
             return out;
         }
+        int max = Math.max(0, props.getIntentMaxTasks());
         for (TaskCandidate c : in) {
-            if (c == null || c.getTitle() == null || c.getTitle().isBlank()) {
+            if (out.size() >= max) {
+                break; // 超出单条消息上限，截断
+            }
+            if (c == null) {
                 continue;
+            }
+            String title = SensitiveContentFilter.stripControlChars(c.getTitle());
+            if (title.isEmpty()) {
+                continue;
+            }
+            int len = title.codePointCount(0, title.length());
+            if (len > 128) {
+                title = title.substring(0, title.offsetByCodePoints(0, 128));
             }
             // P1 只允许 create（update/delete 留 P1.5）
-            if (c.getAction() != null && !"create".equals(c.getAction())) {
+            String action = (c.getAction() == null || c.getAction().isBlank())
+                    ? "create" : c.getAction().trim().toLowerCase(Locale.ROOT);
+            if (!"create".equals(action)) {
                 continue;
             }
+            String recurrence = (c.getRecurrence() == null || c.getRecurrence().isBlank())
+                    ? "once" : c.getRecurrence().trim().toLowerCase(Locale.ROOT);
+            if (!"once".equals(recurrence) && !"daily".equals(recurrence) && !"weekly".equals(recurrence)) {
+                continue;
+            }
+            String rule = null;
+            if ("weekly".equals(recurrence)) {
+                if (c.getRecurrenceRule() == null) {
+                    continue; // 缺 BYDAY 的候选不要写进 pending，否则确认时才 400
+                }
+                rule = c.getRecurrenceRule().trim().toUpperCase(Locale.ROOT);
+                if (!rule.matches("^BYDAY=(MO|TU|WE|TH|FR|SA|SU)$")) {
+                    continue;
+                }
+            }
+            if (!"once".equals(recurrence) && c.getDueAt() == null) {
+                continue; // daily/weekly 必须有截止时间
+            }
+            String timezone = (c.getTimezone() == null || c.getTimezone().isBlank())
+                    ? "Asia/Shanghai" : c.getTimezone().trim();
+            if (!"Asia/Shanghai".equals(timezone)) {
+                continue; // P1 固定单时区
+            }
+            c.setAction("create");
+            c.setTitle(title);
+            c.setRecurrence(recurrence);
+            c.setRecurrenceRule(rule);
+            c.setTimezone(timezone);
             out.add(c);
         }
         return out;
@@ -191,13 +287,72 @@ public class IntentServiceimpl implements IntentService {
         StringBuilder sb = new StringBuilder("我识别到：");
         List<String> parts = new java.util.ArrayList<>();
         for (MemoryCandidate m : memories) {
-            parts.add("记忆「" + m.getKey() + "=" + m.getValue() + "」");
+            parts.add("记忆「" + keyLabel(m.getKey()) + "=" + m.getValue() + "」");
         }
         for (TaskCandidate t : tasks) {
-            parts.add("任务「" + t.getTitle() + "」");
+            // 必须显示绝对日期 + 星期 + 时间 + 重复规则，用户才能发现"下周三"解析错了（v3 7.2）
+            parts.add("任务「" + t.getTitle() + "」" + describeTask(t));
         }
         sb.append(String.join("、", parts)).append("。确认吗？（回复 对/确认 生效，取消则不保存）");
         return sb.toString();
+    }
+
+    private String describeTask(TaskCandidate t) {
+        return describeTask(t.getDueAt(), t.getRecurrence(), t.getRecurrenceRule());
+    }
+
+    private String describeTask(java.time.LocalDateTime dueAt, String recurrence, String rule) {
+        String when = dueAt == null
+                ? "无截止时间"
+                : CONFIRM_TIME.format(dueAt) + "（" + weekLabel(dueAt.getDayOfWeek()) + "）";
+        return "：" + when + "，" + recurrenceLabel(recurrence, rule);
+    }
+
+    private String recurrenceLabel(String recurrence, String rule) {
+        String rc = recurrence == null ? "once" : recurrence;
+        return switch (rc) {
+            case "daily" -> "每天";
+            case "weekly" -> "每周" + byDayLabel(rule);
+            default -> "单次";
+        };
+    }
+
+    private String byDayLabel(String rule) {
+        if (rule == null || !rule.startsWith("BYDAY=")) {
+            return "";
+        }
+        return switch (rule.substring("BYDAY=".length())) {
+            case "MO" -> "一";
+            case "TU" -> "二";
+            case "WE" -> "三";
+            case "TH" -> "四";
+            case "FR" -> "五";
+            case "SA" -> "六";
+            case "SU" -> "日";
+            default -> "";
+        };
+    }
+
+    private String weekLabel(DayOfWeek day) {
+        return switch (day) {
+            case MONDAY -> "周一";
+            case TUESDAY -> "周二";
+            case WEDNESDAY -> "周三";
+            case THURSDAY -> "周四";
+            case FRIDAY -> "周五";
+            case SATURDAY -> "周六";
+            case SUNDAY -> "周日";
+        };
+    }
+
+    private String keyLabel(String key) {
+        return switch (key) {
+            case "style" -> "风格";
+            case "goal" -> "目标";
+            case "schedule" -> "作息";
+            case "relation" -> "称呼/关系";
+            default -> key;
+        };
     }
 
     private String buildConfirmResultReply(
@@ -210,15 +365,41 @@ public class IntentServiceimpl implements IntentService {
         List<String> parts = new java.util.ArrayList<>();
         if (memories != null) {
             for (java.util.Map<String, Object> m : memories) {
-                parts.add("记忆 " + m.get("id"));
+                String key = stringValue(m.get("key"));
+                String value = stringValue(m.get("value"));
+                if (key != null && value != null) {
+                    parts.add("记忆「" + keyLabel(key) + "=" + value + "」");
+                } else {
+                    parts.add("记忆 #" + m.get("id"));
+                }
             }
         }
         if (tasks != null) {
             for (java.util.Map<String, Object> t : tasks) {
-                parts.add("任务 " + t.get("id"));
+                String title = stringValue(t.get("title"));
+                if (title != null) {
+                    java.time.LocalDateTime dueAt = t.get("dueAt") instanceof java.time.LocalDateTime dt
+                            ? dt : null;
+                    parts.add("任务「" + title + "」" + describeTask(
+                            dueAt, stringValue(t.get("recurrence")), stringValue(t.get("recurrenceRule"))));
+                } else {
+                    parts.add("任务 #" + t.get("id"));
+                }
             }
         }
         sb.append(String.join("、", parts)).append("。");
         return sb.toString();
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private String currentUserId() {
+        UserDto user = UserHolder.getUser();
+        if (user == null || user.getId() == null) {
+            throw new BusinessException(401, "请先登录");
+        }
+        return user.getId();
     }
 }

@@ -23,6 +23,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Config.MindButlerProperties;
@@ -122,6 +123,25 @@ class PendingActionServiceimplTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("过长");
         verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void shouldRejectPayloadOverByteLimitForMultibyteText() {
+        props.setPendingPayloadMaxBytes(10);
+        String payload = "中文中文中文"; // 18 bytes, 6 chars
+        assertThatThrownBy(() -> service.create(SES, "task", payload, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("过长");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void shouldReturn409WhenConcurrentInsertHitsPendingSlot() {
+        when(mapper.insert(any(PendingAction.class)))
+                .thenThrow(new DuplicateKeyException("uk_pending_slot"));
+        assertThatThrownBy(() -> service.create(SES, "task", "{\"tasks\":[]}", 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("更新");
     }
 
     // ---------- current ----------

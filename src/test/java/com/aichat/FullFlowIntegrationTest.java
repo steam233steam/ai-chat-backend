@@ -146,6 +146,8 @@ class FullFlowIntegrationTest {
         if (dataCleaned) {
             return;
         }
+        DbTestSupport.assumeMysqlAvailable(jdbc);
+        DbTestSupport.assumeRedisAvailable(stringRedisTemplate);
         cleanUpJdbc();
         cleanUpRedis();
         dataCleaned = true;

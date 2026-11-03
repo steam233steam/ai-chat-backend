@@ -16,6 +16,15 @@ public class MindButlerProperties {
     /** 总开关；关闭后只保留手动 CRUD，不做意图提取/注入。 */
     private boolean enabled = true;
 
+    /** 意图提取开关；关闭后聊天不拦截（手动 CRUD 仍可用）。 */
+    private boolean intentEnabled = true;
+
+    /** 意图提取超时（毫秒）；<=0 表示不限制。 */
+    private int intentTimeoutMs = 5000;
+
+    /** 每用户每日意图提取次数；0 = 不限。 */
+    private int intentDailyLimit = 50;
+
     /** dynamic 记忆默认有效期（天）；stable 记忆不过期。 */
     private int memoryDynamicTtlDays = 90;
 
@@ -48,6 +57,12 @@ public class MindButlerProperties {
 
     /** 意图提取器用的模型名（默认 deepseek-chat，结构化 JSON 能力更强；需在 app.models.available 白名单里）。 */
     private String intentExtractModel = "deepseek-chat";
+
+    /** 单条消息最多记忆候选（超出截断）。 */
+    private int intentMaxMemories = 5;
+
+    /** 单条消息最多任务候选（超出截断）。 */
+    private int intentMaxTasks = 5;
 
     /** M4 评测 runner：true=真跑 LLM 统计提取准确率；false=桩模式（喂期望 JSON，链路确定性验证）。 */
     private boolean evalRealModel = false;
@@ -144,6 +159,46 @@ public class MindButlerProperties {
         this.intentExtractModel = intentExtractModel;
     }
 
+    public boolean isIntentEnabled() {
+        return intentEnabled;
+    }
+
+    public void setIntentEnabled(boolean intentEnabled) {
+        this.intentEnabled = intentEnabled;
+    }
+
+    public int getIntentTimeoutMs() {
+        return intentTimeoutMs;
+    }
+
+    public void setIntentTimeoutMs(int intentTimeoutMs) {
+        this.intentTimeoutMs = intentTimeoutMs;
+    }
+
+    public int getIntentDailyLimit() {
+        return intentDailyLimit;
+    }
+
+    public void setIntentDailyLimit(int intentDailyLimit) {
+        this.intentDailyLimit = intentDailyLimit;
+    }
+
+    public int getIntentMaxMemories() {
+        return intentMaxMemories;
+    }
+
+    public void setIntentMaxMemories(int intentMaxMemories) {
+        this.intentMaxMemories = intentMaxMemories;
+    }
+
+    public int getIntentMaxTasks() {
+        return intentMaxTasks;
+    }
+
+    public void setIntentMaxTasks(int intentMaxTasks) {
+        this.intentMaxTasks = intentMaxTasks;
+    }
+
     public boolean isEvalRealModel() {
         return evalRealModel;
     }
@@ -154,5 +209,16 @@ public class MindButlerProperties {
 
     public void setPendingPayloadMaxBytes(int pendingPayloadMaxBytes) {
         this.pendingPayloadMaxBytes = pendingPayloadMaxBytes;
+    }
+
+    /** P1 固定单时区；配置错误在启动时失败，避免运行期时间偏移。 */
+    @jakarta.annotation.PostConstruct
+    public void validate() {
+        String zone = taskZone == null ? "" : taskZone.trim();
+        if (!"Asia/Shanghai".equals(zone)) {
+            throw new IllegalStateException(
+                    "app.mindbutler.task.zone 只允许 Asia/Shanghai（P1 单时区），当前: " + taskZone);
+        }
+        taskZone = zone;
     }
 }

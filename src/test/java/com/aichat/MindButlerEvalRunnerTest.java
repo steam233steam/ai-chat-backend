@@ -74,6 +74,7 @@ class MindButlerEvalRunnerTest {
 
     @BeforeEach
     void setUp() {
+        DbTestSupport.assumeMysqlAvailable(jdbc);
         userId = "MBEVAL_" + System.nanoTime();
         UserDtoHolder.set(userId);
         realModel = "true".equalsIgnoreCase(
@@ -149,8 +150,10 @@ class MindButlerEvalRunnerTest {
         System.out.println("\n================ MindButler P1 意图提取评测 ================");
         report.forEach(System.out::println);
         System.out.println("---------------------------------------------------------------");
-        System.out.printf("模式: %s | 总用例: %d | 命中: %d | 提取准确率: %.1f%%%n",
-                realModel ? "真模型(deepseek-chat)" : "桩(expected JSON)", total, hit, accuracy * 100);
+        System.out.printf("模式: %s | 总用例: %d | 命中: %d | %s: %.1f%%%n",
+                realModel ? "真模型(deepseek-chat)" : "桩(expected JSON，测下游链路)",
+                total, hit, realModel ? "真实提取准确率" : "链路准确率（不代表 LLM 准确率）",
+                accuracy * 100);
         if (!misses.isEmpty()) {
             System.out.println("未命中: " + String.join(", ", misses));
         }
@@ -270,7 +273,10 @@ class MindButlerEvalRunnerTest {
                     memories.add(new MemoryCandidate(c.expectMemoryKey, "画像值", "stable", 0.9, null));
                 }
                 if (c.expectTaskTitleContains != null) {
-                    tasks.add(new TaskCandidate("create", c.expectTaskTitleContains, null,
+                    // daily/weekly 按契约必须有 dueAt；桩数据也要满足，否则会被生产校验正确丢弃
+                    LocalDateTime due = c.expectTaskRecurrence == null || "once".equals(c.expectTaskRecurrence)
+                            ? null : LocalDateTime.now().plusDays(1);
+                    tasks.add(new TaskCandidate("create", c.expectTaskTitleContains, due,
                             "Asia/Shanghai", c.expectTaskRecurrence, c.expectTaskRule));
                 }
             }

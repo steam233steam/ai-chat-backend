@@ -13,11 +13,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -143,6 +145,87 @@ class TaskServiceimplTest {
                 .hasMessageContaining("once/daily/weekly");
     }
 
+    @Test
+    void shouldListDoneTasks() {
+        when(mapper.selectByUserBeforeId(eq("USER_ID_1234567890"), eq("done"), eq(Long.MAX_VALUE), eq(50)))
+                .thenReturn(List.of(task(1L, "已完成", "once", null, NOW, "done")));
+
+        List<TaskVO> vos = service.list("done", null, 50);
+
+        assertThat(vos).hasSize(1);
+        assertThat(vos.get(0).getStatus()).isEqualTo("done");
+    }
+
+    @Test
+    void shouldRollPastDailyDueToNextFutureOnCreate() {
+        AtomicReference<UserTask> inserted = new AtomicReference<>();
+        when(mapper.insert(any(UserTask.class))).thenAnswer(inv -> {
+            UserTask t = inv.getArgument(0);
+            t.setId(1L);
+            inserted.set(t);
+            return 1;
+        });
+        when(mapper.selectById(1L, "USER_ID_1234567890")).thenAnswer(inv -> {
+            UserTask t = inserted.get();
+            t.setStatus("pending");
+            t.setVersion(0);
+            t.setCreateTime(NOW);
+            t.setUpdateTime(NOW);
+            return t;
+        });
+
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("每天敲代码");
+        req.setRecurrence("daily");
+        req.setDueAt(NOW.minusDays(2).withHour(9).withMinute(0));
+
+        TaskVO vo = service.create(req);
+
+        assertThat(vo.getDueAt()).isAfter(NOW);
+        assertThat(vo.getDueAt().toLocalTime()).isEqualTo(java.time.LocalTime.of(9, 0));
+    }
+
+    @Test
+    void shouldAlignPastWeeklyDueToByDayOnCreate() {
+        AtomicReference<UserTask> inserted = new AtomicReference<>();
+        when(mapper.insert(any(UserTask.class))).thenAnswer(inv -> {
+            UserTask t = inv.getArgument(0);
+            t.setId(2L);
+            inserted.set(t);
+            return 1;
+        });
+        when(mapper.selectById(2L, "USER_ID_1234567890")).thenAnswer(inv -> {
+            UserTask t = inserted.get();
+            t.setStatus("pending");
+            t.setVersion(0);
+            t.setCreateTime(NOW);
+            t.setUpdateTime(NOW);
+            return t;
+        });
+
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("每周一交报告");
+        req.setRecurrence("weekly");
+        req.setRecurrenceRule("BYDAY=MO");
+        req.setDueAt(NOW.minusDays(2).withHour(9).withMinute(0)); // 周日，早于 now
+
+        TaskVO vo = service.create(req);
+
+        assertThat(vo.getDueAt()).isAfter(NOW);
+        assertThat(vo.getDueAt().getDayOfWeek()).isEqualTo(DayOfWeek.MONDAY);
+    }
+
+    @Test
+    void shouldRejectWhenTaskLimitReached() {
+        when(mapper.countByUser("USER_ID_1234567890")).thenReturn(500);
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("第 501 条");
+        req.setRecurrence("once");
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("上限");
+    }
+
     // ---------- 完成 + 重复滚动 ----------
 
     @Test
@@ -158,8 +241,9 @@ class TaskServiceimplTest {
         TaskVO vo = service.complete(1L, version(0));
 
         assertThat(vo.getStatus()).isIn("done", "pending"); // once → done
+        // once 完成保留原始 due_at，不再清空
         verify(mapper).complete(eq(1L), eq("USER_ID_1234567890"), eq("done"),
-                any(LocalDateTime.class), eq(null), eq(0));
+                any(LocalDateTime.class), eq(NOW.plusDays(1)), eq(0));
     }
 
     @Test
@@ -304,7 +388,7 @@ class TaskServiceimplTest {
 
     @Test
     void shouldQueryDueTasks() {
-        when(mapper.selectDue(eq("USER_ID_1234567890"), anyInt()))
+        when(mapper.selectDue(eq("USER_ID_1234567890"), any(LocalDateTime.class), anyInt()))
                 .thenReturn(List.of(task(1L, "已到期", "once", null, NOW.minusHours(1), "pending")));
 
         List<TaskVO> due = service.due(50);

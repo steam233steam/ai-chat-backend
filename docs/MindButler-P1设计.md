@@ -224,7 +224,7 @@ pending --新意图----> expired（同一 session 只保留一个 pending）
 ```sql
 CREATE TABLE IF NOT EXISTS tb_user_memory (
   id                BIGINT       NOT NULL AUTO_INCREMENT,
-  user_id           VARCHAR(64)  NOT NULL COMMENT '用户 uid；值约 18 字符，64 为安全上限',
+  user_id           VARCHAR(32)  NOT NULL COMMENT '用户 uid；值约 18 字符，与现有 tb_user.uid 对齐',
   mem_key           VARCHAR(32)  NOT NULL COMMENT 'P1: style|goal|schedule|relation；应用层校验',
   content           VARCHAR(512) NOT NULL COMMENT '记忆内容，应用层限制 256 字符',
   mem_type          ENUM('stable','dynamic') NOT NULL DEFAULT 'stable',
@@ -263,7 +263,7 @@ CREATE TABLE IF NOT EXISTS tb_user_memory (
 ```sql
 CREATE TABLE IF NOT EXISTS tb_user_task (
   id                BIGINT       NOT NULL AUTO_INCREMENT,
-  user_id           VARCHAR(64)  NOT NULL COMMENT '用户 uid',
+  user_id           VARCHAR(32)  NOT NULL COMMENT '用户 uid',
   title             VARCHAR(128) NOT NULL,
   due_at            DATETIME     NULL COMMENT 'P1 固定 Asia/Shanghai；无截止时间可为 NULL',
   timezone          VARCHAR(40)  NOT NULL DEFAULT 'Asia/Shanghai' COMMENT 'P1 只允许 Asia/Shanghai',
@@ -301,7 +301,7 @@ CREATE TABLE IF NOT EXISTS tb_user_task (
 ```sql
 CREATE TABLE IF NOT EXISTS tb_pending_action (
   id                BIGINT      NOT NULL AUTO_INCREMENT,
-  user_id           VARCHAR(64) NOT NULL COMMENT '用户 uid',
+  user_id           VARCHAR(32) NOT NULL COMMENT '用户 uid',
   session_id        VARCHAR(64) NOT NULL,
   action_type       ENUM('memory','task','mixed') NOT NULL,
   payload           JSON        NOT NULL,
@@ -699,7 +699,7 @@ LIMIT ?;
 | 记忆重复 | 409 | 手动创建相同 active 内容 |
 | pending 已确认 | 200 | `alreadyConfirmed=true` |
 | pending 已拒绝/过期 | 409 | 提示重新发起 |
-| 提取限流 | 429 | P1 可选，按用户每日次数限制 |
+| 提取限流 | 200 | P1 返回固定提示文案、不调模型；429 状态码留 P1.5 |
 | 聊天模型/DB 不可用 | 500 | 记录日志；不泄露内部信息（提取失败走 200 兜底，不返回 500） |
 
 幂等：
@@ -825,13 +825,14 @@ src/test/java/com/aichat/Service/impl/ChatServiceimplTest.java // mock MemorySer
 
 | 配置 | 默认值 | 说明 |
 |---|---|---|
-| `app.mindbutler.enabled` | `true` | 总开关；关闭后只保留手动 CRUD，不做意图提取 |
+| `app.mindbutler.enabled` | `true` | 总开关；关闭后只保留手动 CRUD，不做意图提取/注入 |
 | `app.mindbutler.intent.enabled` | `true` | 触发词/提取开关；关闭后聊天不拦截 |
-| `app.mindbutler.intent.model` | `deepseek-chat` | 提取模型名，必须在 `app.models.available` 里；不要留空落到本地 7B；没有 DeepSeek key 时显式改成可用的 Ollama 模型并接受质量下降，或关闭意图提取 |
+| `app.mindbutler.intent.extract-model` | `deepseek-chat` | 提取模型名，必须在 `app.models.available` 里；不要留空落到本地 7B；没有 DeepSeek key 时显式改成可用的 Ollama 模型并接受质量下降，或关闭意图提取 |
 | `app.mindbutler.intent.timeout-ms` | `5000` | 提取超时；超时降级为固定文案，不阻塞聊天 |
 | `app.mindbutler.intent.max-memories` | `5` | 单条消息最多记忆候选 |
 | `app.mindbutler.intent.max-tasks` | `5` | 单条消息最多任务候选 |
 | `app.mindbutler.intent.daily-limit` | `50` | 每用户每日提取次数；`0` = 不限 |
+| `app.mindbutler.intent.max-memories` / `max-tasks` | `5` / `5` | 单条消息最多候选数（超出截断） |
 | `app.mindbutler.memory.dynamic-ttl-days` | `90` | dynamic 记忆默认有效期 |
 | `app.mindbutler.memory.max-per-user` | `100` | 每用户 active 记忆上限 |
 | `app.mindbutler.memory.inject-max-stable` | `5` | 注入 stable 上限 |
@@ -844,12 +845,14 @@ src/test/java/com/aichat/Service/impl/ChatServiceimplTest.java // mock MemorySer
 | `app.mindbutler.task.max-per-user` | `500` | 每用户未删除任务上限 |
 | `app.mindbutler.task.raw-input-max` | `512` | `raw_input` 截断长度 |
 
-启动时打印实际 `intent.model`；如果它在 `app.models.ollama-models` 中，打 WARN（本地 7B 结构化输出不稳定）。部署示例：`APP_INTENT_MODEL=deepseek-chat`。
+启动时打印实际 `intent.extract-model`；如果它在 `app.models.ollama-models` 中，打 WARN（本地 7B 结构化输出不稳定）。部署示例：`APP_MINDBUTLER_INTENT_EXTRACT_MODEL=deepseek-chat`。
+
+> 实现说明（2026-11-03 验收）：`enabled`、`intent.enabled`、`extract-model`、`timeout-ms`、`daily-limit`、`max-memories`、`max-tasks`、`memory.*`、`task.*`、`pending.*` 均已接线；`task.zone` 与 intent 模型启动时校验。
 
 `application.properties` 建议显式写：
 
 ```properties
-app.mindbutler.intent.model=${APP_INTENT_MODEL:deepseek-chat}
+app.mindbutler.intent.extract-model=${APP_MINDBUTLER_INTENT_EXTRACT_MODEL:deepseek-chat}
 ```
 
 ### 9.7 分批落地（按可运行切片）

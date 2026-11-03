@@ -35,10 +35,22 @@ public interface UserMemoryMapper {
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' " +
             "AND (mem_type = #{memType} OR mem_type IS NULL) " +
-            "AND (expires_at IS NULL OR expires_at > NOW()) " +
+            "AND (expires_at IS NULL OR expires_at > #{now}) " +
             "ORDER BY confidence DESC, update_time DESC LIMIT #{limit}")
     List<UserMemory> selectActiveByUserAndType(@Param("userId") String userId,
             @Param("memType") String memType,
+            @Param("now") java.time.LocalDateTime now,
+            @Param("limit") int limit);
+
+    // 生效列表：active 且未过期，按类型/更新时间排序；limit 由上层 1-100 约束
+    @Select("SELECT id, user_id, mem_key, content, mem_type, status, confidence, source, " +
+            "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
+            "FROM tb_user_memory " +
+            "WHERE user_id = #{userId} AND status = 'active' " +
+            "AND (expires_at IS NULL OR expires_at > #{now}) " +
+            "ORDER BY mem_type, update_time DESC LIMIT #{limit}")
+    List<UserMemory> selectActiveByUser(@Param("userId") String userId,
+            @Param("now") java.time.LocalDateTime now,
             @Param("limit") int limit);
 
     // 全量导出（含 superseded，排除 deleted），供用户查看/迁移
@@ -47,15 +59,33 @@ public interface UserMemoryMapper {
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status != 'deleted' " +
             "ORDER BY mem_type, mem_key, update_time DESC")
-    List<UserMemory> selectExportByUser(@Param("userId") String userId,
-            @Param("limit") int limit);
+    List<UserMemory> selectExportByUser(@Param("userId") String userId);
+
+    // 当前 active 且未过期的记忆条数（每用户上限兜底）
+    @Select("SELECT COUNT(*) FROM tb_user_memory " +
+            "WHERE user_id = #{userId} AND status = 'active' " +
+            "AND (expires_at IS NULL OR expires_at > #{now})")
+    int countActive(@Param("userId") String userId,
+            @Param("now") java.time.LocalDateTime now);
+
+    // 相同 active 内容去重（手动创建 409 / AI 提取不重复插入），取最近一条
+    @Select("SELECT id, user_id, mem_key, content, mem_type, status, confidence, source, " +
+            "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
+            "FROM tb_user_memory " +
+            "WHERE user_id = #{userId} AND status = 'active' AND content = #{content} " +
+            "AND (expires_at IS NULL OR expires_at > #{now}) " +
+            "ORDER BY update_time DESC LIMIT 1")
+    UserMemory selectActiveByContent(@Param("userId") String userId,
+            @Param("content") String content,
+            @Param("now") java.time.LocalDateTime now);
 
     // 乐观锁更新：只改 active 且未过期；version 不匹配则 0 行（上层 409）
-    @Update("UPDATE tb_user_memory SET content = #{content}, mem_type = #{memType}, " +
-            "expires_at = #{expiresAt}, version = version + 1, update_time = NOW() " +
-            "WHERE id = #{id} AND user_id = #{userId} AND status = 'active' " +
-            "AND (expires_at IS NULL OR expires_at > NOW()) AND version = #{version}")
-    int updateByIdAndVersion(UserMemory memory);
+    @Update("UPDATE tb_user_memory SET content = #{m.content}, mem_type = #{m.memType}, " +
+            "expires_at = #{m.expiresAt}, version = version + 1, update_time = #{now} " +
+            "WHERE id = #{m.id} AND user_id = #{m.userId} AND status = 'active' " +
+            "AND (expires_at IS NULL OR expires_at > #{now}) AND version = #{m.version}")
+    int updateByIdAndVersion(@Param("m") UserMemory memory,
+            @Param("now") java.time.LocalDateTime now);
 
     // 软删除：置 deleted；幂等（重复删不会报错）
     @Update("UPDATE tb_user_memory SET status = 'deleted', version = version + 1, update_time = NOW() " +

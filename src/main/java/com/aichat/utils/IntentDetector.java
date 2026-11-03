@@ -1,5 +1,6 @@
 package com.aichat.utils;
 
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -42,9 +43,16 @@ public final class IntentDetector {
 
     // 任务触发词：待办/日程/时间表达式
     private static final Set<String> TASK_TRIGGERS = Set.of(
-            "待办", "代办", "任务", "提醒我", "提醒", "到点", "截止", "交", "提交",
-            "明天", "今天", "后天", "周", "每天", "每周", "每个月", "每小时",
-            "点钟", "点半", "点交", "点提醒", "点前", "之前", "之后");
+            // 明确的待办/提醒词
+            "待办", "代办", "任务", "提醒我", "提醒", "到点", "截止",
+            // 时间短语：保留"明天/后天"，去掉单字"周/交/提交"和裸"今天"，避免"今天天气"误触发
+            "明天", "后天", "每天", "每周", "每隔", "每个月", "每小时",
+            "点钟", "点半", "点交", "点提醒", "点前", "之前", "之后",
+            // 星期/周次短语：覆盖"周五下班前""下周三开会"这类没有"点"的表达
+            "周一", "周二", "周三", "周四", "周五", "周六", "周日",
+            "下周", "本周", "这周",
+            // "今天"只在带时段时触发（"今天早上八点吃药"），单独"今天"不触发
+            "今天早上", "今天上午", "今天中午", "今天下午", "今天傍晚", "今天晚上");
 
     // 确认词：短促肯定
     private static final Set<String> CONFIRM_TRIGGERS = Set.of(
@@ -92,9 +100,9 @@ public final class IntentDetector {
 
     /** 触发词命中判断：去掉标点后精确匹配（触发词都是短词，contains 足够）。 */
     private static boolean matchAny(String text, Set<String> words) {
-        String lowered = text.toLowerCase();
+        String lowered = text.toLowerCase(Locale.ROOT);
         for (String w : words) {
-            if (lowered.contains(w.toLowerCase())) {
+            if (lowered.contains(w.toLowerCase(Locale.ROOT))) {
                 return true;
             }
         }

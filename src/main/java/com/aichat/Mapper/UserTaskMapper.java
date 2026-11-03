@@ -47,9 +47,19 @@ public interface UserTaskMapper {
             "create_time, update_time " +
             "FROM tb_user_task " +
             "WHERE user_id = #{userId} AND status = 'pending' AND deleted_at IS NULL " +
-            "AND due_at IS NOT NULL AND due_at <= NOW() " +
+            "AND due_at IS NOT NULL AND due_at <= #{now} " +
             "ORDER BY due_at ASC LIMIT #{limit}")
-    List<UserTask> selectDue(@Param("userId") String userId, @Param("limit") int limit);
+    List<UserTask> selectDue(@Param("userId") String userId,
+            @Param("now") java.time.LocalDateTime now,
+            @Param("limit") int limit);
+
+    // 含软删的存在性判断（DELETE 幂等用）
+    @Select("SELECT COUNT(*) FROM tb_user_task WHERE id = #{id} AND user_id = #{userId}")
+    int countById(@Param("id") long id, @Param("userId") String userId);
+
+    // 当前用户未软删任务数（每用户上限兜底）
+    @Select("SELECT COUNT(*) FROM tb_user_task WHERE user_id = #{userId} AND deleted_at IS NULL")
+    int countByUser(@Param("userId") String userId);
 
     // 乐观锁更新（改 pending 任务）：version 不匹配则 0 行（上层 409）
     @Update("UPDATE tb_user_task SET title = #{title}, due_at = #{dueAt}, timezone = #{timezone}, " +

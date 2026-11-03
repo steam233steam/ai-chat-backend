@@ -56,4 +56,11 @@ public class IntentOutcome {
         o.reply = reply;
         return o;
     }
+
+    /** 命中意图但无需落库/不调模型：直接回固定文案（过期、限流、提取空、冲突） */
+    public static IntentOutcome replyOnly(String reply) {
+        IntentOutcome o = new IntentOutcome();
+        o.reply = reply;
+        return o;
+    }
 }

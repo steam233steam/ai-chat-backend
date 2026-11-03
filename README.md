@@ -183,7 +183,7 @@ GitHub Actions 在每次 push 时执行单元测试与打包（`.github/workflow
 
 `AichatApplicationTests` 是 `@SpringBootTest`，启动需要真实的 Redis / MySQL / Ollama，因此未纳入 CI；CI 只跑不依赖外部服务的单元测试。
 
-`MindButlerFlowIntegrationTest` / `MindButlerEvalRunnerTest` 连接虚拟机 MySQL(13306)，也走 CI 排除清单。
+`FullFlowIntegrationTest` / `MindButlerFlowIntegrationTest` / `MindButlerEvalRunnerTest` / `DeepSeekShortInputRegressionTest` 连接真实 MySQL(13306)/Redis(16379)，已在 CI 排除清单；本地没有启动依赖服务时，它们会通过 `DbTestSupport` 自动 skip，而不是让 `mvn test` 报连接错误。
 
 ### 一体化集成测试
 
@@ -205,7 +205,11 @@ mvn test -Dtest=FullFlowIntegrationTest
 | `app.models.ollama-models` | `qwen2.5-coder:7b` | 走 Ollama 的模型，其余走 OpenAI 兼容协议 |
 | `app.chat.context-max-messages` | `20` | 送给模型的历史消息条数，`<=0` 表示不裁剪 |
 | `app.mindbutler.enabled` | `true` | MindButler P1 总开关；关闭后只保留手动 CRUD，不做意图提取/注入 |
-| `app.mindbutler.intent.extract-model` | `deepseek-chat` | 意图提取器模型（需在模型白名单内） |
+| `app.mindbutler.intent.extract-model` | `deepseek-chat` | 意图提取器模型（需在模型白名单内，启动时校验） |
+| `app.mindbutler.intent.timeout-ms` | `5000` | 提取超时；超时返回固定兜底 |
+| `app.mindbutler.intent.daily-limit` | `50` | 每用户每日提取次数；0=不限 |
+| `app.mindbutler.intent.max-memories` | `5` | 单条消息最多记忆候选 |
+| `app.mindbutler.intent.max-tasks` | `5` | 单条消息最多任务候选 |
 
 ## 文档
 
@@ -213,6 +217,7 @@ mvn test -Dtest=FullFlowIntegrationTest
 - `docs/schema.sql` — 数据库脚本
 - `docs/MindButler-P1设计.md` — MindButler P1 建设设计（长期记忆 + 口语化任务 + 确认状态机）
 - `docs/migration/2026-11-02-mindbutler-p1.sql` — MindButler P1 三表迁移脚本
+- `docs/P1-上线验收清单.md` — 后端上线范围、配置、人工验收用例与回滚说明
 - `docs/eval/mindbutler-intent-eval.json` — 口语意图提取评测集（40 条，M4 验收指标）
 - `docs/聊天持久化设计.md` — 持久化、缓存一致性与面试讲点
 - `docs/DEVELOPMENT_PLAN.md` — 后续开发与求职准备计划

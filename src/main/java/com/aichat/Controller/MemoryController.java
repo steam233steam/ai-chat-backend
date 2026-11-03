@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.CreateMemoryRequest;
 import com.aichat.Dto.MemoryVO;
 import com.aichat.Dto.Result;
@@ -37,19 +36,16 @@ public class MemoryController {
 
     @Autowired
     private MemoryService memoryService;
-    @Autowired
-    private MindButlerProperties props;
 
-    @Operation(summary = "查询生效记忆（注入用）",
-            description = "返回当前用户 active 且未过期的记忆，按 stable/dynamic 配额取，供聊天注入画像；limit 控制总数 1-100")
+    @Operation(summary = "查询生效记忆",
+            description = "返回当前用户 active 且未过期的记忆，按类型/更新时间倒序；limit 控制总数 1-100")
     @GetMapping
     public Result<List<MemoryVO>> list(
             @RequestParam(defaultValue = "100") int limit) {
         if (limit < 1 || limit > 100) {
             throw new BusinessException("limit 必须在 1-100 之间");
         }
-        return Result.success(memoryService.listForInjection(
-                props.getMemoryInjectMaxStable(), props.getMemoryInjectMaxDynamic()));
+        return Result.success(memoryService.list(limit));
     }
 
     @Operation(summary = "导出全部记忆",

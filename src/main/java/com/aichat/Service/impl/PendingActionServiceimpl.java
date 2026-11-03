@@ -57,7 +57,8 @@ public class PendingActionServiceimpl implements PendingActionService {
     public long create(String sessionId, String actionType, String payload, Long sourceMessageId) {
         String userId = currentUserId();
         // payload 大小上限（防滥用）
-        if (payload != null && payload.length() > props.getPendingPayloadMaxBytes()) {
+        if (payload != null && payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                > props.getPendingPayloadMaxBytes()) {
             throw new BusinessException("待确认内容过长");
         }
 
@@ -71,7 +72,13 @@ public class PendingActionServiceimpl implements PendingActionService {
 
         // 同一 user+session 旧 pending 先置 expired，再插新的（同事务，唯一键兜底并发）
         pendingActionMapper.expireSession(userId, sessionId);
-        pendingActionMapper.insert(action);
+        try {
+            pendingActionMapper.insert(action);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // 并发创建时 pending_slot 唯一键兜底；返回 409 让用户重试，不静默串提案
+            log.warn("pending 并发插入冲突: userId={}, session={}", userId, sessionId);
+            throw new BusinessException(409, "待确认动作正在更新，请重试");
+        }
         if (action.getId() == null) {
             throw new BusinessException("待确认动作创建失败，请重试");
         }
@@ -187,6 +194,8 @@ public class PendingActionServiceimpl implements PendingActionService {
             Map<String, Object> r = new HashMap<>();
             r.put("id", vo.getId());
             r.put("action", "created");
+            r.put("key", vo.getMemKey());
+            r.put("value", vo.getContent());
             results.add(r);
         }
         return results;
@@ -214,6 +223,10 @@ public class PendingActionServiceimpl implements PendingActionService {
             Map<String, Object> r = new HashMap<>();
             r.put("id", vo.getId());
             r.put("action", "created");
+            r.put("title", vo.getTitle());
+            r.put("dueAt", vo.getDueAt());
+            r.put("recurrence", vo.getRecurrence());
+            r.put("recurrenceRule", vo.getRecurrenceRule());
             results.add(r);
         }
         return results;

@@ -20,6 +20,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Config.MindButlerProperties;
@@ -146,13 +147,91 @@ class MemoryServiceimplTest {
         }
     }
 
+    @Test
+    void shouldRejectUnknownMemKeyOnManualCreate() {
+        CreateMemoryRequest req = new CreateMemoryRequest();
+        req.setMemKey("tech");
+        req.setContent("用 Java");
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("memKey");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void shouldRejectDuplicateActiveContent() {
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("简洁"), any(LocalDateTime.class)))
+                .thenReturn(mem(9L, "style", "简洁", "stable", "active", null, NOW));
+        CreateMemoryRequest req = new CreateMemoryRequest();
+        req.setMemKey("style");
+        req.setContent("简洁");
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("相同内容");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void shouldRejectWhenActiveMemoryLimitReached() {
+        when(mapper.countActive(eq("USER_ID_1234567890"), any(LocalDateTime.class))).thenReturn(100);
+        CreateMemoryRequest req = new CreateMemoryRequest();
+        req.setMemKey("style");
+        req.setContent("第 101 条");
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("上限");
+    }
+
+    @Test
+    void shouldIgnoreReplacesIdWithDifferentKey() {
+        when(mapper.selectById(99L, "USER_ID_1234567890"))
+                .thenReturn(mem(99L, "style", "旧风格", "stable", "active", null, NOW));
+        when(mapper.insert(any(UserMemory.class))).thenAnswer(inv -> {
+            UserMemory m = inv.getArgument(0);
+            m.setId(42L);
+            return 1;
+        });
+        when(mapper.selectById(42L, "USER_ID_1234567890"))
+                .thenReturn(mem(42L, "goal", "新目标", "stable", "active", null, NOW));
+
+        service.createWithReplaces("goal", "新目标", "stable", 0.9, 99L, 7L);
+
+        // key 不一致 → 不替换旧条，按新增处理且 replacesId 为空
+        verify(mapper, never()).markSuperseded(anyLong(), anyString());
+        ArgumentCaptor<UserMemory> captor = ArgumentCaptor.forClass(UserMemory.class);
+        verify(mapper).insert(captor.capture());
+        assertThat(captor.getValue().getReplacesId()).isNull();
+    }
+
+    @Test
+    void shouldDedupeIdenticalActiveContentFromAi() {
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("简洁"), any(LocalDateTime.class)))
+                .thenReturn(mem(7L, "style", "简洁", "stable", "active", null, NOW));
+
+        MemoryVO vo = service.createWithReplaces("style", "简洁", "stable", 0.9, null, 7L);
+
+        assertThat(vo.getId()).isEqualTo(7L);
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void shouldListActiveWithLimit() {
+        when(mapper.selectActiveByUser(eq("USER_ID_1234567890"), any(LocalDateTime.class), eq(1)))
+                .thenReturn(List.of(mem(1L, "style", "简洁", "stable", "active", null, NOW)));
+
+        List<MemoryVO> vos = service.list(1);
+
+        assertThat(vos).hasSize(1);
+        verify(mapper).selectActiveByUser(eq("USER_ID_1234567890"), any(LocalDateTime.class), eq(1));
+    }
+
     // ---------- 查询 ----------
 
     @Test
     void shouldListActiveOnlyForInjection() {
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), anyInt()))
                 .thenReturn(List.of(mem(1L, "style", "简洁", "stable", "active", null, NOW)));
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), anyInt()))
                 .thenReturn(List.of(mem(2L, "goal", "备考", "dynamic", "active", NOW.plusDays(10), NOW)));
 
         List<MemoryVO> vos = service.listForInjection(5, 5);
@@ -166,9 +245,9 @@ class MemoryServiceimplTest {
 
     @Test
     void shouldFilterExpiredDynamicFromInjection() {
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), anyInt()))
                 .thenReturn(List.of());
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), anyInt()))
                 .thenReturn(List.of(mem(3L, "goal", "过期了", "dynamic", "active", NOW.minusDays(1), NOW)));
 
         List<MemoryVO> vos = service.listForInjection(5, 5);
@@ -188,7 +267,7 @@ class MemoryServiceimplTest {
     void shouldUpdateWithMatchingVersion() {
         when(mapper.selectById(1L, "USER_ID_1234567890"))
                 .thenReturn(mem(1L, "style", "简洁", "stable", "active", null, NOW));
-        when(mapper.updateByIdAndVersion(any(UserMemory.class))).thenReturn(1);
+        when(mapper.updateByIdAndVersion(any(UserMemory.class), any(LocalDateTime.class))).thenReturn(1);
 
         UpdateMemoryRequest req = new UpdateMemoryRequest();
         req.setContent("非常简洁");
@@ -197,14 +276,32 @@ class MemoryServiceimplTest {
         MemoryVO vo = service.update(1L, req);
 
         assertThat(vo).isNotNull();
-        verify(mapper).updateByIdAndVersion(any());
+        verify(mapper).updateByIdAndVersion(any(), any(LocalDateTime.class));
+    }
+
+    @Test
+    void shouldSetDynamicExpiryWhenChangingStableToDynamic() {
+        when(mapper.selectById(1L, "USER_ID_1234567890"))
+                .thenReturn(mem(1L, "style", "简洁", "stable", "active", null, NOW));
+        when(mapper.updateByIdAndVersion(any(UserMemory.class), any(LocalDateTime.class))).thenReturn(1);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setMemType("dynamic");
+        req.setVersion(0);
+
+        service.update(1L, req);
+
+        org.mockito.ArgumentCaptor<UserMemory> captor =
+                org.mockito.ArgumentCaptor.forClass(UserMemory.class);
+        verify(mapper).updateByIdAndVersion(captor.capture(), any(LocalDateTime.class));
+        assertThat(captor.getValue().getExpiresAt()).isAfter(NOW);
     }
 
     @Test
     void shouldReturn409OnVersionConflict() {
         when(mapper.selectById(1L, "USER_ID_1234567890"))
                 .thenReturn(mem(1L, "style", "简洁", "stable", "active", null, NOW));
-        when(mapper.updateByIdAndVersion(any(UserMemory.class))).thenReturn(0);
+        when(mapper.updateByIdAndVersion(any(UserMemory.class), any(LocalDateTime.class))).thenReturn(0);
 
         UpdateMemoryRequest req = new UpdateMemoryRequest();
         req.setContent("x");

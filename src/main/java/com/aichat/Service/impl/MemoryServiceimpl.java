@@ -48,8 +48,8 @@ public class MemoryServiceimpl implements MemoryService {
         int stableLimitCap = Math.max(0, Math.min(stableLimit, 100));
         int dynamicLimitCap = Math.max(0, Math.min(dynamicLimit, 100));
 
-        List<UserMemory> stable = userMemoryMapper.selectActiveByUserAndType(userId, "stable", stableLimitCap);
-        List<UserMemory> dynamic = userMemoryMapper.selectActiveByUserAndType(userId, "dynamic", dynamicLimitCap);
+        List<UserMemory> stable = userMemoryMapper.selectActiveByUserAndType(userId, "stable", now, stableLimitCap);
+        List<UserMemory> dynamic = userMemoryMapper.selectActiveByUserAndType(userId, "dynamic", now, dynamicLimitCap);
 
         // stable 优先；总数受 inject-max 控制（这里由调用方传配额，M1 简化为 stable+dynamic 各 cap）
         List<MemoryVO> result = new ArrayList<>(stableLimitCap + dynamicLimitCap);
@@ -63,7 +63,7 @@ public class MemoryServiceimpl implements MemoryService {
         String userId = currentUserId();
         int cap = Math.max(1, Math.min(limit, 100));
         LocalDateTime now = nowLocal();
-        return userMemoryMapper.selectExportByUser(userId, cap).stream()
+        return userMemoryMapper.selectActiveByUser(userId, now, cap).stream()
                 .map(m -> toVO(m, now))
                 .toList();
     }
@@ -71,10 +71,8 @@ public class MemoryServiceimpl implements MemoryService {
     @Override
     public List<MemoryVO> export() {
         String userId = currentUserId();
-        // 导出不限条数（max-per-user 兜底）
-        int cap = props.getMemoryMaxPerUser();
         LocalDateTime now = nowLocal();
-        return userMemoryMapper.selectExportByUser(userId, cap).stream()
+        return userMemoryMapper.selectExportByUser(userId).stream()
                 .map(m -> toVO(m, now))
                 .toList();
     }
@@ -92,14 +90,24 @@ public class MemoryServiceimpl implements MemoryService {
     @Override
     public MemoryVO create(CreateMemoryRequest request) {
         String userId = currentUserId();
+        LocalDateTime now = nowLocal();
+        String memKey = normalizeMemKey(request.getMemKey());
         String memType = normalizeMemType(request.getMemType());
         String content = normalizeContent(request.getContent());
         rejectIfSensitive(content);
 
+        // 同一用户已有完全相同的 active 内容 → 409（v3 8.1）
+        if (userMemoryMapper.selectActiveByContent(userId, content, now) != null) {
+            throw new BusinessException(409, "已存在相同内容的记忆");
+        }
+        if (userMemoryMapper.countActive(userId, now) >= props.getMemoryMaxPerUser()) {
+            throw new BusinessException("记忆数量已达上限（" + props.getMemoryMaxPerUser() + " 条），请先删除旧记忆");
+        }
+
         // 手动创建：source=manual、confidence=1.00（即"已确认"）
         UserMemory m = new UserMemory();
         m.setUserId(userId);
-        m.setMemKey(request.getMemKey());
+        m.setMemKey(memKey);
         m.setContent(content);
         m.setMemType(memType);
         m.setStatus("active");
@@ -135,8 +143,9 @@ public class MemoryServiceimpl implements MemoryService {
         if (current == null) {
             return null; // 非本人或已删，上层 404
         }
+        LocalDateTime now = nowLocal();
         // 只能改 active 且未过期
-        if (!"active".equals(current.getStatus()) || expired(current, nowLocal())) {
+        if (!"active".equals(current.getStatus()) || expired(current, now)) {
             throw new BusinessException("该记忆不可修改（已失效）");
         }
 
@@ -161,48 +170,70 @@ public class MemoryServiceimpl implements MemoryService {
             }
             upd.setExpiresAt(null);
         } else {
-            upd.setExpiresAt(request.getExpiresAt() != null ? request.getExpiresAt() : current.getExpiresAt());
+            // dynamic 未传时：保留原过期时间；stable→dynamic 则按 ttl 重新计算（v3 5.1）
+            LocalDateTime expiry = request.getExpiresAt() != null
+                    ? request.getExpiresAt() : current.getExpiresAt();
+            upd.setExpiresAt(expiry != null ? expiry : dynamicExpiry());
         }
 
-        int rows = userMemoryMapper.updateByIdAndVersion(upd);
+        int rows = userMemoryMapper.updateByIdAndVersion(upd, now);
         if (rows == 0) {
             throw new BusinessException(409, "版本冲突，请刷新后重试");
         }
-        return toVO(userMemoryMapper.selectById(id, userId), nowLocal());
+        return toVO(userMemoryMapper.selectById(id, userId), now);
     }
 
     @Override
     public boolean delete(long id) {
         String userId = currentUserId();
         int rows = userMemoryMapper.softDelete(id, userId);
-        return rows > 0;
+        // 幂等：已是 deleted 状态也算成功（v3 8.1）
+        return rows > 0 || userMemoryMapper.selectById(id, userId) != null;
     }
 
     @Override
     public MemoryVO createWithReplaces(String memKey, String content, String memType,
             Double confidence, Long replacesId, Long sourceMessageId) {
         String userId = currentUserId();
+        LocalDateTime now = nowLocal();
+        String key = normalizeMemKey(memKey);
         String type = normalizeMemType(memType);
         String cleanContent = normalizeContent(content);
         rejectIfSensitive(cleanContent);
 
-        // 冲突替换：旧条置 superseded（同事务由调用方 @Transactional 保证）
-        if (replacesId != null) {
-            userMemoryMapper.markSuperseded(replacesId, userId);
+        // 完全相同 active 内容 → 去重，不重复插入，也不替换旧条（v3 6.3）
+        UserMemory duplicate = userMemoryMapper.selectActiveByContent(userId, cleanContent, now);
+        if (duplicate != null) {
+            return toVO(duplicate, now);
+        }
+
+        // replaces_id 只接受本人 active 且 mem_key/mem_type 一致的旧条；否则忽略替换按新增处理
+        Long effectiveReplacesId = validateReplacesId(replacesId, userId, key, type);
+        if (effectiveReplacesId != null) {
+            int superseded = userMemoryMapper.markSuperseded(effectiveReplacesId, userId);
+            if (superseded == 0) {
+                effectiveReplacesId = null;
+            }
+        }
+        // 替换会先腾出一条 active 名额；不替换时才需要卡上限
+        if (effectiveReplacesId == null
+                && userMemoryMapper.countActive(userId, now) >= props.getMemoryMaxPerUser()) {
+            throw new BusinessException("记忆数量已达上限（" + props.getMemoryMaxPerUser() + " 条），请先删除旧记忆");
         }
 
         UserMemory m = new UserMemory();
         m.setUserId(userId);
-        m.setMemKey(memKey);
+        m.setMemKey(key);
         m.setContent(cleanContent);
         m.setMemType(type);
         m.setStatus("active");
         // AI 提取的 confidence 由调用方给（缺省 0.5，夹在 0-1）；缺省 1.00
         double conf = (confidence == null) ? 0.5 : Math.max(0.0, Math.min(1.0, confidence));
-        m.setConfidence(new BigDecimal(String.format("%.2f", conf)));
+        // 不用 String.format：某些 Locale 会输出逗号小数，BigDecimal 解析直接 500
+        m.setConfidence(BigDecimal.valueOf(conf).setScale(2, java.math.RoundingMode.HALF_UP));
         m.setSource("ai");
         m.setSourceMessageId(sourceMessageId);
-        m.setReplacesId(replacesId);
+        m.setReplacesId(effectiveReplacesId);
 
         if ("stable".equals(type)) {
             m.setExpiresAt(null);
@@ -239,6 +270,27 @@ public class MemoryServiceimpl implements MemoryService {
 
     private LocalDateTime dynamicExpiry() {
         return nowLocal().plusDays(props.getMemoryDynamicTtlDays());
+    }
+
+    private Long validateReplacesId(Long replacesId, String userId, String memKey, String memType) {
+        if (replacesId == null) {
+            return null;
+        }
+        UserMemory old = userMemoryMapper.selectById(replacesId, userId);
+        if (old == null || !"active".equals(old.getStatus())
+                || !memKey.equals(old.getMemKey()) || !memType.equals(old.getMemType())) {
+            log.warn("忽略非法 replacesId: userId={}, id={}", userId, replacesId);
+            return null;
+        }
+        return replacesId;
+    }
+
+    private String normalizeMemKey(String raw) {
+        String key = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+        if (!MemoryKey.isValid(key)) {
+            throw new BusinessException("memKey 只能是 style/goal/schedule/relation");
+        }
+        return key;
     }
 
     private String normalizeMemType(String memType) {

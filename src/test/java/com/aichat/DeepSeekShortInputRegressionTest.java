@@ -117,6 +117,8 @@ class DeepSeekShortInputRegressionTest {
         String apiKey = environment.getProperty("spring.ai.openai.api-key", "sk-deepseek-placeholder");
         boolean hasRealKey = apiKey != null && !apiKey.isBlank() && !apiKey.startsWith("sk-deepseek-placeholder");
         org.junit.jupiter.api.Assumptions.assumeTrue(hasRealKey, "无真实 DeepSeek key，跳过");
+        DbTestSupport.assumeMysqlAvailable(jdbc);
+        DbTestSupport.assumeRedisAvailable(stringRedisTemplate);
 
         phone = "135" + String.format("%08d", System.currentTimeMillis() % 100_000_000L);
         jdbc.update("DELETE FROM tb_chat_message WHERE user_id = (SELECT uid FROM tb_user WHERE phone = ?)", phone);

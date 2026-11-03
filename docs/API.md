@@ -1365,8 +1365,8 @@ P1 三大能力（按设计文档 §8 接口契约落地）：
 
 **13.1.2 记忆列表**  `GET /user/memories?limit=50`
 
-- 含 `active` + `superseded`（排除 `deleted`）；limit 1-100
-- 返回项带 `expired`（瞬态，`expires_at <= now` 计算）
+- 只返回 `active` 且未过期（`expires_at IS NULL OR expires_at > now`）；limit 1-100
+- 返回项带 `expired`（瞬态，`expires_at <= now` 计算）；历史/被替换条目走 `/export`
 
 **13.1.3 导出**  `GET /user/memories/export`
 
@@ -1421,8 +1421,8 @@ P1 三大能力（按设计文档 §8 接口契约落地）：
 |------|------|------|------|
 | version | int | 是 | 乐观锁 |
 
-- `once` → `status=done`，`due_at` 清空
-- `daily/weekly` → 保持 `pending`，`due_at` 滚动到下一个未来时间点（`last_notified_at` 记录本次完成时间）
+- `once` → `status=done`，保留原始 `due_at`（便于已完成列表展示/统计）
+- `daily/weekly` → 保持 `pending`，`due_at` 滚动到下一个未来时间点；`last_notified_at` 清空（P1 不写，P3 推送用）
 
 **13.2.7 软删除**  `DELETE /user/tasks/{id}`（幂等；`deleted_at` 落库）
 
@@ -1443,7 +1443,7 @@ P1 三大能力（按设计文档 §8 接口契约落地）：
 - 原子 + 幂等：重复确认返回 `alreadyConfirmed=true`，不重复建记忆/任务
 - 已拒绝/已过期 → 409（提示重新发起）
 - 按 payload 实际内容分 `memory-only`/`task-only`/`mixed` 落库（`action_type` 仅展示）
-- 响应 `ConfirmResult`：`{ alreadyConfirmed, memories:[{id,action}], tasks:[{id,action}] }`
+- 响应 `ConfirmResult`：`{ alreadyConfirmed, memories:[{id,action,key,value}], tasks:[{id,action,title,dueAt,recurrence,recurrenceRule}] }`
 
 **13.3.3 拒绝**  `POST /user/pending-actions/{id}/reject`
 
@@ -1465,6 +1465,7 @@ pending --新意图----> expired（同 session 只留一个 pending）
 | 配置 | 默认 | 说明 |
 |------|------|------|
 | `enabled` | true | 总开关；关闭只保留手动 CRUD，不做提取/注入 |
+| `intent.enabled` | true | 意图拦截开关；关闭后聊天不拦截（手动 CRUD 仍可用） |
 | `memory.dynamic-ttl-days` | 90 | dynamic 记忆默认有效期（天） |
 | `memory.max-per-user` | 100 | 每用户 active 记忆上限 |
 | `memory.inject-max-stable` / `inject-max-dynamic` | 5 / 5 | 注入画像配额 |
@@ -1474,7 +1475,10 @@ pending --新意图----> expired（同 session 只留一个 pending）
 | `task.due-limit` | 50 | 到期查询默认/最大条数 |
 | `pending.ttl-minutes` | 10 | pending 有效期（分钟） |
 | `pending.payload-max-bytes` | 16384 | pending payload 上限 |
-| `intent.extract-model` | deepseek-chat | 意图提取器模型（需在 `app.models.available` 白名单） |
+| `intent.extract-model` | deepseek-chat | 意图提取器模型（需在 `app.models.available` 白名单；启动时校验） |
+| `intent.timeout-ms` | 5000 | 提取超时；超时返回固定兜底，不阻塞聊天 |
+| `intent.daily-limit` | 50 | 每用户每日提取次数；0=不限 |
+| `intent.max-memories` / `intent.max-tasks` | 5 / 5 | 单条消息最多候选数（超出截断） |
 | `eval.real-model` | false | M4 评测 runner 是否真跑 LLM（false=桩模式，链路确定性） |
 
 ---
