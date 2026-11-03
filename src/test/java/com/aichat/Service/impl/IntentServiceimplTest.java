@@ -209,7 +209,20 @@ class IntentServiceimplTest {
         IntentOutcome o = service.handle("s-1", "记住我的密码", 10L);
 
         assertThat(o.shouldContinueChat()).isFalse();
-        assertThat(o.getReply()).contains("没识别出");
+        assertThat(o.getReply()).contains("敏感");
+        verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
+    }
+
+    @Test
+    void shouldReturnSensitiveFallbackWhenExtractorReturnsEmpty() {
+        when(pendingActionService.current("s-1")).thenReturn(null);
+        when(intentExtractor.extract(eq(Intent.MEMORY), anyString()))
+                .thenReturn(new IntentExtractionResult(List.of(), List.of()));
+
+        IntentOutcome o = service.handle("s-1", "记住我的密码22333", 10L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("敏感");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
@@ -230,6 +243,44 @@ class IntentServiceimplTest {
     }
 
     @Test
+    void shouldReturnUpdateFallbackWithoutCallingExtractor() {
+        when(pendingActionService.current("s-1")).thenReturn(null);
+
+        IntentOutcome o = service.handle("s-1", "算了延后十分钟吧", 12L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("暂不支持");
+        verify(intentExtractor, never()).extract(any(), anyString());
+        verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
+    }
+
+    @Test
+    void shouldExpirePendingWhenUserAsksToModifyTask() {
+        PendingActionVO pending = new PendingActionVO();
+        pending.setId(99L);
+        pending.setStatus("pending");
+        when(pendingActionService.current("s-1")).thenReturn(pending);
+
+        IntentOutcome o = service.handle("s-1", "延后十分钟", 12L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("暂不支持");
+        verify(pendingActionService).reject(99L);
+        verify(intentExtractor, never()).extract(any(), anyString());
+    }
+
+    @Test
+    void shouldReturnNoPendingFallbackWhenConfirmWithoutPending() {
+        when(pendingActionService.current("s-1")).thenReturn(null);
+
+        IntentOutcome o = service.handle("s-1", "确认", 12L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("没有待确认");
+        verify(intentExtractor, never()).extract(any(), anyString());
+    }
+
+    @Test
     void shouldSkipNonCreateTaskCandidate() {
         when(pendingActionService.current("s-1")).thenReturn(null);
         IntentExtractionResult upd = new IntentExtractionResult(
@@ -237,7 +288,7 @@ class IntentServiceimplTest {
                 List.of(new TaskCandidate("update", "改标题", null, "Asia/Shanghai", "once", null)));
         when(intentExtractor.extract(eq(Intent.TASK), anyString())).thenReturn(upd);
 
-        IntentOutcome o = service.handle("s-1", "把任务改个名", 12L);
+        IntentOutcome o = service.handle("s-1", "帮我处理一下这个任务", 12L);
 
         assertThat(o.shouldContinueChat()).isFalse(); // P1 只允许 create，全部丢弃后固定兜底
         assertThat(o.getReply()).contains("没识别出");

@@ -197,8 +197,8 @@ class MindButlerEvalRunnerTest {
                 return outcome.shouldContinueChat();
             }
             case "reject" -> {
-                // 拒绝词但无 pending → 走正常聊天
-                return outcome.shouldContinueChat();
+                // 明确的“取消”但无 pending → 固定提示，不调聊天模型（避免模型幻想“已取消”）
+                return !outcome.shouldContinueChat() && outcome.getReply() != null;
             }
             default -> {
                 return false;

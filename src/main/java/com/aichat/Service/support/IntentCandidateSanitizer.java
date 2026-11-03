@@ -78,6 +78,19 @@ public class IntentCandidateSanitizer {
         return out;
     }
 
+    /** 是否至少有一条记忆候选因敏感词被拒绝（用于给用户明确提示，而不是“没识别出”）。 */
+    public boolean containsSensitiveMemory(List<MemoryCandidate> in) {
+        if (in == null) {
+            return false;
+        }
+        for (MemoryCandidate c : in) {
+            if (c != null && SensitiveContentFilter.detectSensitive(c.getValue()) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public List<TaskCandidate> sanitizeTasks(List<TaskCandidate> in) {
         List<TaskCandidate> out = new ArrayList<>();
         if (in == null) {

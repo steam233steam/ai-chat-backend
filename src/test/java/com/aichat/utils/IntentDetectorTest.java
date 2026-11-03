@@ -63,6 +63,12 @@ class IntentDetectorTest {
     }
 
     @Test
+    void shouldNotTreatConfirmInsideSentenceAsCommand() {
+        assertThat(IntentDetector.detect("确认一下这个方案", false)).isEqualTo(Intent.NONE);
+        assertThat(IntentDetector.detect("提前祝你生日快乐", false)).isEqualTo(Intent.NONE);
+    }
+
+    @Test
     void shouldReturnNoneForShortWordsWhenNoPending() {
         // "对"/"确认" 在无 pending 时不算意图（避免把普通聊天当确认）
         assertThat(IntentDetector.detect("对", false)).isEqualTo(Intent.NONE);
@@ -77,6 +83,18 @@ class IntentDetectorTest {
         // 明确的否定短语仍触发 REJECT
         assertThat(IntentDetector.detect("不是啊", true)).isEqualTo(Intent.REJECT);
         assertThat(IntentDetector.detect("不要了", true)).isEqualTo(Intent.REJECT);
+    }
+
+    @Test
+    void shouldDetectUpdateIntentBeforeTaskCreation() {
+        assertThat(IntentDetector.detect("算了延后十分钟吧", false)).isEqualTo(Intent.UPDATE);
+        assertThat(IntentDetector.detect("把任务改个名", false)).isEqualTo(Intent.UPDATE);
+    }
+
+    @Test
+    void shouldDetectNoPendingConfirmWhenNoPending() {
+        assertThat(IntentDetector.detect("确认", false)).isEqualTo(Intent.NO_PENDING);
+        assertThat(IntentDetector.detect("取消", false)).isEqualTo(Intent.NO_PENDING);
     }
 
     @Test

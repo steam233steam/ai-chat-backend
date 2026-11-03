@@ -25,6 +25,7 @@ import com.aichat.utils.IntentDetector;
 import com.aichat.utils.IntentDetector.Intent;
 import com.aichat.utils.IntentPayloadCodec;
 import com.aichat.utils.IntentReplyFormatter;
+import com.aichat.utils.SensitiveContentFilter;
 import com.aichat.utils.UserHolder;
 
 /**
@@ -46,6 +47,12 @@ public class IntentServiceimpl implements IntentService {
             "我没识别出要保存的记忆或任务。可以再说具体一点，比如“记住我喜欢简洁”或“明天 9 点提醒我交作业”。";
     private static final String CONFIRM_EXPIRED_FALLBACK =
             "这条确认已过期或已失效，请重新说一遍。";
+    private static final String NO_PENDING_FALLBACK =
+            "当前没有待确认的内容。如果要记住或提醒，请先说出具体内容。";
+    private static final String UPDATE_FALLBACK =
+            "P1 暂不支持通过聊天修改任务。请到任务列表手动修改，或先取消原任务再新建。";
+    private static final String SENSITIVE_FALLBACK =
+            "这段内容包含密码/Token/证件/银行卡等敏感信息，我不会保存。请不要在聊天中发送密码或密钥。";
 
     @Autowired
     private PendingActionService pendingActionService;
@@ -73,6 +80,8 @@ public class IntentServiceimpl implements IntentService {
             case NONE -> IntentOutcome.chat();
             case CONFIRM -> confirm(pending);
             case REJECT -> reject(pending);
+            case UPDATE -> update(pending);
+            case NO_PENDING -> IntentOutcome.replyOnly(NO_PENDING_FALLBACK);
             case MEMORY, TASK -> extract(intent, sessionId, message, sourceMessageId);
         };
     }
@@ -87,12 +96,20 @@ public class IntentServiceimpl implements IntentService {
 
         IntentExtractionResult extracted = intentExtractor.extract(intent, message);
         if (extracted == null || extracted.isEmpty()) {
+            // 提取器可能按 prompt 规则主动不提取敏感信息；这时仍要给用户明确提示
+            if (SensitiveContentFilter.detectSensitive(message) != null) {
+                return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
+            }
             return IntentOutcome.replyOnly(EXTRACT_FALLBACK); // v3 8.4：固定兜底，不调聊天模型
         }
 
         List<MemoryCandidate> memories = candidateSanitizer.sanitizeMemories(extracted.getMemories());
         List<TaskCandidate> tasks = candidateSanitizer.sanitizeTasks(extracted.getTasks());
         if (memories.isEmpty() && tasks.isEmpty()) {
+            if (candidateSanitizer.containsSensitiveMemory(extracted.getMemories())
+                    || SensitiveContentFilter.detectSensitive(message) != null) {
+                return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
+            }
             return IntentOutcome.replyOnly(EXTRACT_FALLBACK);
         }
 
@@ -132,6 +149,18 @@ public class IntentServiceimpl implements IntentService {
             return IntentOutcome.confirmed(result, "刚才已经确认过了，没有重复创建。");
         }
         return IntentOutcome.confirmed(result, IntentReplyFormatter.buildConfirmResultReply(result));
+    }
+
+    /** P1 不支持改任务；如果当前还有 pending，先让它失效，避免用户之后误确认旧提案。 */
+    private IntentOutcome update(PendingActionVO pending) {
+        if (pending != null) {
+            try {
+                pendingActionService.reject(pending.getId());
+            } catch (BusinessException e) {
+                log.info("update 前清理 pending 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
+            }
+        }
+        return IntentOutcome.replyOnly(UPDATE_FALLBACK);
     }
 
     private IntentOutcome reject(PendingActionVO pending) {

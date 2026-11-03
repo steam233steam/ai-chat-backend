@@ -10,6 +10,8 @@ import java.util.Set;
  * - MEMORY / TASK：命中"记住/记一下/待办/明天/每周…"等触发词，走 LLM 提取
  * - CONFIRM：有 pending 且命中确认词，走 confirm
  * - REJECT：有 pending 且命中拒绝词，走 reject
+ * - UPDATE：命中修改/延后/提前等表达（P1 不支持自然语言更新，固定提示）
+ * - NO_PENDING：没有 pending 却明确说确认/取消，固定提示，避免模型幻想
  * - NONE：普通聊天
  *
  * 设计取舍（v3 4.4/4.5）：
@@ -29,6 +31,10 @@ public final class IntentDetector {
         CONFIRM,
         /** 拒绝：对现有 pending 说"不要/取消"。 */
         REJECT,
+        /** 修改任务：P1 不支持自然语言更新，必须走固定提示，不能交给聊天模型。 */
+        UPDATE,
+        /** 没有 pending 却说确认/取消：固定提示，避免模型幻想“已更新/已保存”。 */
+        NO_PENDING,
         /** 无关：普通聊天。 */
         NONE
     }
@@ -64,6 +70,16 @@ public final class IntentDetector {
             "不对", "不是", "错了", "不要", "不用", "取消", "算了吧", "算了", "改一下",
             "重说", "重来", "删掉", "不要了", "不确认", "不保存", "拒绝", "no", "NO");
 
+    // 修改类表达：P1 不支持自然语言更新/删除任务，直接固定提示，不能让聊天模型假装“已更新”
+    private static final Set<String> UPDATE_TRIGGERS = Set.of(
+            "改成", "改为", "改到", "修改", "调整", "改个名", "改名", "换个时间",
+            "延后", "推迟", "延到", "推迟到", "提前到");
+
+    // 明确确认/取消词：没有 pending 时返回固定提示，避免模型顺着上下文幻想“已保存/已更新”
+    private static final Set<String> NO_PENDING_TRIGGERS = Set.of(
+            "确认", "确定", "确认保存", "已确认", "取消", "取消吧",
+            "拒绝", "不保存", "不确认", "不对", "算了", "不用了", "不要了");
+
     /**
      * 检测意图。
      *
@@ -87,6 +103,17 @@ public final class IntentDetector {
             }
         }
 
+        // 修改类表达优先于任务创建：P1 不支持更新，避免生成重复任务
+        if (matchAny(text, UPDATE_TRIGGERS)) {
+            return Intent.UPDATE;
+        }
+
+        // 没有 pending 却明确说“确认/取消”：固定提示，不能交给聊天模型自由发挥。
+        // 这里用“整句精确匹配”，避免“确认一下这个方案”这类普通聊天被误判。
+        if (!hasPending && NO_PENDING_TRIGGERS.contains(normalizeCommand(text))) {
+            return Intent.NO_PENDING;
+        }
+
         // 任务触发优先于记忆（"明天交作业"是任务；"记住我明天要交作业"也是任务）
         if (matchAny(text, TASK_TRIGGERS)) {
             return Intent.TASK;
@@ -96,6 +123,10 @@ public final class IntentDetector {
             return Intent.MEMORY;
         }
         return Intent.NONE;
+    }
+
+    private static String normalizeCommand(String text) {
+        return text.toLowerCase(Locale.ROOT).replaceAll("[\\p{Punct}，。！？、\\s]+", "");
     }
 
     /** 触发词命中判断：去掉标点后精确匹配（触发词都是短词，contains 足够）。 */
