@@ -38,4 +38,13 @@ public interface MemoryService {
 
     /** 软删除（幂等）。返回 true 表示本次实际删了，false 表示已是删除态。 */
     boolean delete(long id);
+
+    /**
+     * AI 确认路径专用：创建一条 source=ai、带 confidence 与 replacesId 的记忆。
+     * 若 replacesId 非空且属于当前用户 active 记忆，先把旧条置 superseded（同事务由调用方保证）。
+     * 内容走敏感词过滤；stable 强制 expiresAt=null，dynamic 未传按 ttl。
+     * 手动 CRUD 的 {@link #create} 与此分离，避免"已确认=manual"的语义混淆。
+     */
+    MemoryVO createWithReplaces(String memKey, String content, String memType,
+            Double confidence, Long replacesId, Long sourceMessageId);
 }

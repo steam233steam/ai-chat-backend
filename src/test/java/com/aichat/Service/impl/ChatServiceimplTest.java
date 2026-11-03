@@ -2,6 +2,7 @@ package com.aichat.Service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -33,11 +34,14 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Config.ModelRouter;
+import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.SMessage;
 import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
+import com.aichat.Service.MemoryService;
+import com.aichat.utils.PromptBuilder;
 import com.aichat.utils.UserHolder;
 
 import reactor.core.publisher.Flux;
@@ -52,6 +56,8 @@ class ChatServiceimplTest {
     private ChatSessionRepository repository;
     private ChatTitleService chatTitleService;
     private ModelRouter modelRouter;
+    private PromptBuilder promptBuilder;
+    private MemoryService memoryService;
     private ChatClientRequestSpec requestSpec;
     private ChatServiceimpl service;
 
@@ -81,6 +87,11 @@ class ChatServiceimplTest {
         ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
         ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
         ReflectionTestUtils.setField(service, "chatTitleService", chatTitleService);
+        // PromptBuilder：mock 一个"无画像"的版本，让 system prompt 返回基础人设（不影响历史注入断言）
+        memoryService = mock(MemoryService.class);
+        when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(java.util.List.of());
+        promptBuilder = new PromptBuilder(memoryService, new MindButlerProperties());
+        ReflectionTestUtils.setField(service, "promptBuilder", promptBuilder);
 
         UserDto user = new UserDto();
         user.setId("u1");

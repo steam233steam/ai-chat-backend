@@ -6,8 +6,8 @@ import org.springframework.stereotype.Component;
 /**
  * MindButler P1 配置（application.properties 里 app.mindbutler.* 绑定到这里）。
  *
- * P1 只暴露"手动 CRUD + 注入"用得到的项；意图提取 / pending / 推送相关配置在 M3/M4 落地时再加，
- * 避免一开始配一堆没接线的开关。
+ * M1 记忆 CRUD + M1.5 注入 + M2 任务/pending 用得到的项都放在这里；
+ * 意图提取 / 推送 / 限流相关配置在 M3/M4 落地时再加，避免一开始配一堆没接线的开关。
  */
 @Component
 @ConfigurationProperties(prefix = "app.mindbutler")
@@ -33,6 +33,18 @@ public class MindButlerProperties {
 
     /** P1 固定时区，启动时校验只允许 Asia/Shanghai。 */
     private String taskZone = "Asia/Shanghai";
+
+    /** 每用户未删除任务上限（列表/创建兜底）。 */
+    private int taskMaxPerUser = 500;
+
+    /** GET /user/tasks/due 默认/最大条数。 */
+    private int taskDueLimit = 50;
+
+    /** 待确认动作（pending）有效期（分钟），过期后需重新发起。 */
+    private int pendingTtlMinutes = 10;
+
+    /** 待确认动作 payload 上限（字节）。 */
+    private int pendingPayloadMaxBytes = 16384;
 
     public boolean isEnabled() {
         return enabled;
@@ -88,5 +100,37 @@ public class MindButlerProperties {
 
     public void setTaskZone(String taskZone) {
         this.taskZone = taskZone;
+    }
+
+    public int getTaskMaxPerUser() {
+        return taskMaxPerUser;
+    }
+
+    public void setTaskMaxPerUser(int taskMaxPerUser) {
+        this.taskMaxPerUser = taskMaxPerUser;
+    }
+
+    public int getTaskDueLimit() {
+        return taskDueLimit;
+    }
+
+    public void setTaskDueLimit(int taskDueLimit) {
+        this.taskDueLimit = taskDueLimit;
+    }
+
+    public int getPendingTtlMinutes() {
+        return pendingTtlMinutes;
+    }
+
+    public void setPendingTtlMinutes(int pendingTtlMinutes) {
+        this.pendingTtlMinutes = pendingTtlMinutes;
+    }
+
+    public int getPendingPayloadMaxBytes() {
+        return pendingPayloadMaxBytes;
+    }
+
+    public void setPendingPayloadMaxBytes(int pendingPayloadMaxBytes) {
+        this.pendingPayloadMaxBytes = pendingPayloadMaxBytes;
     }
 }

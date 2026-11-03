@@ -26,6 +26,7 @@ import com.aichat.Service.ChatService;
 import com.aichat.Service.ChatTitleService;
 import com.aichat.utils.ChatHistoryBuilder;
 import com.aichat.utils.ModelOutputSanitizer;
+import com.aichat.utils.PromptBuilder;
 import com.aichat.utils.StreamingSafetyFilter;
 import com.aichat.utils.UserHolder;
 
@@ -55,6 +56,8 @@ public class ChatServiceimpl implements ChatService {
     private ModelRouter modelRouter;
     @Autowired
     private ChatTitleService chatTitleService;
+    @Autowired
+    private PromptBuilder promptBuilder;
 
     @Override
     public String sendSession(String sessionid, UserMessage userMessage, String modelName) {
@@ -226,15 +229,20 @@ public class ChatServiceimpl implements ChatService {
     }
 
     /**
-     * 组装本轮 Prompt：system 只放可信人设，历史是真实对话角色，当前问题最后追加。
+     * 组装本轮 Prompt：system 放"基础人设 + 当前用户长期记忆画像"（同步/流式共用），
+     * 历史是真实对话角色，当前问题最后追加。
+     *
+     * 注入安全：画像由 PromptBuilder 拼装（JSON 序列化 + 大小写转义），
+     * 基础人设 ModelRouter.SYSTEM_PROMPT 是可信数据；画像查询失败时 fail-open 只返回基础人设。
      */
     private ChatClient.ChatClientRequestSpec withHistory(
             ChatClient chatClient, List<Message> historyMessages, String question) {
         List<Message> messages = new ArrayList<>(historyMessages.size() + 1);
         messages.addAll(historyMessages);
         messages.add(new UserMessage(question));
+        String systemPrompt = promptBuilder.build(ModelRouter.SYSTEM_PROMPT);
         return chatClient.prompt()
-                .system(ModelRouter.SYSTEM_PROMPT)
+                .system(systemPrompt)
                 .messages(messages);
     }
 

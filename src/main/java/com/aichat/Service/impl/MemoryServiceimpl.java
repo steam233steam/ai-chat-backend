@@ -178,6 +178,46 @@ public class MemoryServiceimpl implements MemoryService {
         return rows > 0;
     }
 
+    @Override
+    public MemoryVO createWithReplaces(String memKey, String content, String memType,
+            Double confidence, Long replacesId, Long sourceMessageId) {
+        String userId = currentUserId();
+        String type = normalizeMemType(memType);
+        String cleanContent = normalizeContent(content);
+        rejectIfSensitive(cleanContent);
+
+        // 冲突替换：旧条置 superseded（同事务由调用方 @Transactional 保证）
+        if (replacesId != null) {
+            userMemoryMapper.markSuperseded(replacesId, userId);
+        }
+
+        UserMemory m = new UserMemory();
+        m.setUserId(userId);
+        m.setMemKey(memKey);
+        m.setContent(cleanContent);
+        m.setMemType(type);
+        m.setStatus("active");
+        // AI 提取的 confidence 由调用方给（缺省 0.5，夹在 0-1）；缺省 1.00
+        double conf = (confidence == null) ? 0.5 : Math.max(0.0, Math.min(1.0, confidence));
+        m.setConfidence(new BigDecimal(String.format("%.2f", conf)));
+        m.setSource("ai");
+        m.setSourceMessageId(sourceMessageId);
+        m.setReplacesId(replacesId);
+
+        if ("stable".equals(type)) {
+            m.setExpiresAt(null);
+        } else {
+            m.setExpiresAt(dynamicExpiry());
+        }
+
+        userMemoryMapper.insert(m);
+        UserMemory saved = userMemoryMapper.selectById(m.getId(), userId);
+        if (saved == null) {
+            throw new BusinessException("记忆创建后查询失败，请重试");
+        }
+        return toVO(saved, nowLocal());
+    }
+
     // ---------- 内部辅助 ----------
 
     private String currentUserId() {
