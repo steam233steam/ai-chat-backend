@@ -135,17 +135,21 @@ public final class IntentJsonParser {
         }
     }
 
-    /** dueAt 支持 "2026-11-03T09:00:00"（ISO LocalDateTime）或 null。 */
+    /** dueAt 支持 "2026-11-03T09:00:00"（ISO T 分隔）或 "2026-11-03 09:00:00"（空格分隔，LLM 常见变体）。 */
     private static java.time.LocalDateTime dateTimeOrNull(JsonNode n) {
         String s = textOrNull(n);
         if (s == null) {
             return null;
         }
-        try {
-            return java.time.LocalDateTime.parse(s);
-        } catch (Exception e) {
-            return null; // 时间解析不了就当没给截止时间（once 任务可空）
+        // 先试 ISO 标准（T 分隔），再试空格分隔变体；都失败当没给截止时间
+        for (String candidate : new String[] { s.trim(), s.trim().replace(' ', 'T') }) {
+            try {
+                return java.time.LocalDateTime.parse(candidate);
+            } catch (Exception ignore) {
+                // try next
+            }
         }
+        return null;
     }
 
     /** 剥掉 LLM 可能输出的 ```json ... ``` 围栏，只留中间 JSON。 */

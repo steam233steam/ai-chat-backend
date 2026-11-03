@@ -62,6 +62,15 @@ class IntentDetectorTest {
     }
 
     @Test
+    void shouldNotFalsePositiveOnPraiseWord() {
+        // "不错"（称赞）不含明确拒绝短语 → 不触发 REJECT
+        assertThat(IntentDetector.detect("不错", true)).isNotEqualTo(Intent.REJECT);
+        // 明确的否定短语仍触发 REJECT
+        assertThat(IntentDetector.detect("不是啊", true)).isEqualTo(Intent.REJECT);
+        assertThat(IntentDetector.detect("不要了", true)).isEqualTo(Intent.REJECT);
+    }
+
+    @Test
     void shouldReturnNoneForBlank() {
         assertThat(IntentDetector.detect(null, true)).isEqualTo(Intent.NONE);
         assertThat(IntentDetector.detect("", false)).isEqualTo(Intent.NONE);

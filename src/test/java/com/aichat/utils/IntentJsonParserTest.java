@@ -68,4 +68,13 @@ class IntentJsonParserTest {
         Parsed p = IntentJsonParser.parse("{\"memories\":[],\"tasks\":[]}");
         assertThat(p.isEmpty()).isTrue();
     }
+
+    @Test
+    void shouldParseSpaceSeparatedDateTime() {
+        // LLM 常见变体：空格分隔的 dueAt 也能解析
+        String json = "{\"tasks\":[{\"title\":\"交作业\",\"dueAt\":\"2026-11-03 09:00:00\"}]}";
+        Parsed p = IntentJsonParser.parse(json);
+        assertThat(p.tasks.get(0).getDueAt()).isEqualTo(
+                java.time.LocalDateTime.of(2026, 11, 3, 9, 0, 0));
+    }
 }
