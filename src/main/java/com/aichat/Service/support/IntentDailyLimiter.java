@@ -1,4 +1,4 @@
-package com.aichat.Service;
+package com.aichat.Service.support;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -19,6 +19,8 @@ import com.aichat.Config.MindButlerProperties;
  *
  * 优先 Redis（多实例一致，key 按 user+日期，TTL 2 天）；Redis 不可用时降级到进程内计数。
  * `app.mindbutler.intent.daily-limit <= 0` 表示不限。
+ *
+ * 放在 Service.support 而不是 Service 根包：Service 根包只放接口，避免“接口和组件混在一起”。
  */
 @Component
 public class IntentDailyLimiter {

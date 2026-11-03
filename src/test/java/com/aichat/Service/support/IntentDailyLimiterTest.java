@@ -1,4 +1,4 @@
-package com.aichat.Service;
+package com.aichat.Service.support;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

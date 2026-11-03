@@ -16,6 +16,7 @@ import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.ConfirmResult;
 import com.aichat.Dto.CompleteTaskRequest;
 import com.aichat.Dto.CreateMemoryRequest;
+import com.aichat.Dto.IntentExtractionResult;
 import com.aichat.Dto.MemoryCandidate;
 import com.aichat.Dto.MemoryVO;
 import com.aichat.Dto.PendingActionVO;
@@ -131,7 +132,7 @@ class MindButlerFlowIntegrationTest {
     void shouldExpireOldPendingWhenCreatingNewOne() {
         // 同一 session 连建两条 pending → 旧的那条应被置 expired（pending_slot 唯一键兜底）
         when(intentExtractor.extract(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new com.aichat.utils.IntentJsonParser.Parsed(
+                .thenReturn(new IntentExtractionResult(
                         List.of(mem("style", "简洁", "stable", 0.9, null)), List.of()));
 
         // 直接调 create 两次模拟"新意图替换旧 pending"（IntentService 走同一条路径）
@@ -161,7 +162,7 @@ class MindButlerFlowIntegrationTest {
 
         // 提取器产出"替换旧记忆"的候选
         when(intentExtractor.extract(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new com.aichat.utils.IntentJsonParser.Parsed(
+                .thenReturn(new IntentExtractionResult(
                         List.of(mem("style", "简洁", "stable", 0.9, oldMem.getId())), List.of()));
 
         long pid = pendingActionService.create(sessionId, "memory",
@@ -225,7 +226,7 @@ class MindButlerFlowIntegrationTest {
         String dueAt = java.time.LocalDateTime.now().plusDays(1).withHour(9).withMinute(0).withSecond(0).withNano(0)
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
         when(intentExtractor.extract(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new com.aichat.utils.IntentJsonParser.Parsed(
+                .thenReturn(new IntentExtractionResult(
                         List.of(), List.of(task("每天打卡", dueAt, "daily"))));
 
         long pid = pendingActionService.create(sessionId, "task",
@@ -251,7 +252,7 @@ class MindButlerFlowIntegrationTest {
     @Test
     void shouldRejectIdempotently() {
         when(intentExtractor.extract(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new com.aichat.utils.IntentJsonParser.Parsed(
+                .thenReturn(new IntentExtractionResult(
                         List.of(mem("goal", "上线 P1", "dynamic", 0.7, null)), List.of()));
         long pid = pendingActionService.create(sessionId, "memory",
                 buildPayload(List.of(mem("goal", "上线 P1", "dynamic", 0.7, null)), List.of()), null);
@@ -267,7 +268,7 @@ class MindButlerFlowIntegrationTest {
     void shouldReturn409WhenPendingExpired() {
         // 直接把一条 pending 的 expires_at 调到过去，模拟"懒过期"
         when(intentExtractor.extract(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new com.aichat.utils.IntentJsonParser.Parsed(
+                .thenReturn(new IntentExtractionResult(
                         List.of(mem("style", "简洁", "stable", 0.9, null)), List.of()));
         long pid = pendingActionService.create(sessionId, "memory",
                 buildPayload(List.of(mem("style", "简洁", "stable", 0.9, null)), List.of()), null);
@@ -285,7 +286,7 @@ class MindButlerFlowIntegrationTest {
     void shouldIsolateCrossUser() {
         // 本用户建 pending
         when(intentExtractor.extract(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new com.aichat.utils.IntentJsonParser.Parsed(
+                .thenReturn(new IntentExtractionResult(
                         List.of(mem("style", "简洁", "stable", 0.9, null)), List.of()));
         long pid = pendingActionService.create(sessionId, "memory",
                 buildPayload(List.of(mem("style", "简洁", "stable", 0.9, null)), List.of()), null);

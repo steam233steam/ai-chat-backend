@@ -3,6 +3,7 @@ package com.aichat.utils;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.aichat.Dto.IntentExtractionResult;
 import com.aichat.Dto.MemoryCandidate;
 import com.aichat.Dto.TaskCandidate;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -18,47 +19,32 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * }
  *
  * 解析策略（失败降级，v3 9.5）：
- * - 顶层不是对象 / 缺字段 → 空列表（交给 IntentService 走兜底文案）
+ * - 顶层不是对象 / 缺字段 → 空结果（交给 IntentService 走兜底文案）
  * - 单条候选 key/value/title 缺失 → 跳过该条，不阻断其它条
  * - 因 LLM 偶尔会输出 ```json 围栏或前后缀，先剥离再解析
- * - 全程不抛异常；解析失败一律按空处理并打 warn
+ * - 全程不抛异常；解析失败一律按空处理
  */
 public final class IntentJsonParser {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** 解析结果：memories + tasks（都可能是空列表）。 */
-    public static class Parsed {
-        public final List<MemoryCandidate> memories;
-        public final List<TaskCandidate> tasks;
-
-        public Parsed(List<MemoryCandidate> memories, List<TaskCandidate> tasks) {
-            this.memories = memories;
-            this.tasks = tasks;
-        }
-
-        public boolean isEmpty() {
-            return memories.isEmpty() && tasks.isEmpty();
-        }
-    }
-
     private IntentJsonParser() {
     }
 
-    public static Parsed parse(String raw) {
+    public static IntentExtractionResult parse(String raw) {
         List<MemoryCandidate> memories = new ArrayList<>();
         List<TaskCandidate> tasks = new ArrayList<>();
         if (raw == null || raw.isBlank()) {
-            return new Parsed(memories, tasks);
+            return new IntentExtractionResult(memories, tasks);
         }
         try {
             JsonNode root = MAPPER.readTree(stripFence(raw));
             parseMemories(root, memories);
             parseTasks(root, tasks);
         } catch (Exception e) {
-            // LLM 输出不稳定：解析失败按"什么都没提取到"处理，不抛异常阻断聊天
+            // LLM 输出不稳定：解析失败按“什么都没提取到”处理，不抛异常阻断聊天
         }
-        return new Parsed(memories, tasks);
+        return new IntentExtractionResult(memories, tasks);
     }
 
     private static void parseMemories(JsonNode root, List<MemoryCandidate> out) {

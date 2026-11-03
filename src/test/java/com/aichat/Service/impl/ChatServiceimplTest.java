@@ -87,7 +87,7 @@ class ChatServiceimplTest {
 
         // M3 意图服务：mock 一个"无意图"的实现，让测试聚焦聊天路径（意图拦截另有专测）
         intentService = mock(com.aichat.Service.IntentService.class);
-        when(intentService.handle(anyString(), anyString(), any())).thenReturn(com.aichat.Service.IntentOutcome.chat());
+        when(intentService.handle(anyString(), anyString(), any())).thenReturn(com.aichat.Dto.IntentOutcome.chat());
 
         service = new ChatServiceimpl();
         ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
@@ -369,7 +369,7 @@ class ChatServiceimplTest {
         when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
         // IntentService 返回"已提取出候选并写了 pending"（非 chat）
         when(intentService.handle(eq("s1"), eq("明天 9 点交作业"), any()))
-                .thenReturn(com.aichat.Service.IntentOutcome.extracted("我识别到 1 个任务，确认吗？"));
+                .thenReturn(com.aichat.Dto.IntentOutcome.extracted("我识别到 1 个任务，确认吗？"));
 
         String answer = service.sendSession("s1", new UserMessage("明天 9 点交作业"), null);
 
@@ -386,7 +386,7 @@ class ChatServiceimplTest {
         when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
         ConfirmResult cr = new ConfirmResult(false, List.of(), List.of());
         when(intentService.handle(eq("s1"), eq("对"), any()))
-                .thenReturn(com.aichat.Service.IntentOutcome.confirmed(cr, "已为你保存 1 条。"));
+                .thenReturn(com.aichat.Dto.IntentOutcome.confirmed(cr, "已为你保存 1 条。"));
 
         String answer = service.sendSession("s1", new UserMessage("对"), null);
 

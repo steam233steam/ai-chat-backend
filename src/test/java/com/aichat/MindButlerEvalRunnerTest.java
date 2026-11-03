@@ -19,16 +19,15 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import com.aichat.Dto.IntentExtractionResult;
+import com.aichat.Dto.IntentOutcome;
 import com.aichat.Dto.MemoryCandidate;
 import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
 import com.aichat.Entity.ChatMessage;
 import com.aichat.Mapper.ChatMessageMapper;
-import com.aichat.Service.IntentOutcome;
 import com.aichat.Service.IntentService;
 import com.aichat.utils.IntentDetector;
-import com.aichat.utils.IntentJsonParser;
-import com.aichat.utils.IntentJsonParser.Parsed;
 import com.aichat.utils.UserHolder;
 
 /**
@@ -127,7 +126,7 @@ class MindButlerEvalRunnerTest {
             // 桩模式：把期望 JSON 喂给提取器；真模型：不 stub，让真实 LLM 出候选
             if (!realModel) {
                 when(intentExtractor.extract(any(IntentDetector.Intent.class), anyString()))
-                        .thenReturn(buildParsed(c));
+                        .thenReturn(buildIntentExtractionResult(c));
             }
 
             IntentOutcome outcome = intentService.handle(session, c.input, sourceMessageId);
@@ -140,9 +139,9 @@ class MindButlerEvalRunnerTest {
             }
             report.add(String.format("[%s] #%d %s → %s",
                     ok ? "OK" : "MISS", c.id, c.type,
-                    outcome.extracted ? "提取出候选(写pending)"
-                            : outcome.shouldConfirm ? "确认"
-                            : outcome.shouldReject ? "拒绝"
+                    outcome.isExtracted() ? "提取出候选(写pending)"
+                            : outcome.isConfirmed() ? "确认"
+                            : outcome.isRejected() ? "拒绝"
                             : "走正常聊天/兜底"));
         }
 
@@ -172,7 +171,7 @@ class MindButlerEvalRunnerTest {
         switch (c.type) {
             case "memory", "task", "mixed" -> {
                 // 应提取出候选并写 pending
-                if (!outcome.extracted) {
+                if (!outcome.isExtracted()) {
                     return false;
                 }
                 // pending 里应有对应候选，确认后才落库
@@ -186,20 +185,20 @@ class MindButlerEvalRunnerTest {
                 return true;
             }
             case "none" -> {
-                // 普通聊天：不应写 pending（shouldExtract=true 走正常聊天）
-                return outcome.shouldExtract;
+                // 普通聊天：不应写 pending（shouldContinueChat=true 走正常聊天）
+                return outcome.shouldContinueChat();
             }
             case "reject_sensitive" -> {
                 // 敏感信息：提取链路存在，但候选应被过滤（无 pending 落库）
-                return !outcome.extracted;
+                return !outcome.isExtracted();
             }
             case "confirm" -> {
                 // 确认词但无 pending → 走正常聊天（不当成确认）
-                return outcome.shouldExtract;
+                return outcome.shouldContinueChat();
             }
             case "reject" -> {
                 // 拒绝词但无 pending → 走正常聊天
-                return outcome.shouldExtract;
+                return outcome.shouldContinueChat();
             }
             default -> {
                 return false;
@@ -249,8 +248,8 @@ class MindButlerEvalRunnerTest {
         }
     }
 
-    /** 把期望 JSON 构造成 Parsed（桩模式给提取器用）。 */
-    private Parsed buildParsed(EvalCase c) {
+    /** 把期望 JSON 构造成 IntentExtractionResult（桩模式给提取器用）。 */
+    private IntentExtractionResult buildIntentExtractionResult(EvalCase c) {
         List<MemoryCandidate> memories = new ArrayList<>();
         List<TaskCandidate> tasks = new ArrayList<>();
         switch (c.type) {
@@ -284,7 +283,7 @@ class MindButlerEvalRunnerTest {
                 // none / reject / confirm / reject_sensitive：候选留空
             }
         }
-        return new Parsed(memories, tasks);
+        return new IntentExtractionResult(memories, tasks);
     }
 
     private Long insertMessage(String content, String session) {

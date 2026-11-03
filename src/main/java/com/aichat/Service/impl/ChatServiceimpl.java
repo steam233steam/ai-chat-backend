@@ -18,13 +18,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.aichat.Config.ModelRouter;
+import com.aichat.Dto.IntentOutcome;
 import com.aichat.Dto.SMessage;
 import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatService;
 import com.aichat.Service.ChatTitleService;
-import com.aichat.Service.IntentOutcome;
 import com.aichat.Service.IntentService;
 import com.aichat.utils.ChatHistoryBuilder;
 import com.aichat.utils.ModelOutputSanitizer;
@@ -85,8 +85,8 @@ public class ChatServiceimpl implements ChatService {
         // M3 意图拦截（同步/流式同一套顺序，v3 4.5）：命中意图直接返回确认/结果文案，不再调聊天模型
         IntentOutcome outcome = interceptIntent(userId, sessionid, question, sourceMessageId);
         if (outcome != null) {
-            chatSessionRepository.save(userId, sessionid, new AssistantMessage(outcome.reply), model);
-            return outcome.reply;
+            chatSessionRepository.save(userId, sessionid, new AssistantMessage(outcome.getReply()), model);
+            return outcome.getReply();
         }
 
         try {
@@ -173,8 +173,8 @@ public class ChatServiceimpl implements ChatService {
         // M3 意图拦截（流式与同步同一套顺序，v3 4.5）：命中意图时只发一条 data 事件后结束，不走模型流
         IntentOutcome outcome = interceptIntent(userId, sessionid, question, streamSourceMessageId);
         if (outcome != null) {
-            saveAssistantReply(userId, sessionid, outcome.reply, model);
-            return Flux.just(outcome.reply);
+            saveAssistantReply(userId, sessionid, outcome.getReply(), model);
+            return Flux.just(outcome.getReply());
         }
 
         StringBuilder fullResponse = new StringBuilder();
@@ -211,13 +211,13 @@ public class ChatServiceimpl implements ChatService {
     }
 
     /**
-     * M3 意图拦截（v3 4.5）：命中意图时直接返回文案；shouldExtract=true 表示走正常聊天模型。
+     * M3 意图拦截（v3 4.5）：命中意图时直接返回文案；shouldContinueChat=true 表示走正常聊天模型。
      * 失败（LLM 不可用/DB 异常）一律降级到正常聊天（chat()），不 500、不污染上下文。
      */
     private IntentOutcome interceptIntent(String userId, String sessionid, String question, Long sourceMessageId) {
         try {
             IntentOutcome outcome = intentService.handle(sessionid, question, sourceMessageId);
-            if (outcome.shouldExtract) {
+            if (outcome.shouldContinueChat()) {
                 return null; // 无意图，走正常聊天
             }
             return outcome;

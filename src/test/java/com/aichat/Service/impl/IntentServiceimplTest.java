@@ -20,18 +20,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.ConfirmResult;
+import com.aichat.Dto.IntentExtractionResult;
+import com.aichat.Dto.IntentOutcome;
 import com.aichat.Dto.MemoryCandidate;
 import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
 import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
-import com.aichat.Service.IntentDailyLimiter;
+import com.aichat.Service.support.IntentCandidateSanitizer;
+import com.aichat.Service.support.IntentDailyLimiter;
 import com.aichat.Service.IntentExtractor;
-import com.aichat.Service.IntentOutcome;
 import com.aichat.Service.PendingActionService;
 import com.aichat.utils.IntentDetector.Intent;
-import com.aichat.utils.IntentJsonParser;
-import com.aichat.utils.IntentJsonParser.Parsed;
 import com.aichat.utils.SensitiveContentFilter;
 import com.aichat.utils.UserHolder;
 
@@ -44,6 +44,7 @@ class IntentServiceimplTest {
     private PendingActionService pendingActionService;
     private IntentExtractor intentExtractor;
     private IntentDailyLimiter intentDailyLimiter;
+    private IntentCandidateSanitizer candidateSanitizer;
     private MindButlerProperties props;
     private IntentServiceimpl service;
 
@@ -59,6 +60,8 @@ class IntentServiceimplTest {
         ReflectionTestUtils.setField(service, "pendingActionService", pendingActionService);
         ReflectionTestUtils.setField(service, "intentExtractor", intentExtractor);
         ReflectionTestUtils.setField(service, "intentDailyLimiter", intentDailyLimiter);
+        candidateSanitizer = new IntentCandidateSanitizer(props);
+        ReflectionTestUtils.setField(service, "candidateSanitizer", candidateSanitizer);
         ReflectionTestUtils.setField(service, "props", props);
         UserDto user = new UserDto();
         user.setId("USER_ID_TEST");
@@ -70,14 +73,14 @@ class IntentServiceimplTest {
         UserHolder.removeUser();
     }
 
-    private Parsed memoryOnly() {
-        return new Parsed(
+    private IntentExtractionResult memoryOnly() {
+        return new IntentExtractionResult(
                 List.of(new MemoryCandidate("style", "简洁", "stable", 0.9, null)),
                 List.of());
     }
 
-    private Parsed taskOnly() {
-        return new Parsed(
+    private IntentExtractionResult taskOnly() {
+        return new IntentExtractionResult(
                 List.of(),
                 List.of(new TaskCandidate("create", "交作业", null, "Asia/Shanghai", "once", null)));
     }
@@ -88,7 +91,7 @@ class IntentServiceimplTest {
     void shouldSkipWhenDisabled() {
         props.setEnabled(false);
         IntentOutcome o = service.handle("s-1", "记住我喜欢简洁", 1L);
-        assertThat(o.shouldExtract).isTrue();
+        assertThat(o.shouldContinueChat()).isTrue();
         verify(pendingActionService, never()).current(anyString());
     }
 
@@ -98,7 +101,7 @@ class IntentServiceimplTest {
     void shouldSkipWhenIntentDisabled() {
         props.setIntentEnabled(false);
         IntentOutcome o = service.handle("s-1", "记住我喜欢简洁", 1L);
-        assertThat(o.shouldExtract).isTrue();
+        assertThat(o.shouldContinueChat()).isTrue();
         verify(pendingActionService, never()).current(anyString());
     }
 
@@ -108,7 +111,7 @@ class IntentServiceimplTest {
         // 这里用真正无触发词的普通聊天验证直接走 chat 分支
         when(pendingActionService.current("s-1")).thenReturn(null);
         IntentOutcome o = service.handle("s-1", "随便聊聊", 1L);
-        assertThat(o.shouldExtract).isTrue();
+        assertThat(o.shouldContinueChat()).isTrue();
         verify(intentExtractor, never()).extract(any(), anyString());
     }
 
@@ -117,12 +120,12 @@ class IntentServiceimplTest {
         // 命中触发词但提取器空候选 → 固定兜底，不调聊天模型（v3 8.4）
         when(pendingActionService.current("s-1")).thenReturn(null);
         when(intentExtractor.extract(eq(Intent.TASK), eq("提醒我今天天气不错"))).thenReturn(
-                new Parsed(List.of(), List.of()));
+                new IntentExtractionResult(List.of(), List.of()));
 
         IntentOutcome o = service.handle("s-1", "提醒我今天天气不错", 2L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("没识别出");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("没识别出");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
@@ -133,8 +136,8 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "记住我喜欢简洁", 2L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("次数");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("次数");
         verify(intentExtractor, never()).extract(any(), anyString());
     }
 
@@ -147,8 +150,8 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "记住我喜欢简洁", 3L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("冲突");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("冲突");
     }
 
     // ---------- 提取 → 写 pending → 确认文案 ----------
@@ -161,9 +164,9 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "记住我喜欢简洁", 7L);
 
-        assertThat(o.extracted).isTrue();
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("记忆");
+        assertThat(o.isExtracted()).isTrue();
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("记忆");
         verify(pendingActionService).create(eq("s-1"), eq("memory"), anyString(), eq(7L));
     }
 
@@ -175,8 +178,8 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "明天 9 点交作业", 8L);
 
-        assertThat(o.extracted).isTrue();
-        assertThat(o.reply).contains("任务");
+        assertThat(o.isExtracted()).isTrue();
+        assertThat(o.getReply()).contains("任务");
         verify(pendingActionService).create(eq("s-1"), eq("task"), anyString(), eq(8L));
     }
 
@@ -184,12 +187,12 @@ class IntentServiceimplTest {
     void shouldDescendToChatWhenExtractionEmpty() {
         when(pendingActionService.current("s-1")).thenReturn(null);
         when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(
-                new Parsed(List.of(), List.of()));
+                new IntentExtractionResult(List.of(), List.of()));
 
         IntentOutcome o = service.handle("s-1", "随便记住点啥", 9L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("没识别出");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("没识别出");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
@@ -197,7 +200,7 @@ class IntentServiceimplTest {
     void shouldFilterSensitiveMemoryCandidates() {
         when(pendingActionService.current("s-1")).thenReturn(null);
         // 记忆值含密码特征 → 被 SensitiveContentFilter 拦下，候选全空 → 降级聊天
-        Parsed withSensitive = new Parsed(
+        IntentExtractionResult withSensitive = new IntentExtractionResult(
                 List.of(new MemoryCandidate("goal", "我的密码是 abc123", "dynamic", 0.5, null)),
                 List.of());
         when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(withSensitive);
@@ -205,8 +208,8 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "记住我的密码", 10L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("没识别出");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("没识别出");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
@@ -214,30 +217,30 @@ class IntentServiceimplTest {
     void shouldFilterInvalidMemoryKey() {
         when(pendingActionService.current("s-1")).thenReturn(null);
         // key 不在 MemoryKey 枚举里 → 丢弃
-        Parsed badKey = new Parsed(
+        IntentExtractionResult badKey = new IntentExtractionResult(
                 List.of(new MemoryCandidate("tech", "用 Java", "stable", 0.8, null)),
                 List.of());
         when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(badKey);
 
         IntentOutcome o = service.handle("s-1", "记住我用 Java", 11L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("没识别出");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("没识别出");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
     @Test
     void shouldSkipNonCreateTaskCandidate() {
         when(pendingActionService.current("s-1")).thenReturn(null);
-        Parsed upd = new Parsed(
+        IntentExtractionResult upd = new IntentExtractionResult(
                 List.of(),
                 List.of(new TaskCandidate("update", "改标题", null, "Asia/Shanghai", "once", null)));
         when(intentExtractor.extract(eq(Intent.TASK), anyString())).thenReturn(upd);
 
         IntentOutcome o = service.handle("s-1", "把任务改个名", 12L);
 
-        assertThat(o.shouldExtract).isFalse(); // P1 只允许 create，全部丢弃后固定兜底
-        assertThat(o.reply).contains("没识别出");
+        assertThat(o.shouldContinueChat()).isFalse(); // P1 只允许 create，全部丢弃后固定兜底
+        assertThat(o.getReply()).contains("没识别出");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
@@ -248,12 +251,12 @@ class IntentServiceimplTest {
                 java.time.LocalDateTime.of(2026, 11, 3, 9, 0),
                 "Asia/Shanghai", "once", null);
         when(intentExtractor.extract(eq(Intent.TASK), anyString()))
-                .thenReturn(new Parsed(List.of(), List.of(task)));
+                .thenReturn(new IntentExtractionResult(List.of(), List.of(task)));
         when(pendingActionService.create(eq("s-1"), eq("task"), anyString(), eq(8L))).thenReturn(12L);
 
         IntentOutcome o = service.handle("s-1", "明天 9 点交作业", 8L);
 
-        assertThat(o.reply).contains("交作业", "2026-11-03", "周二", "09:00", "单次");
+        assertThat(o.getReply()).contains("交作业", "2026-11-03", "周二", "09:00", "单次");
     }
 
     @Test
@@ -262,12 +265,12 @@ class IntentServiceimplTest {
         TaskCandidate bad = new TaskCandidate("create", "每周一交报告",
                 java.time.LocalDateTime.now().plusDays(7), "Asia/Shanghai", "weekly", null);
         when(intentExtractor.extract(eq(Intent.TASK), anyString()))
-                .thenReturn(new Parsed(List.of(), List.of(bad)));
+                .thenReturn(new IntentExtractionResult(List.of(), List.of(bad)));
 
         IntentOutcome o = service.handle("s-1", "每周一交报告", 9L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("没识别出");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("没识别出");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
@@ -275,7 +278,7 @@ class IntentServiceimplTest {
     void shouldCapMemoryCandidatesAtConfiguredMax() {
         props.setIntentMaxMemories(1);
         when(pendingActionService.current("s-1")).thenReturn(null);
-        when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(new Parsed(
+        when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(new IntentExtractionResult(
                 List.of(new MemoryCandidate("style", "第一条", "stable", 0.9, null),
                         new MemoryCandidate("goal", "第二条", "stable", 0.9, null)),
                 List.of()));
@@ -301,8 +304,8 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "对", 13L);
 
-        assertThat(o.shouldConfirm).isTrue();
-        assertThat(o.reply).isNotNull();
+        assertThat(o.isConfirmed()).isTrue();
+        assertThat(o.getReply()).isNotNull();
         verify(pendingActionService).confirm(99L);
         verify(pendingActionService, never()).reject(anyLong());
     }
@@ -318,8 +321,8 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "对", 16L);
 
-        assertThat(o.shouldExtract).isFalse();
-        assertThat(o.reply).contains("过期");
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("过期");
     }
 
     @Test
@@ -343,7 +346,7 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "对", 17L);
 
-        assertThat(o.reply).contains("风格=简洁", "交作业", "2026-11-03", "09:00", "单次");
+        assertThat(o.getReply()).contains("风格=简洁", "交作业", "2026-11-03", "09:00", "单次");
     }
 
     @Test
@@ -355,7 +358,7 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "取消", 14L);
 
-        assertThat(o.shouldReject).isTrue();
+        assertThat(o.isRejected()).isTrue();
         verify(pendingActionService).reject(99L);
     }
 
@@ -365,7 +368,7 @@ class IntentServiceimplTest {
         when(pendingActionService.current("s-1")).thenReturn(null);
         IntentOutcome o = service.handle("s-1", "对", 15L);
         // "对" 无 pending 时 detect=NONE → 走聊天
-        assertThat(o.shouldExtract).isTrue();
+        assertThat(o.shouldContinueChat()).isTrue();
         verify(pendingActionService, never()).confirm(anyLong());
     }
 }

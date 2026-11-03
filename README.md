@@ -218,6 +218,7 @@ mvn test -Dtest=FullFlowIntegrationTest
 - `docs/MindButler-P1设计.md` — MindButler P1 建设设计（长期记忆 + 口语化任务 + 确认状态机）
 - `docs/migration/2026-11-02-mindbutler-p1.sql` — MindButler P1 三表迁移脚本
 - `docs/P1-上线验收清单.md` — 后端上线范围、配置、人工验收用例与回滚说明
+- `docs/P1-代码结构.md` — P1 包职责、意图链路类图与复盘顺序
 - `docs/eval/mindbutler-intent-eval.json` — 口语意图提取评测集（40 条，M4 验收指标）
 - `docs/聊天持久化设计.md` — 持久化、缓存一致性与面试讲点
 - `docs/DEVELOPMENT_PLAN.md` — 后续开发与求职准备计划

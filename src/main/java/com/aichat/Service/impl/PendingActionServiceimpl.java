@@ -30,10 +30,8 @@ import com.aichat.Mapper.PendingActionMapper;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.PendingActionService;
 import com.aichat.Service.TaskService;
+import com.aichat.utils.IntentPayloadCodec;
 import com.aichat.utils.UserHolder;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 @Service
 public class PendingActionServiceimpl implements PendingActionService {
@@ -50,7 +48,6 @@ public class PendingActionServiceimpl implements PendingActionService {
     @Autowired
     private Clock clock;
 
-    private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     @Override
     @Transactional
@@ -182,7 +179,7 @@ public class PendingActionServiceimpl implements PendingActionService {
 
     private List<Map<String, Object>> applyMemories(PendingAction action) {
         List<Map<String, Object>> results = new ArrayList<>();
-        List<MemoryCandidate> memories = parseCandidates(action.getPayload(), "memories",
+        List<MemoryCandidate> memories = IntentPayloadCodec.parseCandidates(action.getPayload(), "memories",
                 MemoryCandidate.class);
         for (MemoryCandidate c : memories) {
             if (c == null || c.getKey() == null || c.getValue() == null) {
@@ -203,7 +200,7 @@ public class PendingActionServiceimpl implements PendingActionService {
 
     private List<Map<String, Object>> applyTasks(PendingAction action) {
         List<Map<String, Object>> results = new ArrayList<>();
-        List<TaskCandidate> tasks = parseCandidates(action.getPayload(), "tasks",
+        List<TaskCandidate> tasks = IntentPayloadCodec.parseCandidates(action.getPayload(), "tasks",
                 TaskCandidate.class);
         for (TaskCandidate c : tasks) {
             if (c == null || c.getTitle() == null) {
@@ -232,35 +229,16 @@ public class PendingActionServiceimpl implements PendingActionService {
         return results;
     }
 
-    /** 从 payload JSON 的指定数组字段解析候选列表（解析失败返回空，不抛）。 */
-    private <T> List<T> parseCandidates(String payload, String field, Class<T> type) {
-        List<T> list = new ArrayList<>();
-        if (payload == null || payload.isBlank()) {
-            return list;
-        }
-        try {
-            JsonNode root = objectMapper.readTree(payload);
-            JsonNode arr = root.get(field);
-            if (arr == null || !arr.isArray()) {
-                return list;
-            }
-            for (JsonNode node : arr) {
-                list.add(objectMapper.convertValue(node, type));
-            }
-        } catch (Exception e) {
-            log.warn("解析 pending payload 失败，按空处理: {}", e.getMessage());
-        }
-        return list;
-    }
-
     private PendingActionVO toVO(PendingAction action, LocalDateTime now) {
         PendingActionVO vo = new PendingActionVO();
         vo.setId(action.getId());
         vo.setActionType(action.getActionType());
         vo.setStatus(action.getStatus());
         vo.setExpiresAt(action.getExpiresAt());
-        vo.setMemories(parseCandidates(action.getPayload(), "memories", MemoryCandidate.class));
-        vo.setTasks(parseCandidates(action.getPayload(), "tasks", TaskCandidate.class));
+        vo.setMemories(IntentPayloadCodec.parseCandidates(
+                action.getPayload(), "memories", MemoryCandidate.class));
+        vo.setTasks(IntentPayloadCodec.parseCandidates(
+                action.getPayload(), "tasks", TaskCandidate.class));
         vo.setPreview(buildPreview(vo.getMemories(), vo.getTasks()));
         return vo;
     }
