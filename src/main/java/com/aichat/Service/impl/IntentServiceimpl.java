@@ -19,11 +19,14 @@ import com.aichat.Exception.BusinessException;
 import com.aichat.Service.IntentExtractor;
 import com.aichat.Service.IntentService;
 import com.aichat.Service.PendingActionService;
+import com.aichat.Service.MemoryService;
+import com.aichat.Service.TaskService;
 import com.aichat.Service.support.IntentCandidateSanitizer;
 import com.aichat.Service.support.IntentDailyLimiter;
 import com.aichat.utils.IntentDetector;
 import com.aichat.utils.IntentDetector.Intent;
 import com.aichat.utils.IntentPayloadCodec;
+import com.aichat.utils.IntentQueryReplyBuilder;
 import com.aichat.utils.IntentReplyFormatter;
 import com.aichat.utils.MbMarkers;
 import com.aichat.utils.SensitiveContentFilter;
@@ -65,6 +68,13 @@ public class IntentServiceimpl implements IntentService {
     private IntentDailyLimiter intentDailyLimiter;
     @Autowired
     private MindButlerProperties props;
+    @Autowired
+    private TaskService taskService;
+    @Autowired
+    private MemoryService memoryService;
+
+    /** QUERY 回复里最多展示的任务/记忆条数（超出提示"列表里翻看"）。 */
+    private static final int QUERY_SHOW_LIMIT = 10;
 
     @Override
     public IntentOutcome handle(String sessionId, String message, Long sourceMessageId) {
@@ -83,8 +93,38 @@ public class IntentServiceimpl implements IntentService {
             case REJECT -> reject(pending);
             case UPDATE -> update(pending);
             case NO_PENDING -> IntentOutcome.replyOnly(NO_PENDING_FALLBACK);
+            case QUERY -> query(message);
             case MEMORY, TASK -> extract(intent, sessionId, message, sourceMessageId);
         };
+    }
+
+    // ---------- 查询 → 读已有数据 → 自然文案（不走 LLM，确定性回答） ----------
+
+    /**
+     * 查询意图：直接读当前用户的任务/记忆数据回答，不调 LLM。
+     * - 问任务（"我有哪些任务/待办/日程"）→ 列 pending + done + 到期标记
+     * - 问记忆（"你记住了我什么"）→ 列 active 记忆
+     * 没有数据时明确说"还没有"，不再走"没识别出"兜底。
+     */
+    private IntentOutcome query(String message) {
+        if (isMemoryQuery(message)) {
+            List<com.aichat.Dto.MemoryVO> memories = memoryService.list(props.getMemoryInjectMaxStable()
+                    + props.getMemoryInjectMaxDynamic());
+            memories = memories.stream().filter(m -> "active".equals(m.getStatus())).toList();
+            return IntentOutcome.replyOnly(IntentQueryReplyBuilder.buildMemoryList(memories, QUERY_SHOW_LIMIT));
+        }
+        // 默认查任务
+        List<com.aichat.Dto.TaskVO> pending = taskService.list("pending", null, QUERY_SHOW_LIMIT);
+        List<com.aichat.Dto.TaskVO> done = taskService.list("done", null, QUERY_SHOW_LIMIT);
+        List<com.aichat.Dto.TaskVO> due = taskService.due(QUERY_SHOW_LIMIT);
+        return IntentOutcome.replyOnly(
+                IntentQueryReplyBuilder.buildTaskList(pending, done, due, QUERY_SHOW_LIMIT));
+    }
+
+    /** 判断查询是问记忆还是问任务（默认任务）。 */
+    private boolean isMemoryQuery(String message) {
+        String lowered = message.toLowerCase(java.util.Locale.ROOT);
+        return lowered.contains("记忆") || lowered.contains("记住了") || lowered.contains("记得");
     }
 
     // ---------- 提取 → 校验 → 写 pending → 确认文案 ----------

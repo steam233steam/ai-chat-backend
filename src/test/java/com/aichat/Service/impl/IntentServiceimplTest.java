@@ -166,7 +166,7 @@ class IntentServiceimplTest {
 
         assertThat(o.isExtracted()).isTrue();
         assertThat(o.shouldContinueChat()).isFalse();
-        assertThat(o.getReply()).contains("记忆");
+        assertThat(o.getReply()).contains("记住", "简洁");
         // 文案尾部带 pending 标记（前端据此弹窗）
         assertThat(o.getReply()).contains("[[MB:pending=11]]");
         assertThat(o.getPendingId()).isEqualTo(11L);
@@ -182,7 +182,7 @@ class IntentServiceimplTest {
         IntentOutcome o = service.handle("s-1", "明天 9 点交作业", 8L);
 
         assertThat(o.isExtracted()).isTrue();
-        assertThat(o.getReply()).contains("任务");
+        assertThat(o.getReply()).contains("安排", "交作业");
         assertThat(o.getReply()).contains("[[MB:pending=12]]");
         assertThat(o.getPendingId()).isEqualTo(12L);
         verify(pendingActionService).create(eq("s-1"), eq("task"), anyString(), eq(8L));

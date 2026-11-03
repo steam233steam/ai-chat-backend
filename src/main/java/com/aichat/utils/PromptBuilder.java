@@ -36,12 +36,22 @@ public class PromptBuilder {
     }
 
     /**
-     * 构建本轮 system prompt。
-     *
-     * @param basePersona 基础人设（ModelRouter.SYSTEM_PROMPT）
-     * @return 含画像的完整 system 文本；无画像时只返回 basePersona
+     * 构建本轮 system prompt（全量注入，不区分会话）。
+     * 保留旧签名以兼容非会话场景；会话隔离请用 {@link #build(String, String)}。
      */
     public String build(String basePersona) {
+        return build(basePersona, null);
+    }
+
+    /**
+     * 构建本轮 system prompt（会话隔离版，P1.1）。
+     * 只注入"全局画像 + 当前会话的会话级画像"，别的会话设定的人设不会带进来。
+     *
+     * @param basePersona  基础人设（ModelRouter.SYSTEM_PROMPT）
+     * @param sessionScope 当前会话 id（P1.1 会话隔离）；null 时等价于全量注入
+     * @return 含画像的完整 system 文本；无画像时只返回 basePersona
+     */
+    public String build(String basePersona, String sessionScope) {
         // 总开关关闭时只保留手动 CRUD，不注入画像（README/API 约定）
         if (!props.isEnabled()) {
             return basePersona;
@@ -49,7 +59,7 @@ public class PromptBuilder {
         List<MemoryVO> memories;
         try {
             memories = memoryService.listForInjection(
-                    props.getMemoryInjectMaxStable(), props.getMemoryInjectMaxDynamic());
+                    props.getMemoryInjectMaxStable(), props.getMemoryInjectMaxDynamic(), sessionScope);
         } catch (Exception e) {
             // fail-open：画像查询失败不阻断聊天
             return basePersona;

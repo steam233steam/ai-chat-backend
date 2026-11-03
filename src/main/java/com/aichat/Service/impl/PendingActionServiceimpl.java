@@ -103,7 +103,7 @@ public class PendingActionServiceimpl implements PendingActionService {
         String userId = currentUserId();
         PendingAction action = pendingActionMapper.selectById(id, userId);
         if (action == null) {
-            return null; // 非本人或不存在
+            return null;
         }
         // 懒过期：pending 但已到期 → 顺手置 expired 返回 null（与 current 一致）
         LocalDateTime now = LocalDateTime.now(clock);
@@ -154,6 +154,7 @@ public class PendingActionServiceimpl implements PendingActionService {
         }
 
         // 按 payload 实际内容落库（memories + tasks，可能都为空则只确认不建）
+        // P1.1 会话隔离：记忆按候选自带的 scope 决定落库 session（session 级 = 本会话，global = 全局）
         List<Map<String, Object>> memoryResults = applyMemories(action);
         List<Map<String, Object>> taskResults = applyTasks(action);
         log.info("pending 确认: userId={}, id={}, memories={}, tasks={}",
@@ -202,9 +203,12 @@ public class PendingActionServiceimpl implements PendingActionService {
             if (c == null || c.getKey() == null || c.getValue() == null) {
                 continue; // 跳过不合法候选，不阻断其它
             }
+            // P1.1：会话级记忆（scope=session）只在本会话生效；global/缺省 = 全局画像
+            String sessionScope = "session".equals(c.getScope()) ? action.getSessionId() : null;
             MemoryVO vo = memoryService.createWithReplaces(
                     c.getKey(), c.getValue(), c.getMemType(),
-                    c.getConfidence(), c.getReplacesId(), action.getSourceMessageId());
+                    c.getConfidence(), c.getReplacesId(), action.getSourceMessageId(),
+                    sessionScope);
             Map<String, Object> r = new HashMap<>();
             r.put("id", vo.getId());
             r.put("action", "created");

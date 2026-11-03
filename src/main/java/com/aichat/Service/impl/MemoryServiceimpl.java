@@ -43,13 +43,20 @@ public class MemoryServiceimpl implements MemoryService {
 
     @Override
     public List<MemoryVO> listForInjection(int stableLimit, int dynamicLimit) {
+        return listForInjection(stableLimit, dynamicLimit, null);
+    }
+
+    @Override
+    public List<MemoryVO> listForInjection(int stableLimit, int dynamicLimit, String sessionScope) {
         String userId = currentUserId();
         LocalDateTime now = nowLocal();
         int stableLimitCap = Math.max(0, Math.min(stableLimit, 100));
         int dynamicLimitCap = Math.max(0, Math.min(dynamicLimit, 100));
 
-        List<UserMemory> stable = userMemoryMapper.selectActiveByUserAndType(userId, "stable", now, stableLimitCap);
-        List<UserMemory> dynamic = userMemoryMapper.selectActiveByUserAndType(userId, "dynamic", now, dynamicLimitCap);
+        List<UserMemory> stable = userMemoryMapper.selectActiveByUserAndType(
+                userId, "stable", now, sessionScope, stableLimitCap);
+        List<UserMemory> dynamic = userMemoryMapper.selectActiveByUserAndType(
+                userId, "dynamic", now, sessionScope, dynamicLimitCap);
 
         // stable 优先；总数受 inject-max 控制（这里由调用方传配额，M1 简化为 stable+dynamic 各 cap）
         List<MemoryVO> result = new ArrayList<>(stableLimitCap + dynamicLimitCap);
@@ -63,7 +70,7 @@ public class MemoryServiceimpl implements MemoryService {
         String userId = currentUserId();
         int cap = Math.max(1, Math.min(limit, 100));
         LocalDateTime now = nowLocal();
-        return userMemoryMapper.selectActiveByUser(userId, now, cap).stream()
+        return userMemoryMapper.selectActiveByUser(userId, now, null, cap).stream()
                 .map(m -> toVO(m, now))
                 .toList();
     }
@@ -97,7 +104,7 @@ public class MemoryServiceimpl implements MemoryService {
         rejectIfSensitive(content);
 
         // 同一用户已有完全相同的 active 内容 → 409（v3 8.1）
-        if (userMemoryMapper.selectActiveByContent(userId, content, now) != null) {
+        if (userMemoryMapper.selectActiveByContent(userId, content, now, null) != null) {
             throw new BusinessException(409, "已存在相同内容的记忆");
         }
         if (userMemoryMapper.countActive(userId, now) >= props.getMemoryMaxPerUser()) {
@@ -193,7 +200,7 @@ public class MemoryServiceimpl implements MemoryService {
 
     @Override
     public MemoryVO createWithReplaces(String memKey, String content, String memType,
-            Double confidence, Long replacesId, Long sourceMessageId) {
+            Double confidence, Long replacesId, Long sourceMessageId, String sessionScope) {
         String userId = currentUserId();
         LocalDateTime now = nowLocal();
         String key = normalizeMemKey(memKey);
@@ -202,7 +209,8 @@ public class MemoryServiceimpl implements MemoryService {
         rejectIfSensitive(cleanContent);
 
         // 完全相同 active 内容 → 去重，不重复插入，也不替换旧条（v3 6.3）
-        UserMemory duplicate = userMemoryMapper.selectActiveByContent(userId, cleanContent, now);
+        // 去重范围与 sessionScope 一致：会话级记忆只在同会话去重，全局记忆跨会话去重
+        UserMemory duplicate = userMemoryMapper.selectActiveByContent(userId, cleanContent, now, sessionScope);
         if (duplicate != null) {
             return toVO(duplicate, now);
         }
@@ -223,6 +231,7 @@ public class MemoryServiceimpl implements MemoryService {
 
         UserMemory m = new UserMemory();
         m.setUserId(userId);
+        m.setSessionId(sessionScope);
         m.setMemKey(key);
         m.setContent(cleanContent);
         m.setMemType(type);

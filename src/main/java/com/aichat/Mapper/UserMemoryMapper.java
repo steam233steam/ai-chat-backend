@@ -16,45 +16,56 @@ import com.aichat.Entity.UserMemory;
 public interface UserMemoryMapper {
 
     // 插入一条记忆，自增 id 回填；create_time/update_time 由库默认值生成
-    @Insert("INSERT INTO tb_user_memory(user_id, mem_key, content, mem_type, status, confidence, " +
+    // session_id：NULL=全局画像；有值=仅该会话生效（P1.1 会话隔离）
+    @Insert("INSERT INTO tb_user_memory(user_id, session_id, mem_key, content, mem_type, status, confidence, " +
             "source, source_message_id, replaces_id, expires_at, version) " +
-            "VALUES(#{userId}, #{memKey}, #{content}, #{memType}, #{status}, #{confidence}, " +
+            "VALUES(#{userId}, #{sessionId}, #{memKey}, #{content}, #{memType}, #{status}, #{confidence}, " +
             "#{source}, #{sourceMessageId}, #{replacesId}, #{expiresAt}, 0)")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(UserMemory memory);
 
     // 查当前用户某条记忆（带归属校验，跨用户查不到 → 上层返回 404）
-    @Select("SELECT id, user_id, mem_key, content, mem_type, status, confidence, source, " +
+    @Select("SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
             "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
             "FROM tb_user_memory WHERE id = #{id} AND user_id = #{userId}")
     UserMemory selectById(@Param("id") long id, @Param("userId") String userId);
 
     // 列表：默认只返回 active 且未过期；stable/dynamic 分开按 confidence+update_time 排序取配额
-    @Select("SELECT id, user_id, mem_key, content, mem_type, status, confidence, source, " +
+    // 会话隔离（P1.1）：sessionScope 非空时只取"全局(NULL) + 该会话"的记忆；sessionScope=null 取全部
+    @Select("<script>" +
+            "SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
             "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' " +
             "AND (mem_type = #{memType} OR mem_type IS NULL) " +
             "AND (expires_at IS NULL OR expires_at > #{now}) " +
-            "ORDER BY confidence DESC, update_time DESC LIMIT #{limit}")
+            "<if test='sessionScope != null'> AND (session_id IS NULL OR session_id = #{sessionScope}) </if>" +
+            "ORDER BY confidence DESC, update_time DESC LIMIT #{limit}" +
+            "</script>")
     List<UserMemory> selectActiveByUserAndType(@Param("userId") String userId,
             @Param("memType") String memType,
             @Param("now") java.time.LocalDateTime now,
+            @Param("sessionScope") String sessionScope,
             @Param("limit") int limit);
 
     // 生效列表：active 且未过期，按类型/更新时间排序；limit 由上层 1-100 约束
-    @Select("SELECT id, user_id, mem_key, content, mem_type, status, confidence, source, " +
+    // 会话隔离（P1.1）：sessionScope 非空时只取"全局(NULL) + 该会话"的记忆
+    @Select("<script>" +
+            "SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
             "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' " +
             "AND (expires_at IS NULL OR expires_at > #{now}) " +
-            "ORDER BY mem_type, update_time DESC LIMIT #{limit}")
+            "<if test='sessionScope != null'> AND (session_id IS NULL OR session_id = #{sessionScope}) </if>" +
+            "ORDER BY mem_type, update_time DESC LIMIT #{limit}" +
+            "</script>")
     List<UserMemory> selectActiveByUser(@Param("userId") String userId,
             @Param("now") java.time.LocalDateTime now,
+            @Param("sessionScope") String sessionScope,
             @Param("limit") int limit);
 
     // 全量导出（含 superseded，排除 deleted），供用户查看/迁移
-    @Select("SELECT id, user_id, mem_key, content, mem_type, status, confidence, source, " +
+    @Select("SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
             "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status != 'deleted' " +
@@ -69,15 +80,20 @@ public interface UserMemoryMapper {
             @Param("now") java.time.LocalDateTime now);
 
     // 相同 active 内容去重（手动创建 409 / AI 提取不重复插入），取最近一条
-    @Select("SELECT id, user_id, mem_key, content, mem_type, status, confidence, source, " +
+    // 去重范围与 sessionScope 一致：会话级记忆只在同会话去重，全局记忆跨会话去重
+    @Select("<script>" +
+            "SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
             "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' AND content = #{content} " +
             "AND (expires_at IS NULL OR expires_at > #{now}) " +
-            "ORDER BY update_time DESC LIMIT 1")
+            "<if test='sessionScope != null'> AND (session_id IS NULL OR session_id = #{sessionScope}) </if>" +
+            "ORDER BY update_time DESC LIMIT 1" +
+            "</script>")
     UserMemory selectActiveByContent(@Param("userId") String userId,
             @Param("content") String content,
-            @Param("now") java.time.LocalDateTime now);
+            @Param("now") java.time.LocalDateTime now,
+            @Param("sessionScope") String sessionScope);
 
     // 乐观锁更新：只改 active 且未过期；version 不匹配则 0 行（上层 409）
     @Update("UPDATE tb_user_memory SET content = #{m.content}, mem_type = #{m.memType}, " +

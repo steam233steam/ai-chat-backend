@@ -10,6 +10,8 @@ public class MemoryCandidate {
     private String memType;
     private Double confidence;
     private Long replacesId;
+    /** P1.1 会话隔离：global=全局画像（缺省）；session=仅当前会话生效。由 LLM 判定。 */
+    private String scope;
 
     public MemoryCandidate() {
     }
@@ -60,5 +62,13 @@ public class MemoryCandidate {
 
     public void setReplacesId(Long replacesId) {
         this.replacesId = replacesId;
+    }
+
+    public String getScope() {
+        return scope;
+    }
+
+    public void setScope(String scope) {
+        this.scope = scope;
     }
 }

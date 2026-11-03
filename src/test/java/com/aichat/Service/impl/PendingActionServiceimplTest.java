@@ -187,7 +187,7 @@ class PendingActionServiceimplTest {
         when(mapper.selectById(9L, UID)).thenReturn(p);
         when(mapper.markConfirmed(9L, UID)).thenReturn(1);
         when(memoryService.createWithReplaces(eq("style"), eq("简洁"), eq("stable"),
-                eq(0.9), isNull(), eq(7L)))
+                eq(0.9), isNull(), eq(7L), isNull()))
                 .thenReturn(memoryVO(41L));
 
         var result = service.confirm(9L);
@@ -195,9 +195,29 @@ class PendingActionServiceimplTest {
         assertThat(result.isAlreadyConfirmed()).isFalse();
         assertThat(result.getMemories()).hasSize(1);
         assertThat(result.getTasks()).isEmpty();
+        // 缺省 scope=global → sessionScope=null（全局画像）
         verify(memoryService).createWithReplaces(eq("style"), eq("简洁"), eq("stable"),
-                eq(0.9), isNull(), eq(7L));
+                eq(0.9), isNull(), eq(7L), isNull());
         verify(taskService, never()).create(any());
+    }
+
+    @Test
+    void shouldConfirmSessionScopedMemory() {
+        // P1.1：scope=session 的候选确认时落本会话（pending 的 sessionId）
+        String payload = "{\"memories\":[{\"key\":\"style\",\"value\":\"猫娘\",\"memType\":\"stable\","
+                + "\"confidence\":0.9,\"scope\":\"session\"}]}";
+        PendingAction p = pending(9L, payload, NOW.plusMinutes(5));
+        when(mapper.selectById(9L, UID)).thenReturn(p);
+        when(mapper.markConfirmed(9L, UID)).thenReturn(1);
+        when(memoryService.createWithReplaces(eq("style"), eq("猫娘"), eq("stable"),
+                eq(0.9), isNull(), eq(7L), eq(SES)))
+                .thenReturn(memoryVO(41L));
+
+        var result = service.confirm(9L);
+
+        assertThat(result.getMemories()).hasSize(1);
+        verify(memoryService).createWithReplaces(eq("style"), eq("猫娘"), eq("stable"),
+                eq(0.9), isNull(), eq(7L), eq(SES));
     }
 
     @Test
@@ -214,7 +234,7 @@ class PendingActionServiceimplTest {
         assertThat(result.getMemories()).isEmpty();
         verify(taskService).create(any(CreateTaskRequest.class));
         verify(memoryService, never()).createWithReplaces(anyString(), anyString(),
-                anyString(), anyDouble(), anyLong(), anyLong());
+                anyString(), anyDouble(), anyLong(), anyLong(), any());
     }
 
     @Test

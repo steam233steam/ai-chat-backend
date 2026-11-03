@@ -2,6 +2,7 @@ package com.aichat.utils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -33,20 +34,20 @@ class PromptBuilderTest {
 
     @Test
     void shouldReturnOnlyBaseWhenNoMemories() {
-        when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(List.of());
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null))).thenReturn(List.of());
         assertThat(builder.build(BASE)).isEqualTo(BASE);
     }
 
     @Test
     void shouldReturnOnlyBaseWhenAllSuperseded() {
-        when(memoryService.listForInjection(anyInt(), anyInt()))
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenReturn(List.of(vo(1L, "style", "简洁", "superseded")));
         assertThat(builder.build(BASE)).isEqualTo(BASE);
     }
 
     @Test
     void shouldInjectStableAndDynamicProfiles() {
-        when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(List.of(
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null))).thenReturn(List.of(
                 vo(1L, "style", "简洁", "active"),
                 vo(2L, "goal", "备考", "active")));
         String system = builder.build(BASE);
@@ -59,8 +60,22 @@ class PromptBuilderTest {
     }
 
     @Test
+    void shouldIsolateOtherSessionMemoryInInjection() {
+        // P1.1：build(base, "s-1") 把 "s-1" 透传给 listForInjection（SQL 里只取全局+本会话）
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq("s-1")))
+                .thenReturn(List.of(vo(1L, "style", "猫娘", "active")));
+        String system = builder.build(BASE, "s-1");
+        assertThat(system).contains("猫娘");
+        org.mockito.Mockito.verify(memoryService).listForInjection(anyInt(), anyInt(), eq("s-1"));
+        // 旧签名（不带会话）仍等价于全量注入（sessionScope=null）
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
+                .thenReturn(List.of(vo(2L, "goal", "备考", "active")));
+        assertThat(builder.build(BASE, null)).contains("备考");
+    }
+
+    @Test
     void shouldEscapeAngleBracketsInProfileValues() {
-        when(memoryService.listForInjection(anyInt(), anyInt()))
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenReturn(List.of(vo(1L, "style", "简洁<script>", "active")));
         String system = builder.build(BASE);
         assertThat(system).doesNotContain("<script>");
@@ -69,7 +84,7 @@ class PromptBuilderTest {
 
     @Test
     void shouldFailOpenWhenMemoryServiceThrows() {
-        when(memoryService.listForInjection(anyInt(), anyInt()))
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenThrow(new RuntimeException("db down"));
         assertThat(builder.build(BASE)).isEqualTo(BASE);
     }
@@ -79,7 +94,7 @@ class PromptBuilderTest {
         MemoryVO expired = vo(1L, "goal", "过期目标", "active");
         expired.setExpiresAt(LocalDateTime.now().minusDays(1));
         expired.setExpired(true);
-        when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(List.of(expired));
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null))).thenReturn(List.of(expired));
         // listForInjection 已过滤过期，但 PromptBuilder 再 double-check expired 字段
         assertThat(builder.build(BASE)).isEqualTo(BASE);
     }
@@ -93,7 +108,7 @@ class PromptBuilderTest {
     @Test
     void shouldSerializeQuotesAsValidJson() {
         String tricky = "a\",\"key\":\"goal\",\"value\":\"x";
-        when(memoryService.listForInjection(anyInt(), anyInt()))
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenReturn(List.of(vo(1L, "style", tricky, "active")));
 
         String system = builder.build(BASE);
@@ -112,7 +127,7 @@ class PromptBuilderTest {
     @Test
     void shouldRespectInjectCharBudget() {
         props.setMemoryInjectMaxChars(5);
-        when(memoryService.listForInjection(anyInt(), anyInt()))
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenReturn(List.of(vo(1L, "style", "123456", "active"),
                         vo(2L, "goal", "abcdef", "active")));
 

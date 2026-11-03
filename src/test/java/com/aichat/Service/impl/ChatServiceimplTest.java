@@ -384,6 +384,27 @@ class ChatServiceimplTest {
     }
 
     @Test
+    void shouldInterceptIntentOnStreamAndKeepMarkerForPopup() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        // 前端实际走 /chat/ask-stream，命中意图时必须收到带 pendingId 的标记，
+        // 否则弹窗拿不到 id（SSE 分支与同步分支的契约要一致）
+        String markedReply = "我识别到 1 个任务，确认吗？\n[[MB:pending=88]]";
+        when(intentService.handle(eq("s1"), eq("明天 9 点交作业"), any()))
+                .thenReturn(com.aichat.Dto.IntentOutcome.extracted(markedReply, 88L));
+
+        List<String> chunks = service.sendSessionStream("s1", "明天 9 点交作业", null)
+                .collectList().block();
+
+        assertThat(chunks).containsExactly(markedReply);
+        assertThat(String.join("", chunks)).contains("[[MB:pending=88]]");
+        // 仍然只落库干净文案，历史回显不暴露机器标记
+        verify(repository, timeout(2000)).save(
+                "u1", "s1", new AssistantMessage("我识别到 1 个任务，确认吗？"), "qwen2.5-coder:7b");
+        // 命中意图时不调用聊天模型流
+        verify(requestSpec, never()).stream();
+    }
+
+    @Test
     void shouldInterceptConfirmIntent() {
         when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
         ConfirmResult cr = new ConfirmResult(false, List.of(), List.of());

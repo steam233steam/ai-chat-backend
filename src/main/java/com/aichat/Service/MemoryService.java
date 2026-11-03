@@ -18,6 +18,12 @@ public interface MemoryService {
     /** 查当前用户全部 active 且未过期记忆，按 stable/dynamic 分开配额取（stable 优先）。 */
     List<MemoryVO> listForInjection(int stableLimit, int dynamicLimit);
 
+    /**
+     * 会话隔离版注入查询（P1.1）：只取"全局(session_id=NULL) + 指定会话"的记忆。
+     * 会话 A 里设定的猫娘人设不会注入到会话 B；sessionScope=null 等价于全量。
+     */
+    List<MemoryVO> listForInjection(int stableLimit, int dynamicLimit, String sessionScope);
+
     /** 查当前用户记忆列表（含 active+superseded，排除 deleted；limit 1-100）。 */
     List<MemoryVO> list(int limit);
 
@@ -44,7 +50,9 @@ public interface MemoryService {
      * 若 replacesId 非空且属于当前用户 active 记忆，先把旧条置 superseded（同事务由调用方保证）。
      * 内容走敏感词过滤；stable 强制 expiresAt=null，dynamic 未传按 ttl。
      * 手动 CRUD 的 {@link #create} 与此分离，避免"已确认=manual"的语义混淆。
+     *
+     * @param sessionScope P1.1 会话隔离：null=全局画像；有值=仅该会话生效
      */
     MemoryVO createWithReplaces(String memKey, String content, String memType,
-            Double confidence, Long replacesId, Long sourceMessageId);
+            Double confidence, Long replacesId, Long sourceMessageId, String sessionScope);
 }

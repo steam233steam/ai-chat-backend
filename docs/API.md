@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v7.0  
-> 最后更新：2026-11-03  
+> 文档版本：v7.2
+> 最后更新：2026-11-03 19:10
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v7.0 - MindButler P1（长期记忆 `/user/memories` + 口语化任务 `/user/tasks` + 待确认动作 `/user/pending-actions`），聊天意图拦截（命中意图时返回确认文案 + pending，不继续正常聊天）
+> 变更记录：v7.2 - 前端任务确认弹窗（流式命中意图自动弹出、刷新用 current 恢复、弹窗内确认/取消）；v7.1 - 聊天文案尾部带 `[[MB:pending=N]]` 标记，新增 `GET /user/pending-actions/{id}`；存库文案已剥离标记
 
 ---
 
@@ -380,7 +380,7 @@ POST /user/code?phone=13800138000
 
 获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。回复内容经输出净化（剥安全标签）后落库。
 
-> ⭐ **意图拦截**：`POST /chat/ask` 发送前会先走 `IntentService.handle`。若命中意图（记忆/任务/确认/拒绝），只返回一条确认文案 + 写 pending，**不继续走模型聊天**；否则走正常聊天。前端需根据返回内容判断是否渲染"确认卡片"（见 4.3）。
+> ⭐ **意图拦截**：`POST /chat/ask` 发送前会先走 `IntentService.handle`。若命中意图（记忆/任务/确认/拒绝），只返回一条确认文案 + 写 pending，**不继续走模型聊天**；否则走正常聊天。前端根据返回的 pending 标记渲染"确认弹窗"（见 4.3）。
 
 - **接口地址**：`POST /chat/ask`
 - **Content-Type**：`application/x-www-form-urlencoded`
@@ -436,6 +436,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - AI 标题异步生成（不阻塞主流程），标题也走净化
 - 会话锁模型：新会话锁到本次传入的模型；已有会话若传入模型与锁定模型不一致 → 409
 - 命中意图时，`data` 是确认文案（如"已为你提取 1 条记忆 + 1 条任务，确认后生效？"），此时不产生 AI 模型回复
+- 命中"提取出新候选并写 pending"时，`data` 尾部还会带 `[[MB:pending=N]]` 机器标记；确认/拒绝/兜底分支不带标记
 
 ---
 
@@ -443,7 +444,7 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 
 使用 SSE（Server-Sent Events）流式返回 AI 回复，实现打字机效果。回复经流式安全过滤器净化后发送。
 
-> ⭐ **意图拦截**：与同步一致，命中意图时只发一条 `data` 事件（确认文案）后结束，不走模型流。
+> ⭐ **意图拦截**：与同步一致，命中意图时只发一条 `data` 事件（多行：确认文案 + `[[MB:pending=N]]` 标记）后结束，不走模型流。
 
 - **接口地址**：`GET /chat/ask-stream`
 - **Content-Type**：`text/event-stream`
@@ -489,7 +490,8 @@ data: [DONE]
 - 流式输出经 `StreamingSafetyFilter` 跨 chunk 剥 `<ds_safety>` 标签
 - 模型调用失败时兜底文案不写入历史（避免污染下一轮上下文）
 - 模型名校验失败或会话锁模型冲突时报 400/409，不会进入流式
-- 命中意图时，只发一条 `data` 事件（确认文案）后结束，不走模型流
+- 命中意图时，只发一条 `data` 事件（确认文案 + 可选 pending 标记）后结束，不走模型流
+- 前端在 SSE `onComplete` 后从完整文案提取 pendingId，再调 `GET /user/pending-actions/{id}` 拉弹窗详情
 
 ---
 
@@ -819,7 +821,7 @@ data: [DONE]
 
 ### 4.3 待确认动作 `/user/pending-actions`
 
-M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端用"确认/取消"。这里的 REST 是"确认卡片"入口（用户点确认/取消）+ 当前 pending 查询。
+M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端用"确认/取消"。这里的 REST 是"确认弹窗"入口（用户点确认/取消）+ 当前 pending 查询。
 
 #### 4.3.1 当前会话的待确认动作
 
@@ -829,7 +831,7 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 |--------|------|------|------|
 | sessionId | String | 是 | 会话 ID |
 
-没有 / 已过期返回 `data=null`；前端据此渲染确认卡片。
+没有 / 已过期返回 `data=null`；前端据此渲染确认弹窗。
 
 #### 响应示例
 
@@ -877,8 +879,11 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 | 展示 | 标记是给机器读的，前端展示文案时**剥离** `[[MB:pending=...]]` 行 |
 | 不带标记 | 普通聊天、确认/拒绝/过期/限流等所有兜底文案都**没有**标记 → 不弹窗 |
 
-> 设计取舍：带 id 是为了让前端一次 `/chat/ask` 请求就能拿到弹窗所需的全部信息（pendingId + 文案），
-> 不必再额外调一次 `current` 来解析。标记同时会随文案落库进历史（历史回显时前端同样应剥离）。
+> 设计取舍：带 id 是为了让前端一次请求就能拿到弹窗所需的关键信息（pendingId + 文案），
+> 不必再额外调一次 `current` 来解析。标记只出现在实时响应里；后端落库前会 `MbMarkers.strip` 剥离，
+> 所以历史接口不会返回标记。页面刷新/重新进入会话时，前端用 `GET /user/pending-actions/current?sessionId=` 恢复弹窗。
+>
+> 流式接口同样适用：SSE 事件的完整 data 是多行文本，前端 `SSE onComplete` 后用同一个正则提取 id 即可。
 
 #### 4.3.4 确认待确认动作
 
@@ -1302,6 +1307,20 @@ async function getAvailableModels() {
 ### 10.4 聊天流程（含会话锁模型 + 分页 + 意图拦截）
 
 ```javascript
+const API_BASE = 'http://localhost:8080';
+
+// 从文案里提取 pendingId（命中意图时文案尾部带 [[MB:pending=42]]）
+function extractPendingId(reply) {
+  if (!reply) return null;
+  const m = reply.match(/\[\[MB:pending=(\d+)\]\]/);
+  return m ? Number(m[1]) : null;
+}
+
+// 展示文案时剥离标记
+function stripMbMarker(reply) {
+  return reply?.replace(/\[\[MB:pending=\d+\]\]/g, '').trim();
+}
+
 // 发送消息（同步，带模型 + 意图拦截）
 async function sendMessage(sessionId, question, modelName) {
   const token = localStorage.getItem('token');
@@ -1312,18 +1331,38 @@ async function sendMessage(sessionId, question, modelName) {
     headers: { 'Authorization': token }
   });
   const result = await response.json();
-  
+
   // 处理 409 会话锁模型冲突
   if (result.code === 409) {
     alert('该会话已锁定其他模型，要换模型请新建会话');
   }
-  
-  // 命中意图时，返回的是确认文案（不产生模型回复）
-  // 前端可据此检查当前会话是否有 pending，渲染确认卡片
+
+  // 命中意图时：文案尾部带 [[MB:pending=N]] 标记
+  // 用 pendingId 直接拉弹窗详情（不必再查 current）
+  const pendingId = extractPendingId(result.data);
+  if (pendingId != null) {
+    await openConfirmPopup(pendingId);
+  }
+  // 展示时剥离标记
+  displayMessage(stripMbMarker(result.data));
   return result;
 }
 
-// 检查当前会话的待确认动作（渲染确认卡片）
+// 按 pendingId 拉弹窗详情（命中意图时由 sendMessage 触发）
+async function openConfirmPopup(pendingId) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/user/pending-actions/${pendingId}`, {
+    headers: { 'Authorization': token }
+  });
+  const result = await response.json();
+  if (result.code === 200 && result.data) {
+    renderConfirmCard(result.data); // 含 memories[]/tasks[]/preview
+    // 用户点确认 → confirmPending(pendingId)；点拒绝 → rejectPending(pendingId)
+  }
+  return result;
+}
+
+// 兜底：按会话查当前待确认动作（页面重新进入 / 恢复未处理的确认弹窗）
 async function getCurrentPending(sessionId) {
   const token = localStorage.getItem('token');
   const response = await fetch(`${API_BASE}/user/pending-actions/current?sessionId=${sessionId}`, {
@@ -1331,7 +1370,7 @@ async function getCurrentPending(sessionId) {
   });
   const result = await response.json();
   if (result.code === 200 && result.data) {
-    renderConfirmCard(result.data); // 渲染确认卡片
+    renderConfirmCard(result.data);
   }
   return result;
 }

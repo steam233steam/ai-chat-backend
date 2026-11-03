@@ -93,7 +93,7 @@ public class ChatServiceimpl implements ChatService {
         }
 
         try {
-            String rawResponse = withHistory(chatClient, historyMessages, question)
+            String rawResponse = withHistory(chatClient, historyMessages, question, sessionid)
                     .call()
                     .content();
             // 输出净化：剥掉模型偶尔泄漏的内部 <ds_safety> 审核标签，避免脏数据落库/进前端
@@ -185,7 +185,7 @@ public class ChatServiceimpl implements ChatService {
         AtomicBoolean failed = new AtomicBoolean(false);
         StreamingSafetyFilter safetyFilter = new StreamingSafetyFilter();
 
-        return withHistory(chatClient, historyMessages, question)
+        return withHistory(chatClient, historyMessages, question, sessionid)
                 .stream()
                 .content()
                 .map(safetyFilter::accept)
@@ -275,11 +275,12 @@ public class ChatServiceimpl implements ChatService {
      * 基础人设 ModelRouter.SYSTEM_PROMPT 是可信数据；画像查询失败时 fail-open 只返回基础人设。
      */
     private ChatClient.ChatClientRequestSpec withHistory(
-            ChatClient chatClient, List<Message> historyMessages, String question) {
+            ChatClient chatClient, List<Message> historyMessages, String question, String sessionid) {
         List<Message> messages = new ArrayList<>(historyMessages.size() + 1);
         messages.addAll(historyMessages);
         messages.add(new UserMessage(question));
-        String systemPrompt = promptBuilder.build(ModelRouter.SYSTEM_PROMPT);
+        // P1.1 会话隔离：画像注入只取"全局 + 本会话"的记忆，别的会话的人设不会带进来
+        String systemPrompt = promptBuilder.build(ModelRouter.SYSTEM_PROMPT, sessionid);
         return chatClient.prompt()
                 .system(systemPrompt)
                 .messages(messages);

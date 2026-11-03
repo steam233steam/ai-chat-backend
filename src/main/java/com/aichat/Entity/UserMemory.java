@@ -13,6 +13,8 @@ import java.time.LocalDateTime;
 public class UserMemory {
     private Long id;
     private String userId;
+    /** 会话隔离：NULL=全局画像（跨会话生效）；有值=仅该会话生效（P1.1）。 */
+    private String sessionId;
     private String memKey;
     private String content;
     private String memType;
@@ -43,6 +45,14 @@ public class UserMemory {
 
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 
     public String getMemKey() {

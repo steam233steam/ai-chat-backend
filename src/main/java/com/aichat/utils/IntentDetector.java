@@ -27,6 +27,8 @@ public final class IntentDetector {
         MEMORY,
         /** 任务类：待办/日程/重复。 */
         TASK,
+        /** 查询类：问"我有哪些任务/你记住了我什么"，直接读已有数据回答，不走 LLM。 */
+        QUERY,
         /** 确认：对现有 pending 说"对/确认/好"。 */
         CONFIRM,
         /** 拒绝：对现有 pending 说"不要/取消"。 */
@@ -80,6 +82,15 @@ public final class IntentDetector {
             "确认", "确定", "确认保存", "已确认", "取消", "取消吧",
             "拒绝", "不保存", "不确认", "不对", "算了", "不用了", "不要了");
 
+    // 查询触发词：问句特征（疑问词）+ 主题词（任务/记忆）。命中 → QUERY，直接读已有数据回答。
+    // 用组合判断（疑问词 AND 主题词 同时出现），误触发率比单独用触发词低得多。
+    private static final Set<String> QUERY_INTERROGATIVES = Set.of(
+            "哪些", "哪个", "几个", "什么", "还有", "有什么", "有没有", "多少", "啥");
+    private static final Set<String> QUERY_TASK_TOPICS = Set.of(
+            "任务", "待办", "日程", "计划", "提醒", "安排", "事");
+    private static final Set<String> QUERY_MEMORY_TOPICS = Set.of(
+            "记忆", "记住的", "记得", "了解我");
+
     /**
      * 检测意图。
      *
@@ -106,6 +117,13 @@ public final class IntentDetector {
         // 修改类表达优先于任务创建：P1 不支持更新，避免生成重复任务
         if (matchAny(text, UPDATE_TRIGGERS)) {
             return Intent.UPDATE;
+        }
+
+        // 查询类："我有哪些任务/你记住了我什么"——疑问词 + 主题词组合命中，
+        // 走确定性数据查询，不进提取流程（避免被当成"创建任务"）
+        if (matchAny(text, QUERY_INTERROGATIVES)
+                && (matchAny(text, QUERY_TASK_TOPICS) || matchAny(text, QUERY_MEMORY_TOPICS))) {
+            return Intent.QUERY;
         }
 
         // 没有 pending 却明确说“确认/取消”：固定提示，不能交给聊天模型自由发挥。

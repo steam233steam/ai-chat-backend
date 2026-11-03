@@ -15,6 +15,8 @@ import com.aichat.Dto.TaskCandidate;
  * 意图确认文案的格式化器（纯函数，不查库、不依赖 Spring）。
  *
  * 从 IntentServiceimpl 拆出，避免编排类里塞满中文文案和日期格式。
+ * P1.1：确认文案改自然口吻（"我准备帮你…"），去掉机械的"我识别到：X=Y"格式；
+ * 绝对日期+星期+时间+重复规则仍保留（v3 7.2，用户才能发现解析错了）。
  */
 public final class IntentReplyFormatter {
 
@@ -24,19 +26,22 @@ public final class IntentReplyFormatter {
     private IntentReplyFormatter() {
     }
 
+    /**
+     * 确认前文案：让用户知道 AI 准备设置什么（记忆/任务），回复"对"生效、"取消"不保存。
+     * [[MB:pending=N]] 机器标记由调用方（IntentServiceimpl）用 MbMarkers 拼在尾部。
+     */
     public static String buildConfirmReply(List<MemoryCandidate> memories, List<TaskCandidate> tasks) {
-        StringBuilder sb = new StringBuilder("我识别到：");
         List<String> parts = new ArrayList<>();
         for (MemoryCandidate m : memories) {
-            parts.add("记忆「" + keyLabel(m.getKey()) + "=" + m.getValue() + "」");
+            parts.add("记住「" + keyLabel(m.getKey()) + "=" + m.getValue() + "」");
         }
         for (TaskCandidate t : tasks) {
-            // 必须显示绝对日期 + 星期 + 时间 + 重复规则，用户才能发现“下周三”解析错了（v3 7.2）
-            parts.add("任务「" + t.getTitle() + "」" + describeTask(t.getDueAt(), t.getRecurrence(),
+            parts.add("安排「" + t.getTitle() + "」" + describeTask(t.getDueAt(), t.getRecurrence(),
                     t.getRecurrenceRule()));
         }
-        sb.append(String.join("、", parts)).append("。确认吗？（回复 对/确认 生效，取消则不保存）");
-        return sb.toString();
+        int n = memories.size() + tasks.size();
+        return "我准备帮你" + String.join("，并 ", parts)
+                + "（共 " + n + " 条）。回复「对」我就帮你设好，回复「取消」则不保存。";
     }
 
     public static String buildConfirmResultReply(ConfirmResult result) {
@@ -46,14 +51,14 @@ public final class IntentReplyFormatter {
         if (n == 0) {
             return "已确认。";
         }
-        StringBuilder sb = new StringBuilder("已为你保存 " + n + " 条：");
+        StringBuilder sb = new StringBuilder("好的，都帮你设好了（" + n + " 条）：");
         List<String> parts = new ArrayList<>();
         if (memories != null) {
             for (Map<String, Object> m : memories) {
                 String key = stringValue(m.get("key"));
                 String value = stringValue(m.get("value"));
                 if (key != null && value != null) {
-                    parts.add("记忆「" + keyLabel(key) + "=" + value + "」");
+                    parts.add("「" + keyLabel(key) + "=" + value + "」");
                 } else {
                     parts.add("记忆 #" + m.get("id"));
                 }
@@ -64,7 +69,7 @@ public final class IntentReplyFormatter {
                 String title = stringValue(t.get("title"));
                 if (title != null) {
                     LocalDateTime dueAt = t.get("dueAt") instanceof LocalDateTime dt ? dt : null;
-                    parts.add("任务「" + title + "」" + describeTask(
+                    parts.add("「" + title + "」" + describeTask(
                             dueAt, stringValue(t.get("recurrence")), stringValue(t.get("recurrenceRule"))));
                 } else {
                     parts.add("任务 #" + t.get("id"));
@@ -77,9 +82,10 @@ public final class IntentReplyFormatter {
 
     private static String describeTask(LocalDateTime dueAt, String recurrence, String rule) {
         String when = dueAt == null
-                ? "无截止时间"
-                : CONFIRM_TIME.format(dueAt) + "（" + weekLabel(dueAt.getDayOfWeek()) + "）";
-        return "：" + when + "，" + recurrenceLabel(recurrence, rule);
+                ? "（无截止时间）"
+                : "（" + CONFIRM_TIME.format(dueAt) + " " + weekLabel(dueAt.getDayOfWeek()) + "，"
+                + recurrenceLabel(recurrence, rule) + "）";
+        return when;
     }
 
     private static String recurrenceLabel(String recurrence, String rule) {

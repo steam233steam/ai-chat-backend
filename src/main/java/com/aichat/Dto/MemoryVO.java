@@ -22,6 +22,8 @@ public class MemoryVO {
     private LocalDateTime updateTime;
     /** 计算字段：expires_at 非空且 <= now */
     private Boolean expired;
+    /** P1.1 会话隔离：NULL=全局画像；有值=仅该会话生效。 */
+    private String sessionId;
 
     public Long getId() {
         return id;
@@ -133,5 +135,13 @@ public class MemoryVO {
 
     public void setExpired(Boolean expired) {
         this.expired = expired;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 }

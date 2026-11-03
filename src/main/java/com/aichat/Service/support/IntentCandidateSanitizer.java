@@ -70,6 +70,13 @@ public class IntentCandidateSanitizer {
             c.setKey(key);
             c.setValue(value);
             c.setMemType(memType);
+            // P1.1 会话隔离：scope 只允许 global/session，非法/缺省一律 global（安全默认）
+            String scope = (c.getScope() == null || c.getScope().isBlank())
+                    ? "global" : c.getScope().trim().toLowerCase(Locale.ROOT);
+            if (!"session".equals(scope)) {
+                scope = "global";
+            }
+            c.setScope(scope);
             if (c.getConfidence() != null) {
                 c.setConfidence(Math.max(0.0, Math.min(1.0, c.getConfidence())));
             }

@@ -64,6 +64,9 @@ public final class IntentJsonParser {
             c.setMemType(textOrNull(node.get("memType")));
             c.setConfidence(doubleOrNull(node.get("confidence")));
             c.setReplacesId(longOrNull(node.get("replacesId")));
+            // P1.1 会话隔离：scope=session 的候选只在当前会话生效；global/缺省=全局
+            String scope = textOrNull(node.get("scope"));
+            c.setScope("session".equals(scope) ? "session" : "global");
             out.add(c);
         }
     }

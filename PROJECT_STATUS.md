@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: MindButler P1（长期记忆 + 口语化任务 + 待确认动作）✅
+- **当前阶段**: MindButler P1（长期记忆 + 口语化任务 + 待确认动作 + 聊天触发任务确认弹窗）✅
 
 ## 架构分层
 
@@ -216,6 +216,11 @@ com.aichat/
 - [x] 代码结构说明 `docs/P1-代码结构.md`
 - [x] 评测集 `docs/eval/mindbutler-intent-eval.json`
 - [x] 聊天拦截：`ChatServiceimpl` 在 sendSession 前调 `IntentService.handle`，命中意图时返回文案 + pending，不继续正常聊天
+- [x] 聊天文案弹窗标记（2026-11-03）：`MbMarkers` 在命中"提取出新候选并写 pending"时，在 `/chat/ask` 文案尾部追加 `[[MB:pending={id}]]` 标记
+- [x] 前端一次 `/chat/ask` 即可拿到 pendingId + 文案，据此弹窗（不必额外查 current）；展示时剥离标记
+- [x] 新增 `GET /user/pending-actions/{id}` 拉弹窗详情（存库文案已剥离标记，懒过期语义同 current）
+- [x] 流式 `/chat/ask-stream` 与同步接口契约一致：`data` 为「确认文案 + [[MB:pending=N]]」，单测覆盖
+- [x] 前端任务确认弹窗（TaskConfirmDialog）：SSE 完成后自动弹出，刷新/切回会话用 current 恢复，确认后刷新任务
 
 ### 📝 核心改进（2026-11-03 MindButler P1）
 

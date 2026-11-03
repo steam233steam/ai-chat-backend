@@ -35,7 +35,7 @@ public final class IntentPrompts {
         sb.append("严格只输出一个 JSON 对象，禁止 markdown 围栏、禁止解释文字。\n\n");
         sb.append("输出 schema：\n");
         sb.append("{\n");
-        sb.append("  \"memories\":[{\"key\":\"style|goal|schedule|relation\",\"value\":\"简短内容\",\"memType\":\"stable|dynamic\",\"confidence\":0.0,\"replacesId\":null}],\n");
+        sb.append("  \"memories\":[{\"key\":\"style|goal|schedule|relation\",\"value\":\"简短内容\",\"memType\":\"stable|dynamic\",\"scope\":\"global|session\",\"confidence\":0.0,\"replacesId\":null}],\n");
         sb.append("  \"tasks\":[{\"action\":\"create\",\"title\":\"标题\",\"dueAt\":\"yyyy-MM-ddTHH:mm:ss 或 null\",\"timezone\":\"Asia/Shanghai\",\"recurrence\":\"once|daily|weekly\",\"recurrenceRule\":\"BYDAY=XX 或 null\"}]\n");
         sb.append("}\n\n");
         sb.append("规则：\n");
@@ -43,6 +43,9 @@ public final class IntentPrompts {
         sb.append("- memories.value 控制在 30 字内，去除口语赘词；敏感信息（密码/证件/银行卡）一律不提取。\n");
         sb.append("- 相对时间（明天/下周一）必须换算成 dueAt 绝对时间；周重复（每周一）填 recurrence=weekly + recurrenceRule=BYDAY=MO。\n");
         sb.append("- 一次消息可能同时含记忆和任务，分别填进两个数组。\n");
+        sb.append("- memories.scope：判断这条记忆的作用域。长期习惯/偏好（风格、作息、固定目标、长期称呼）填 global；\n");
+        sb.append("  本次会话的人设/角色/临时口吻（如\"这个会话里你是猫娘\"、\"现在你叫我主人\"）填 session。\n");
+        sb.append("  拿不准就填 global。scope 只影响记忆在哪些会话生效，不影响内容。\n");
         if (intent == IntentDetector.Intent.MEMORY) {
             sb.append("- 本句偏记忆：重点判断 key（style/goal/schedule/relation）与 memType（长期偏好=stable，近期动态=dynamic）。\n");
         } else {

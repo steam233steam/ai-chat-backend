@@ -160,7 +160,7 @@ class MemoryServiceimplTest {
 
     @Test
     void shouldRejectDuplicateActiveContent() {
-        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("简洁"), any(LocalDateTime.class)))
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("简洁"), any(LocalDateTime.class), eq(null)))
                 .thenReturn(mem(9L, "style", "简洁", "stable", "active", null, NOW));
         CreateMemoryRequest req = new CreateMemoryRequest();
         req.setMemKey("style");
@@ -186,6 +186,9 @@ class MemoryServiceimplTest {
     void shouldIgnoreReplacesIdWithDifferentKey() {
         when(mapper.selectById(99L, "USER_ID_1234567890"))
                 .thenReturn(mem(99L, "style", "旧风格", "stable", "active", null, NOW));
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("新目标"), any(LocalDateTime.class), eq(null)))
+                .thenReturn(null);
+        when(mapper.countActive(eq("USER_ID_1234567890"), any(LocalDateTime.class))).thenReturn(0);
         when(mapper.insert(any(UserMemory.class))).thenAnswer(inv -> {
             UserMemory m = inv.getArgument(0);
             m.setId(42L);
@@ -194,21 +197,43 @@ class MemoryServiceimplTest {
         when(mapper.selectById(42L, "USER_ID_1234567890"))
                 .thenReturn(mem(42L, "goal", "新目标", "stable", "active", null, NOW));
 
-        service.createWithReplaces("goal", "新目标", "stable", 0.9, 99L, 7L);
+        service.createWithReplaces("goal", "新目标", "stable", 0.9, 99L, 7L, null);
 
         // key 不一致 → 不替换旧条，按新增处理且 replacesId 为空
         verify(mapper, never()).markSuperseded(anyLong(), anyString());
         ArgumentCaptor<UserMemory> captor = ArgumentCaptor.forClass(UserMemory.class);
         verify(mapper).insert(captor.capture());
         assertThat(captor.getValue().getReplacesId()).isNull();
+        assertThat(captor.getValue().getSessionId()).isNull();
+    }
+
+    @Test
+    void shouldCreateSessionScopedMemoryWhenSessionScopeGiven() {
+        // P1.1：scope=session 的候选确认时落 session_id，注入查询时只取全局+本会话
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("猫娘"), any(LocalDateTime.class), eq("s-1")))
+                .thenReturn(null);
+        when(mapper.countActive(eq("USER_ID_1234567890"), any(LocalDateTime.class))).thenReturn(0);
+        when(mapper.insert(any(UserMemory.class))).thenAnswer(inv -> {
+            UserMemory m = inv.getArgument(0);
+            m.setId(43L);
+            return 1;
+        });
+        when(mapper.selectById(43L, "USER_ID_1234567890"))
+                .thenReturn(mem(43L, "style", "猫娘", "stable", "active", null, NOW));
+
+        service.createWithReplaces("style", "猫娘", "stable", 0.9, null, 7L, "s-1");
+
+        ArgumentCaptor<UserMemory> captor = ArgumentCaptor.forClass(UserMemory.class);
+        verify(mapper).insert(captor.capture());
+        assertThat(captor.getValue().getSessionId()).isEqualTo("s-1");
     }
 
     @Test
     void shouldDedupeIdenticalActiveContentFromAi() {
-        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("简洁"), any(LocalDateTime.class)))
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("简洁"), any(LocalDateTime.class), eq(null)))
                 .thenReturn(mem(7L, "style", "简洁", "stable", "active", null, NOW));
 
-        MemoryVO vo = service.createWithReplaces("style", "简洁", "stable", 0.9, null, 7L);
+        MemoryVO vo = service.createWithReplaces("style", "简洁", "stable", 0.9, null, 7L, null);
 
         assertThat(vo.getId()).isEqualTo(7L);
         verify(mapper, never()).insert(any());
@@ -216,22 +241,22 @@ class MemoryServiceimplTest {
 
     @Test
     void shouldListActiveWithLimit() {
-        when(mapper.selectActiveByUser(eq("USER_ID_1234567890"), any(LocalDateTime.class), eq(1)))
+        when(mapper.selectActiveByUser(eq("USER_ID_1234567890"), any(LocalDateTime.class), eq(null), eq(1)))
                 .thenReturn(List.of(mem(1L, "style", "简洁", "stable", "active", null, NOW)));
 
         List<MemoryVO> vos = service.list(1);
 
         assertThat(vos).hasSize(1);
-        verify(mapper).selectActiveByUser(eq("USER_ID_1234567890"), any(LocalDateTime.class), eq(1));
+        verify(mapper).selectActiveByUser(eq("USER_ID_1234567890"), any(LocalDateTime.class), eq(null), eq(1));
     }
 
     // ---------- 查询 ----------
 
     @Test
     void shouldListActiveOnlyForInjection() {
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), eq(null), anyInt()))
                 .thenReturn(List.of(mem(1L, "style", "简洁", "stable", "active", null, NOW)));
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), eq(null), anyInt()))
                 .thenReturn(List.of(mem(2L, "goal", "备考", "dynamic", "active", NOW.plusDays(10), NOW)));
 
         List<MemoryVO> vos = service.listForInjection(5, 5);
@@ -245,14 +270,34 @@ class MemoryServiceimplTest {
 
     @Test
     void shouldFilterExpiredDynamicFromInjection() {
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), eq(null), anyInt()))
                 .thenReturn(List.of());
-        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), anyInt()))
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), eq(null), anyInt()))
                 .thenReturn(List.of(mem(3L, "goal", "过期了", "dynamic", "active", NOW.minusDays(1), NOW)));
 
         List<MemoryVO> vos = service.listForInjection(5, 5);
 
         assertThat(vos).isEmpty(); // 过期 dynamic 被过滤
+    }
+
+    @Test
+    void shouldIsolateOtherSessionMemoriesFromInjection() {
+        // P1.1：sessionScope="s-1" 时，mapper 被传入 "s-1"（SQL 里 WHERE session_id IS NULL OR session_id='s-1'）
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"),
+                any(LocalDateTime.class), eq("s-1"), anyInt()))
+                .thenReturn(List.of(mem(1L, "style", "简洁", "stable", "active", null, NOW)));
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
+                any(LocalDateTime.class), eq("s-1"), anyInt()))
+                .thenReturn(List.of());
+
+        List<MemoryVO> vos = service.listForInjection(5, 5, "s-1");
+
+        assertThat(vos).hasSize(1);
+        // 关键断言：mapper 拿到的 sessionScope 是 "s-1"，别的会话的记忆不会进注入
+        verify(mapper).selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"),
+                any(LocalDateTime.class), eq("s-1"), anyInt());
+        verify(mapper).selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
+                any(LocalDateTime.class), eq("s-1"), anyInt());
     }
 
     @Test
