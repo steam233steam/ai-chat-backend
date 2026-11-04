@@ -2,7 +2,6 @@ package com.aichat.utils;
 
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -20,28 +19,36 @@ import com.aichat.Dto.TaskCandidate;
  */
 public final class IntentReplyFormatter {
 
-    private static final DateTimeFormatter CONFIRM_TIME =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
     private IntentReplyFormatter() {
     }
 
     /**
-     * 确认前文案：让用户知道 AI 准备设置什么（记忆/任务），回复"对"生效、"取消"不保存。
+     * 确认前文案：口语化告知用户 AI 准备设置什么（记忆/任务），回复"好"生效、"取消"不保存。
+     * 设计原则：像聊天，不像系统通知。保留日期+星期+时间+重复规则（用户才能核对解析对不对）。
      * [[MB:pending=N]] 机器标记由调用方（IntentServiceimpl）用 MbMarkers 拼在尾部。
      */
     public static String buildConfirmReply(List<MemoryCandidate> memories, List<TaskCandidate> tasks) {
         List<String> parts = new ArrayList<>();
         for (MemoryCandidate m : memories) {
-            parts.add("记住「" + keyLabel(m.getKey()) + "=" + m.getValue() + "」");
+            parts.add(memoryPhrase(m));
         }
         for (TaskCandidate t : tasks) {
-            parts.add("安排「" + t.getTitle() + "」" + describeTask(t.getDueAt(), t.getRecurrence(),
-                    t.getRecurrenceRule()));
+            parts.add(taskPhrase(t));
         }
-        int n = memories.size() + tasks.size();
-        return "我准备帮你" + String.join("，并 ", parts)
-                + "（共 " + n + " 条）。回复「对」我就帮你设好，回复「取消」则不保存。";
+        String confirmHint = parts.size() == 1 ? "回复「好」我帮你设上，说「取消」就不存了。"
+                : "回复「好」我帮你设好，说「取消」就不存了。";
+        return String.join("，", parts) + "，" + confirmHint;
+    }
+
+    /** 记忆短语："我记住你的风格是简洁" / "我记住你的作息是晚上十点睡觉" */
+    private static String memoryPhrase(MemoryCandidate m) {
+        return "我记住你的" + keyLabel(m.getKey()) + "是「" + m.getValue() + "」";
+    }
+
+    /** 任务短语："让我提醒你明天 07:00（11-05 周四）起床" / "让我安排每周一交周报" */
+    private static String taskPhrase(TaskCandidate t) {
+        String when = describeTask(t.getDueAt(), t.getRecurrence(), t.getRecurrenceRule());
+        return when + "提醒你「" + t.getTitle() + "」";
     }
 
     public static String buildConfirmResultReply(ConfirmResult result) {
@@ -49,18 +56,18 @@ public final class IntentReplyFormatter {
         List<Map<String, Object>> tasks = result.getTasks();
         int n = (memories == null ? 0 : memories.size()) + (tasks == null ? 0 : tasks.size());
         if (n == 0) {
-            return "已确认。";
+            return "好的，都帮你设上了。";
         }
-        StringBuilder sb = new StringBuilder("好的，都帮你设好了（" + n + " 条）：");
+        StringBuilder sb = new StringBuilder("好的，帮你设好了：");
         List<String> parts = new ArrayList<>();
         if (memories != null) {
             for (Map<String, Object> m : memories) {
                 String key = stringValue(m.get("key"));
                 String value = stringValue(m.get("value"));
                 if (key != null && value != null) {
-                    parts.add("「" + keyLabel(key) + "=" + value + "」");
+                    parts.add("记住了" + keyLabel(key) + "是「" + value + "」");
                 } else {
-                    parts.add("记忆 #" + m.get("id"));
+                    parts.add("记住了" + "记忆 #" + m.get("id"));
                 }
             }
         }
@@ -69,23 +76,33 @@ public final class IntentReplyFormatter {
                 String title = stringValue(t.get("title"));
                 if (title != null) {
                     LocalDateTime dueAt = t.get("dueAt") instanceof LocalDateTime dt ? dt : null;
-                    parts.add("「" + title + "」" + describeTask(
-                            dueAt, stringValue(t.get("recurrence")), stringValue(t.get("recurrenceRule"))));
+                    String when = describeTask(dueAt, stringValue(t.get("recurrence")),
+                            stringValue(t.get("recurrenceRule")));
+                    parts.add(when + "提醒你「" + title + "」");
                 } else {
-                    parts.add("任务 #" + t.get("id"));
+                    parts.add("安排了" + "任务 #" + t.get("id"));
                 }
             }
         }
-        sb.append(String.join("、", parts)).append("。");
+        sb.append(String.join("，", parts)).append("。");
         return sb.toString();
     }
 
+    /** 口语化时间描述："明天 07:00（11-05 周四）" / "每周一" / "无固定时间" */
     private static String describeTask(LocalDateTime dueAt, String recurrence, String rule) {
-        String when = dueAt == null
-                ? "（无截止时间）"
-                : "（" + CONFIRM_TIME.format(dueAt) + " " + weekLabel(dueAt.getDayOfWeek()) + "，"
-                + recurrenceLabel(recurrence, rule) + "）";
-        return when;
+        if (dueAt == null) {
+            return "随时";
+        }
+        String date = String.format("%02d-%02d", dueAt.getMonthValue(), dueAt.getDayOfMonth());
+        String time = String.format("%02d:%02d", dueAt.getHour(), dueAt.getMinute());
+        String day = weekLabel(dueAt.getDayOfWeek());
+        String rc = recurrenceLabel(recurrence, rule);
+        // 单次任务："明天 07:00（11-05 周四）"
+        // 重复任务："每周一" 或 "每天"
+        if ("单次".equals(rc)) {
+            return day + " " + time + "（" + date + "）";
+        }
+        return rc + "，" + day + " " + time;
     }
 
     private static String recurrenceLabel(String recurrence, String rule) {

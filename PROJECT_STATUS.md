@@ -232,6 +232,7 @@ com.aichat/
 - [x] `MemoryCandidate.scope`（global/session）- LLM 判定作用域，prompt 里说明长期习惯=global、本会话人设=session
 - [x] 迁移脚本 `docs/migration/2026-11-03-mindbutler-p1-memory-session.sql`（存量 session_id 全 NULL，向后兼容）
 - [x] 单测 205 个全通过（BUILD SUCCESS）
+- [x] P1.1b：确认文案改口语化（"我记住你的风格是简洁，周二 09:00（11-03）提醒你「交作业」，回复「好」我帮你设上"），去掉机械"我准备帮你安排【…】（共 N 条）"格式；`describeTask` 时间描述从 "（2026-11-03 09:00 周二，单次）" 改为 "周二 09:00（11-03）"；测试 224 绿
 
 ### 📝 核心改进（2026-11-03 P1.1）
 

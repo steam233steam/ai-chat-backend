@@ -182,7 +182,7 @@ class IntentServiceimplTest {
         IntentOutcome o = service.handle("s-1", "明天 9 点交作业", 8L);
 
         assertThat(o.isExtracted()).isTrue();
-        assertThat(o.getReply()).contains("安排", "交作业");
+        assertThat(o.getReply()).contains("提醒你", "交作业");
         assertThat(o.getReply()).contains("[[MB:pending=12]]");
         assertThat(o.getPendingId()).isEqualTo(12L);
         verify(pendingActionService).create(eq("s-1"), eq("task"), anyString(), eq(8L));
@@ -313,7 +313,7 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "明天 9 点交作业", 8L);
 
-        assertThat(o.getReply()).contains("交作业", "2026-11-03", "周二", "09:00", "单次");
+        assertThat(o.getReply()).contains("交作业", "11-03", "周二", "09:00");
     }
 
     @Test
@@ -403,7 +403,7 @@ class IntentServiceimplTest {
 
         IntentOutcome o = service.handle("s-1", "对", 17L);
 
-        assertThat(o.getReply()).contains("风格=简洁", "交作业", "2026-11-03", "09:00", "单次");
+        assertThat(o.getReply()).contains("风格", "简洁", "交作业", "11-03", "周二", "09:00");
     }
 
     @Test
