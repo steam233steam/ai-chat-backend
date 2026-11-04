@@ -68,6 +68,9 @@ public final class IntentQueryReplyBuilder {
             if ("dynamic".equals(m.getMemType()) && m.getExpiresAt() != null) {
                 sb.append("（").append(QUERY_TIME.format(m.getExpiresAt())).append(" 前有效）");
             }
+            if (m.getSessionId() != null) {
+                sb.append("（仅本会话）");
+            }
             sb.append("\n");
         }
         if (memories.size() > shown) {

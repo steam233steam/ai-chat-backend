@@ -85,11 +85,25 @@ public final class IntentDetector {
     // 查询触发词：问句特征（疑问词）+ 主题词（任务/记忆）。命中 → QUERY，直接读已有数据回答。
     // 用组合判断（疑问词 AND 主题词 同时出现），误触发率比单独用触发词低得多。
     private static final Set<String> QUERY_INTERROGATIVES = Set.of(
-            "哪些", "哪个", "几个", "什么", "还有", "有什么", "有没有", "多少", "啥");
+            "哪些", "哪个", "几个", "什么", "怎么样", "如何", "还有", "有什么", "有没有", "多少", "啥", "啥样");
     private static final Set<String> QUERY_TASK_TOPICS = Set.of(
             "任务", "待办", "日程", "计划", "提醒", "安排", "事");
     private static final Set<String> QUERY_MEMORY_TOPICS = Set.of(
-            "记忆", "记住的", "记住了", "记得", "了解我", "你记");
+            "记忆", "记住的", "记住了", "记得", "了解我", "你记", "记忆怎么样", "你了解");
+
+    // P1.2 LLM 兜底宽松触发词：关键词粗筛 NONE 时，命中这些才过 LLM 提取（避免每条"你好"都调 LLM）。
+    // 覆盖：人设指令（"你是猫娘"）、称呼指令（"叫我主人"）、状态询问（"你的记忆怎么样"）、
+    //       隐含记忆（"我平时喝美式"）、隐含任务（"我下周三要出差"）。
+    private static final Set<String> LOOSE_TRIGGERS = Set.of(
+            // 人设 / 角色指令："你是 X"、"当 X"、"扮演 X"
+            "你是", "你叫", "当个", "扮演", "你是只", "你是个", "让我", "希望你",
+            // 称呼 / 关系指令："叫我 X"、"我 X"
+            "叫我", "我是", "我叫", "我的", "我平时", "我一般", "我通常", "我喜欢", "我不喜欢",
+            // 状态 / 查询类（关键词没命中但明显在问 AI 的数据）
+            "你的记忆", "你了解我", "你记得我", "你记住了我", "你记我",
+            // 时间 / 任务隐含（没有"提醒"但带时间）
+            "下周一", "下周二", "下周三", "下周四", "下周五", "下周六", "下周日",
+            "明天", "后天", "下个月", "下周天");
 
     /**
      * 检测意图。
@@ -141,6 +155,18 @@ public final class IntentDetector {
             return Intent.MEMORY;
         }
         return Intent.NONE;
+    }
+
+    /**
+     * P1.2 LLM 兜底判断：关键词粗筛返回 NONE 时，这条消息是否值得过一次 LLM 提取。
+     * 命中 LOOSE_TRIGGERS 才返回 true（避免"你好/谢谢"这类纯聊天每条都调 LLM）。
+     */
+    public static boolean shouldTryLlmFallback(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String text = message.trim();
+        return matchAny(text, LOOSE_TRIGGERS);
     }
 
     private static String normalizeCommand(String text) {

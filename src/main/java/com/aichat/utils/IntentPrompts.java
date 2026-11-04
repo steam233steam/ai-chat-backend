@@ -43,11 +43,14 @@ public final class IntentPrompts {
         sb.append("- memories.value 控制在 30 字内，去除口语赘词；敏感信息（密码/证件/银行卡）一律不提取。\n");
         sb.append("- 相对时间（明天/下周一）必须换算成 dueAt 绝对时间；周重复（每周一）填 recurrence=weekly + recurrenceRule=BYDAY=MO。\n");
         sb.append("- 一次消息可能同时含记忆和任务，分别填进两个数组。\n");
-        sb.append("- memories.scope：判断这条记忆的作用域。长期习惯/偏好（风格、作息、固定目标、长期称呼）填 global；\n");
+        sb.append("- memories.key=relation：存的是 AI 的角色/人设/称呼（如\"猫娘\"、\"主人\"、\"简洁\"），不是用户指令原文。用户说\"你是猫娘\"→value=猫娘；说\"叫我主人\"→value=主人。scope 填 session。\n");
+        sb.append("- memories.key=style：存回答风格偏好（简洁/详细/幽默）。key=schedule：存作息/习惯。key=goal：存近期目标。\n");
+        sb.append("- memories.scope：长期习惯/偏好（style/schedule/goal、长期称呼）填 global；\n");
         sb.append("  本次会话的人设/角色/临时口吻（如\"这个会话里你是猫娘\"、\"现在你叫我主人\"）填 session。\n");
         sb.append("  拿不准就填 global。scope 只影响记忆在哪些会话生效，不影响内容。\n");
         if (intent == IntentDetector.Intent.MEMORY) {
-            sb.append("- 本句偏记忆：重点判断 key（style/goal/schedule/relation）与 memType（长期偏好=stable，近期动态=dynamic）。\n");
+            sb.append("- 本句偏记忆/人设：重点判断 key（style/goal/schedule/relation）与 memType（长期偏好=stable，近期动态=dynamic）。\n");
+            sb.append("- 用户给 AI 定人设/角色（\"你是 X\"、\"当 X\"、\"扮演 X\"、\"叫我 X\"）→ key=relation, memType=stable, scope=session。\n");
         } else {
             sb.append("- 本句偏任务：重点解析截止时间与重复规则；一次性任务 recurrence=once，daily/weekly 必须给 dueAt。\n");
         }

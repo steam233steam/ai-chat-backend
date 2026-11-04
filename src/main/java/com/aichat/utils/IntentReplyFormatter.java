@@ -147,7 +147,7 @@ public final class IntentReplyFormatter {
             case "style" -> "风格";
             case "goal" -> "目标";
             case "schedule" -> "作息";
-            case "relation" -> "称呼/关系";
+            case "relation" -> "人设/称呼";
             default -> key;
         };
     }

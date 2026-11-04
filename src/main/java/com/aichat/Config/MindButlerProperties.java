@@ -25,6 +25,9 @@ public class MindButlerProperties {
     /** 每用户每日意图提取次数；0 = 不限。 */
     private int intentDailyLimit = 50;
 
+    /** P1.2：LLM 意图兜底开关。true 时，关键词粗筛未命中（NONE）但命中宽松触发词的消息也过一次 LLM 提取。 */
+    private boolean llmIntentFallback = true;
+
     /** dynamic 记忆默认有效期（天）；stable 记忆不过期。 */
     private int memoryDynamicTtlDays = 90;
 
@@ -205,6 +208,14 @@ public class MindButlerProperties {
 
     public void setEvalRealModel(boolean evalRealModel) {
         this.evalRealModel = evalRealModel;
+    }
+
+    public boolean isLlmIntentFallback() {
+        return llmIntentFallback;
+    }
+
+    public void setLlmIntentFallback(boolean llmIntentFallback) {
+        this.llmIntentFallback = llmIntentFallback;
     }
 
     public void setPendingPayloadMaxBytes(int pendingPayloadMaxBytes) {

@@ -88,14 +88,65 @@ public class IntentServiceimpl implements IntentService {
         Intent intent = IntentDetector.detect(message, hasPending);
 
         return switch (intent) {
-            case NONE -> IntentOutcome.chat();
+            case NONE -> handleNone(sessionId, message, sourceMessageId);
             case CONFIRM -> confirm(pending);
             case REJECT -> reject(pending);
             case UPDATE -> update(pending);
             case NO_PENDING -> IntentOutcome.replyOnly(NO_PENDING_FALLBACK);
-            case QUERY -> query(message);
+            case QUERY -> query(sessionId, message);
             case MEMORY, TASK -> extract(intent, sessionId, message, sourceMessageId);
         };
+    }
+
+    /**
+     * P1.2 LLM 兜底（KouriChat 模式）：关键词粗筛 NONE 时，命中宽松触发词就过一次 LLM 提取。
+     * 解决"你是猫娘"、"你的记忆怎么样"这类关键词漏过的场景。
+     * LLM 提取为空 → 走正常聊天（shouldContinueChat=true），不阻断。
+     */
+    private IntentOutcome handleNone(String sessionId, String message, Long sourceMessageId) {
+        if (props.isLlmIntentFallback() && IntentDetector.shouldTryLlmFallback(message)) {
+            IntentOutcome outcome = extractLoose(sessionId, message, sourceMessageId);
+            if (outcome != null) {
+                return outcome;
+            }
+        }
+        return IntentOutcome.chat();
+    }
+
+    /**
+     * 宽松 LLM 提取：用 MEMORY 意图的 prompt 让 LLM 自行判断"这句有没有可提取的记忆/人设/任务"。
+     * 提取到非空候选 → 走 pending 确认流程；提取为空 → 返回 null（上层走 chat）。
+     */
+    private IntentOutcome extractLoose(String sessionId, String message, Long sourceMessageId) {
+        String userId = currentUserId();
+        if (!intentDailyLimiter.tryAcquire(userId)) {
+            return null; // 限额用完，走正常聊天
+        }
+        IntentExtractionResult extracted = intentExtractor.extract(Intent.MEMORY, message);
+        if (extracted == null || extracted.isEmpty()) {
+            return null; // LLM 没识别出可提取内容，走正常聊天
+        }
+
+        List<MemoryCandidate> memories = candidateSanitizer.sanitizeMemories(extracted.getMemories());
+        List<TaskCandidate> tasks = candidateSanitizer.sanitizeTasks(extracted.getTasks());
+        if (memories.isEmpty() && tasks.isEmpty()) {
+            return null; // 净化后无有效候选，走正常聊天
+        }
+
+        String actionType = (memories.isEmpty() ? "task" : tasks.isEmpty() ? "memory" : "mixed");
+        String payload = IntentPayloadCodec.buildPayload(memories, tasks, message);
+        long pendingId;
+        try {
+            pendingId = pendingActionService.create(sessionId, actionType, payload, sourceMessageId);
+        } catch (BusinessException e) {
+            log.warn("LLM 兜底写 pending 失败（{}）: session={}", e.getMessage(), sessionId);
+            return null;
+        }
+
+        String reply = MbMarkers.appendPending(IntentReplyFormatter.buildConfirmReply(memories, tasks), pendingId);
+        log.info("intent LLM 兜底提取: session={}, pendingId={}, memories={}, tasks={}",
+                sessionId, pendingId, memories.size(), tasks.size());
+        return IntentOutcome.extracted(reply, pendingId);
     }
 
     // ---------- 查询 → 读已有数据 → 自然文案（不走 LLM，确定性回答） ----------
@@ -103,14 +154,14 @@ public class IntentServiceimpl implements IntentService {
     /**
      * 查询意图：直接读当前用户的任务/记忆数据回答，不调 LLM。
      * - 问任务（"我有哪些任务/待办/日程"）→ 列 pending + done + 到期标记
-     * - 问记忆（"你记住了我什么"）→ 列 active 记忆
+     * - 问记忆（"你记住了我什么/你的记忆"）→ 列 active 记忆（按会话隔离取"全局+本会话"）
      * 没有数据时明确说"还没有"，不再走"没识别出"兜底。
      */
-    private IntentOutcome query(String message) {
+    private IntentOutcome query(String sessionId, String message) {
         if (isMemoryQuery(message)) {
-            List<com.aichat.Dto.MemoryVO> memories = memoryService.list(props.getMemoryInjectMaxStable()
-                    + props.getMemoryInjectMaxDynamic());
-            memories = memories.stream().filter(m -> "active".equals(m.getStatus())).toList();
+            // P1.2：按会话隔离查记忆（"你的记忆"→全局+本会话），避免别的会话的人设串进来
+            List<com.aichat.Dto.MemoryVO> memories = memoryService.listForInjection(
+                    props.getMemoryInjectMaxStable(), props.getMemoryInjectMaxDynamic(), sessionId);
             return IntentOutcome.replyOnly(IntentQueryReplyBuilder.buildMemoryList(memories, QUERY_SHOW_LIMIT));
         }
         // 默认查任务
@@ -121,10 +172,11 @@ public class IntentServiceimpl implements IntentService {
                 IntentQueryReplyBuilder.buildTaskList(pending, done, due, QUERY_SHOW_LIMIT));
     }
 
-    /** 判断查询是问记忆还是问任务（默认任务）。 */
+    /** 判断查询是问记忆还是问任务（默认任务）。P1.2：加"你的记忆"模式。 */
     private boolean isMemoryQuery(String message) {
         String lowered = message.toLowerCase(java.util.Locale.ROOT);
-        return lowered.contains("记忆") || lowered.contains("记住了") || lowered.contains("记得");
+        return lowered.contains("记忆") || lowered.contains("记住了") || lowered.contains("记得")
+                || lowered.contains("你了解") || lowered.contains("你记我");
     }
 
     // ---------- 提取 → 校验 → 写 pending → 确认文案 ----------
