@@ -103,4 +103,19 @@ class IntentDetectorTest {
         assertThat(IntentDetector.detect("", false)).isEqualTo(Intent.NONE);
         assertThat(IntentDetector.detect("   ", true)).isEqualTo(Intent.NONE);
     }
+
+    @Test
+    void shouldDetectQueryForTaskAndMemory() {
+        // 任务主题 + 疑问词 → QUERY
+        assertThat(IntentDetector.detect("我有哪些任务", false)).isEqualTo(Intent.QUERY);
+        assertThat(IntentDetector.detect("我有什么安排", false)).isEqualTo(Intent.QUERY);
+        assertThat(IntentDetector.detect("我还有什么待办", false)).isEqualTo(Intent.QUERY);
+        // 记忆主题 + 疑问词 → QUERY
+        assertThat(IntentDetector.detect("你记住了我什么", false)).isEqualTo(Intent.QUERY);
+        assertThat(IntentDetector.detect("你了解我什么", false)).isEqualTo(Intent.QUERY);
+        // 只有主题词、没有疑问词 → 不走 QUERY（仍走 MEMORY/TASK）
+        assertThat(IntentDetector.detect("明天交作业", false)).isEqualTo(Intent.TASK);
+        // 只有疑问词、没有任务/记忆主题词 → 不走 QUERY
+        assertThat(IntentDetector.detect("今天天气怎么样", false)).isEqualTo(Intent.NONE);
+    }
 }

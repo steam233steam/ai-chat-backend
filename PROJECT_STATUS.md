@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: MindButler P1（长期记忆 + 口语化任务 + 待确认动作 + 聊天触发任务确认弹窗）✅
+- **当前阶段**: MindButler P1.1（长期记忆 + 口语化任务 + 待确认动作 + 查询意图 + 记忆会话隔离）✅
 
 ## 架构分层
 
@@ -222,6 +222,36 @@ com.aichat/
 - [x] 流式 `/chat/ask-stream` 与同步接口契约一致：`data` 为「确认文案 + [[MB:pending=N]]」，单测覆盖
 - [x] 前端任务确认弹窗（TaskConfirmDialog）：SSE 完成后自动弹出，刷新/切回会话用 current 恢复，确认后刷新任务
 
+#### MindButler P1.1：查询意图 + 记忆会话隔离（2026-11-03 20:xx）
+- [x] 新增 `QUERY` 意图：`IntentDetector` 疑问词 + 主题词组合命中 → 直接读已有任务/记忆数据回答，**不走 LLM**（确定性回答）
+- [x] `IntentQueryReplyBuilder` - 查询类文案格式化（任务列表 / 记忆列表，纯函数不查库）
+- [x] `IntentServiceimpl.query()` - 问任务列 pending+done+到期，问记忆列 active，无数据时明确说"还没有"
+- [x] 记忆会话隔离：`tb_user_memory` 新增 `session_id` 列（NULL=全局画像，有值=仅该会话生效）
+- [x] `MemoryService.listForInjection(stable, dynamic, sessionScope)` - 会话隔离版注入查询（全局 + 当前会话）
+- [x] `PromptBuilder.build(basePersona, sessionScope)` - 注入时只带"全局画像 + 当前会话画像"，会话 A 的人设不带进会话 B
+- [x] `MemoryCandidate.scope`（global/session）- LLM 判定作用域，prompt 里说明长期习惯=global、本会话人设=session
+- [x] 迁移脚本 `docs/migration/2026-11-03-mindbutler-p1-memory-session.sql`（存量 session_id 全 NULL，向后兼容）
+- [x] 单测 205 个全通过（BUILD SUCCESS）
+
+### 📝 核心改进（2026-11-03 P1.1）
+
+**1. QUERY 意图（确定性查询，不走 LLM）**
+- 疑问词（哪些/哪个/什么/多少…）AND 主题词（任务/待办/日程/计划/提醒 / 记忆/记住的/记得）组合命中
+- 命中后直接读 `TaskService` / `MemoryService` 已有数据拼自然文案，**不调 LLM**（省钱 + 100% 确定性 + 不污染聊天）
+- 没有数据时明确回答"你目前还没有任何任务 / 我还没记住关于你的信息"，不再误走"没识别出"兜底
+
+**2. 记忆会话隔离（全局 vs 会话级人设）**
+- `tb_user_memory.session_id`：NULL=全局画像（跨会话生效，默认），有值=仅该会话生效（如"这个会话里你是猫娘"）
+- LLM 提取时多输出 `scope` 字段（global/session），`IntentJsonParser` 归一（非 session 一律 global）
+- 注入链路：`PromptBuilder.build(base, sessionScope)` → `listForInjection(..., sessionScope)` → 只取"全局(NULL) + 该会话"，别的会话人设不串进来
+- 去重范围随 sessionScope：会话级记忆只在同会话去重，全局记忆跨会话去重
+- 存量数据 session_id 全 NULL → 行为不变，向后兼容
+
+**3. 查询意图与提取意图的分工**
+- "我有哪些任务/你记住我什么" → QUERY（读数据，确定性）
+- "记住/明天/每周…" → MEMORY/TASK（LLM 提取 + pending 确认）
+- 避免"问一句"被误判成"建一条任务"
+
 ### 📝 核心改进（2026-11-03 MindButler P1）
 
 **1. 长期记忆（结构化画像，不用向量库）**
@@ -379,6 +409,7 @@ CREATE TABLE tb_chat_message (
 CREATE TABLE tb_user_memory (
   id                BIGINT NOT NULL AUTO_INCREMENT,
   user_id           VARCHAR(32) NOT NULL COMMENT '用户 uid',
+  session_id        VARCHAR(64) NULL COMMENT 'P1.1 会话隔离：NULL=全局画像；有值=仅该会话生效',
   mem_key           VARCHAR(32) NOT NULL COMMENT 'P1: style|goal|schedule|relation',
   content           VARCHAR(512) NOT NULL COMMENT '记忆内容（应用层限制 256 字符）',
   mem_type          ENUM('stable','dynamic') NOT NULL DEFAULT 'stable',
@@ -391,7 +422,8 @@ CREATE TABLE tb_user_memory (
   version           INT NOT NULL DEFAULT 0 COMMENT '乐观锁',
   create_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  KEY idx_memory_session (user_id, session_id, status)
 );
 ```
 
@@ -553,6 +585,7 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - [x] 模型输出净化 + 历史角色真实化 + 字符预算 + 线程安全 ✅ 2026-11-01
 - [x] Springdoc/Swagger 在线接口文档 + httpclient5 测试依赖 ✅ 2026-11-01
 - [x] MindButler P1（长期记忆 + 口语化任务 + 待确认动作）✅ 2026-11-03
+- [x] MindButler P1.1（查询意图直读数据 + 记忆会话隔离）✅ 2026-11-03
 - [ ] 聊天/登录接口限流 + 安全加固
 - [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
 - [ ] Docker Compose 部署
@@ -561,4 +594,4 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - [ ] MindButler P1.5（monthly 重复任务 + 推送 + last_notified_at 回写）
 
 ---
-*最后更新: 2026-11-03 17:24*
+*最后更新: 2026-11-03 20:47*

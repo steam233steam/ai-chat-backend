@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v7.2
-> 最后更新：2026-11-03 19:10
+> 文档版本：v7.3  
+> 最后更新：2026-11-03 20:47  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v7.2 - 前端任务确认弹窗（流式命中意图自动弹出、刷新用 current 恢复、弹窗内确认/取消）；v7.1 - 聊天文案尾部带 `[[MB:pending=N]]` 标记，新增 `GET /user/pending-actions/{id}`；存库文案已剥离标记
+> 变更记录：v7.3 - MindButler P1.1（查询意图直接读数据回答 + 记忆会话隔离）；v7.2 - 前端任务确认弹窗（流式命中意图自动弹出、刷新用 current 恢复、弹窗内确认/取消）；v7.1 - 聊天文案尾部带 `[[MB:pending=N]]` 标记，新增 `GET /user/pending-actions/{id}`；存库文案已剥离标记
 
 ---
 
@@ -380,7 +380,10 @@ POST /user/code?phone=13800138000
 
 获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。回复内容经输出净化（剥安全标签）后落库。
 
-> ⭐ **意图拦截**：`POST /chat/ask` 发送前会先走 `IntentService.handle`。若命中意图（记忆/任务/确认/拒绝），只返回一条确认文案 + 写 pending，**不继续走模型聊天**；否则走正常聊天。前端根据返回的 pending 标记渲染"确认弹窗"（见 4.3）。
+> ⭐ **意图拦截**：`POST /chat/ask` 发送前会先走 `IntentService.handle`。命中意图（记忆/任务/确认/拒绝/查询）时只返回一条文案，**不继续走模型聊天**；否则走正常聊天。意图分类：
+> - **MEMORY / TASK**（"记住…" / "明天…"）→ LLM 提取候选 + 写 pending，文案尾部带 `[[MB:pending=N]]` 标记，前端据此渲染"确认弹窗"（见 4.3）
+> - **QUERY**（"我有哪些任务 / 你记住了我什么"）→ P1.1 新增：**不调 LLM**，直接读当前用户的任务/记忆数据拼自然文案回答；没有数据时明确说"还没有"
+> - **CONFIRM / REJECT / UPDATE / NO_PENDING** → 固定文案处理现有 pending
 
 - **接口地址**：`POST /chat/ask`
 - **Content-Type**：`application/x-www-form-urlencoded`
@@ -762,6 +765,26 @@ data: [DONE]
 
 ### 4.2 用户记忆 `/user/memories`
 
+#### 4.2.0 记忆会话隔离（P1.1）⭐
+
+`tb_user_memory` 新增 `session_id` 列（迁移脚本 `docs/migration/2026-11-03-mindbutler-p1-memory-session.sql`）：
+
+| 取值 | 含义 |
+|------|------|
+| `NULL` | 全局画像（跨会话生效，默认） |
+| 有值 | 仅该会话生效（会话级人设，如"这个会话里你是猫娘"） |
+
+**行为说明**：
+- AI 提取时 LLM 多输出 `scope` 字段（`global` / `session`），长期习惯/偏好默认 global，本会话人设/临时口吻为 session；拿不准填 global
+- 注入链路（`PromptBuilder.build(base, sessionScope)`）只取「全局(NULL) + 当前会话」的记忆，会话 A 设定的人设**不会带进**会话 B
+- 去重范围随作用域：会话级记忆只在同会话去重，全局记忆跨会话去重
+- 存量数据 `session_id` 全为 NULL → 行为不变，向后兼容
+- 前端无需改接口：记忆 CRUD 不变；`MemoryVO` 新增 `sessionId` 字段（NULL=全局，有值=会话级）
+
+---
+
+### 4.2.1 用户记忆 `/user/memories`
+
 长期记忆（结构化画像，固定 schema，不用向量库）的 manual CRUD + 注入查询 + 导出。
 
 #### 4.2.1 查询生效记忆
@@ -815,7 +838,7 @@ data: [DONE]
 - **接口地址**：`DELETE /user/memories/{id}`
 - 幂等；已是删除态返回 404
 
-**MemoryVO 字段**：`id, memKey, content, memType, status, confidence, source, sourceMessageId, replacesId, expiresAt, version, createTime, updateTime, expired`
+**MemoryVO 字段**：`id, memKey, content, memType, status, confidence, source, sourceMessageId, replacesId, expiresAt, version, createTime, updateTime, expired, sessionId`（P1.1 新增 `sessionId`：NULL=全局，有值=会话级）
 
 ---
 
@@ -873,7 +896,7 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 | 项目 | 说明 |
 |---|---|
 | 标记格式 | `[[MB:pending={pendingId}]]`（待确认动作的自增 id） |
-| 前端检测 | 正则 `\[ \[ MB:pending=(\d+) ]\]`，捕获到 id 就弹窗 |
+| 前端检测 | 正则 `\[\[MB:pending=(\d+)\]\]`，捕获到 id 就弹窗 |
 | 弹窗数据源 | `GET /user/pending-actions/{pendingId}`（或 `GET /current?sessionId=`） |
 | 确认 / 拒绝 | `POST /user/pending-actions/{pendingId}/confirm` / `reject` |
 | 展示 | 标记是给机器读的，前端展示文案时**剥离** `[[MB:pending=...]]` 行 |
@@ -1640,6 +1663,7 @@ Windows 宿主
    - `docs/migration/2026-10-28-add-chat-message-model.sql`
    - `docs/migration/2026-10-28-add-chat-session-model.sql`
    - `docs/migration/2026-11-02-mindbutler-p1.sql` ⭐
+   - `docs/migration/2026-11-03-mindbutler-p1-memory-session.sql` ⭐ P1.1（tb_user_memory 加 session_id）
 6. 确认 Ollama：`ollama list`（需有 qwen2.5-coder:7b）
 7. 启动后端：`mvn spring-boot:run`
 8. 启动前端：`npm install && npm run dev`

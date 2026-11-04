@@ -89,7 +89,7 @@ public final class IntentDetector {
     private static final Set<String> QUERY_TASK_TOPICS = Set.of(
             "任务", "待办", "日程", "计划", "提醒", "安排", "事");
     private static final Set<String> QUERY_MEMORY_TOPICS = Set.of(
-            "记忆", "记住的", "记得", "了解我");
+            "记忆", "记住的", "记住了", "记得", "了解我", "你记");
 
     /**
      * 检测意图。

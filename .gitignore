@@ -37,3 +37,12 @@ src/main/resources/application-local.properties
 
 ### Agnes IDE ###
 .agnes/
+
+### Build/test artifacts ###
+test_p11*.txt
+testcheck*.txt
+compile_p11*.txt
+applog.txt
+alllog2.txt
+compile3.txt
+$null
