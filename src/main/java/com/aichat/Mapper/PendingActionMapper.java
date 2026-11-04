@@ -58,6 +58,10 @@ public interface PendingActionMapper {
     @org.apache.ibatis.annotations.Delete("DELETE FROM tb_pending_action WHERE user_id = #{userId}")
     int deleteByUser(@Param("userId") String userId);
 
+    /** P1.3 级联清理：删某会话的全部 pending 记录（会话删除时调用）。 */
+    @org.apache.ibatis.annotations.Delete("DELETE FROM tb_pending_action WHERE user_id = #{userId} AND session_id = #{sessionId}")
+    int deleteBySession(@Param("userId") String userId, @Param("sessionId") String sessionId);
+
     @org.apache.ibatis.annotations.Delete("DELETE FROM tb_pending_action")
     int deleteAll();
 

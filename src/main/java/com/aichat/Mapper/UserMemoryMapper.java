@@ -115,4 +115,9 @@ public interface UserMemoryMapper {
 
     @Delete("DELETE FROM tb_user_memory WHERE user_id = #{userId}")
     int deleteByUser(@Param("userId") String userId);
+
+    /** P1.3 级联清理：软删某会话绑定的记忆（session_id 精确匹配）。全局记忆（session_id=NULL）不受影响。 */
+    @Update("UPDATE tb_user_memory SET status = 'deleted', version = version + 1, update_time = NOW() " +
+            "WHERE user_id = #{userId} AND session_id = #{sessionId} AND status != 'deleted'")
+    int deleteBySession(@Param("userId") String userId, @Param("sessionId") String sessionId);
 }

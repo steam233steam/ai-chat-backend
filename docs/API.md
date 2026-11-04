@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v7.3  
-> 最后更新：2026-11-03 20:47  
+> 文档版本：v7.5  
+> 最后更新：2026-11-04 17:50  
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v7.3 - MindButler P1.1（查询意图直接读数据回答 + 记忆会话隔离）；v7.2 - 前端任务确认弹窗（流式命中意图自动弹出、刷新用 current 恢复、弹窗内确认/取消）；v7.1 - 聊天文案尾部带 `[[MB:pending=N]]` 标记，新增 `GET /user/pending-actions/{id}`；存库文案已剥离标记
+> 变更记录：v7.5 - MindButler P1.2（意图增强：LLM 兜底 NONE 也过 LLM + 人设提取语义修正 + QUERY 按会话隔离查记忆 + 疑问词扩充）；v7.4 - MindButler P1.1b（确认文案口语化 + 确认后反馈落库到会话历史 + QUERY 意图主题词扩充）；v7.3 - MindButler P1.1（查询意图直接读数据回答 + 记忆会话隔离）；v7.2 - 前端任务确认弹窗；v7.1 - 聊天文案 `[[MB:pending=N]]` 标记 + `GET /user/pending-actions/{id}`
 
 ---
 
@@ -382,7 +382,8 @@ POST /user/code?phone=13800138000
 
 > ⭐ **意图拦截**：`POST /chat/ask` 发送前会先走 `IntentService.handle`。命中意图（记忆/任务/确认/拒绝/查询）时只返回一条文案，**不继续走模型聊天**；否则走正常聊天。意图分类：
 > - **MEMORY / TASK**（"记住…" / "明天…"）→ LLM 提取候选 + 写 pending，文案尾部带 `[[MB:pending=N]]` 标记，前端据此渲染"确认弹窗"（见 4.3）
-> - **QUERY**（"我有哪些任务 / 你记住了我什么"）→ P1.1 新增：**不调 LLM**，直接读当前用户的任务/记忆数据拼自然文案回答；没有数据时明确说"还没有"
+> - **QUERY**（"我有哪些任务 / 你记住了我什么 / 你的记忆怎么样"）→ P1.1 新增：**不调 LLM**，直接读当前用户的任务/记忆数据拼自然文案回答（P1.2 起记忆按会话隔离读：`listForInjection(sessionId)`，别的会话的人设不串进来）；没有数据时明确说"还没有"
+> - **NONE（P1.2 LLM 兜底）**：关键词没命中但命中宽松触发词（"你是 X" / "叫我 X" / "我平时 X"）→ 过一次 LLM 判断有无可提取内容，有则写 pending 弹窗，无则走正常聊天（`app.mindbutler.llm-intent-fallback` 开关控制，默认开）
 > - **CONFIRM / REJECT / UPDATE / NO_PENDING** → 固定文案处理现有 pending
 
 - **接口地址**：`POST /chat/ask`
@@ -438,8 +439,12 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - 回复经 `ModelOutputSanitizer` 净化（剥 `<ds_safety>` 标签），落库和返回的都是干净内容
 - AI 标题异步生成（不阻塞主流程），标题也走净化
 - 会话锁模型：新会话锁到本次传入的模型；已有会话若传入模型与锁定模型不一致 → 409
-- 命中意图时，`data` 是确认文案（如"已为你提取 1 条记忆 + 1 条任务，确认后生效？"），此时不产生 AI 模型回复
-- 命中"提取出新候选并写 pending"时，`data` 尾部还会带 `[[MB:pending=N]]` 机器标记；确认/拒绝/兜底分支不带标记
+- 命中意图时，`data` 是确认文案，此时不产生 AI 模型回复：
+  - **MEMORY / TASK**（"记住…" / "明天…"）→ LLM 提取候选 + 写 pending，文案尾部带 `[[MB:pending=N]]` 机器标记，前端据此渲染确认弹窗（见 4.3）
+  - **QUERY**（"我有哪些任务 / 你记住了我什么 / 你的记忆怎么样"，P1.1 新增）→ **不调 LLM**，直接读当前用户任务/记忆数据回答（P1.2 起记忆按会话隔离读：`listForInjection(sessionId)`，别的会话人设不串进来）；无数据时明确说"还没有"
+  - **NONE（P1.2 LLM 兜底）**：关键词没命中但命中宽松触发词（"你是 X" / "叫我 X" / "我平时 X"）→ 过一次 LLM 判断有无可提取内容，有则写 pending 弹窗，无则走正常聊天（`app.mindbutler.llm-intent-fallback` 开关控制，默认开）
+  - **CONFIRM / REJECT** → 处理现有 pending；P1.1b 起确认后会把反馈文案作为 assistant 消息落库到会话历史（前端拉历史可见，聊天自然衔接）
+  - **UPDATE / NO_PENDING / 兜底** → 固定文案，不带标记
 
 ---
 
@@ -886,10 +891,11 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 
 #### 4.3.3 聊天文案里的 pending 标记（前端弹窗契约）⭐
 
-`POST /chat/ask` 命中"提取出新候选并写 pending"时，返回的 `data` 文案**尾部**会带一个机器可读标记：
+`POST /chat/ask` 命中"提取出新候选并写 pending"时，返回的 `data` 文案**尾部**会带一个机器可读标记。
+P1.1b 起文案本身改为口语化（不再用"我识别到："机械格式），例如：
 
 ```
-我识别到 1 个任务「周五交周报」：2026-11-06（周五）09:00，每周。确认吗？
+我记住你的风格是「简洁」，周五 09:00（11-06）提醒你「交周报」，回复「好」我帮你设上，说「取消」就不存了。
 [[MB:pending=42]]
 ```
 
@@ -899,6 +905,7 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 | 前端检测 | 正则 `\[\[MB:pending=(\d+)\]\]`，捕获到 id 就弹窗 |
 | 弹窗数据源 | `GET /user/pending-actions/{pendingId}`（或 `GET /current?sessionId=`） |
 | 确认 / 拒绝 | `POST /user/pending-actions/{pendingId}/confirm` / `reject` |
+| 确认反馈落库 | P1.1b：确认后"好的，都帮你设好了…"自动作为 assistant 消息写入会话历史（前端拉历史可见；落库失败不影响确认本身） |
 | 展示 | 标记是给机器读的，前端展示文案时**剥离** `[[MB:pending=...]]` 行 |
 | 不带标记 | 普通聊天、确认/拒绝/过期/限流等所有兜底文案都**没有**标记 → 不弹窗 |
 
@@ -913,6 +920,7 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 - **接口地址**：`POST /user/pending-actions/{id}/confirm`
 - 原子确认；重复确认返回 `alreadyConfirmed=true`（不重复建）；已拒绝 / 过期 409
 - 确认时按 payload 实际内容（memories/tasks）分 memory-only / task-only / mixed 三路落库
+- **P1.1b 起**：确认成功后自动把"好的，都帮你设好了…"反馈文案作为 assistant 消息落库到该会话历史（落库失败不影响确认本身），前端拉历史 / 刷新时可见这条回音
 
 ```json
 {
@@ -932,7 +940,7 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 - 幂等；已拒绝静默成功；已确认 / 过期 409
 
 **PendingActionVO 字段**：`id, actionType, status, memories[], tasks[], preview, expiresAt`  
-**MemoryCandidate**：`key, value, memType, confidence, replacesId`  
+**MemoryCandidate**：`key, value, memType, confidence, replacesId, scope`（P1.1 新增 `scope`：global=全局画像，session=仅当前会话）  
 **TaskCandidate**：`action, title, dueAt, timezone, recurrence, recurrenceRule`  
 **ConfirmResult**：`alreadyConfirmed, memories[], tasks[]`
 

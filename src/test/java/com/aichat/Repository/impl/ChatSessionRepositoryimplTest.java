@@ -34,6 +34,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.aichat.Dto.SMessage;
 import com.aichat.Entity.ChatMessage;
 import com.aichat.Entity.ChatSession;
+import com.aichat.Mapper.PendingActionMapper;
+import com.aichat.Mapper.UserMemoryMapper;
 import com.aichat.Service.ChatPersistenceService;
 
 class ChatSessionRepositoryimplTest {
@@ -43,6 +45,8 @@ class ChatSessionRepositoryimplTest {
     private ZSetOperations<String, Object> zSetOperations;
     private HashOperations<String, Object, Object> hashOperations;
     private ChatPersistenceService chatPersistenceService;
+    private UserMemoryMapper userMemoryMapper;
+    private PendingActionMapper pendingActionMapper;
     private ChatSessionRepositoryimpl repository;
 
     @BeforeEach
@@ -53,6 +57,8 @@ class ChatSessionRepositoryimplTest {
         zSetOperations = mock(ZSetOperations.class);
         hashOperations = mock(HashOperations.class);
         chatPersistenceService = mock(ChatPersistenceService.class);
+        userMemoryMapper = mock(UserMemoryMapper.class);
+        pendingActionMapper = mock(PendingActionMapper.class);
 
         when(redisTemplate.opsForList()).thenReturn(listOperations);
         when(redisTemplate.opsForZSet()).thenReturn(zSetOperations);
@@ -61,6 +67,8 @@ class ChatSessionRepositoryimplTest {
         repository = new ChatSessionRepositoryimpl();
         ReflectionTestUtils.setField(repository, "redisTemplate", redisTemplate);
         ReflectionTestUtils.setField(repository, "chatPersistenceService", chatPersistenceService);
+        ReflectionTestUtils.setField(repository, "userMemoryMapper", userMemoryMapper);
+        ReflectionTestUtils.setField(repository, "pendingActionMapper", pendingActionMapper);
     }
 
     @Test
@@ -139,6 +147,35 @@ class ChatSessionRepositoryimplTest {
         assertThat(dbMessageCaptor.getValue().getModel()).isEqualTo("qwen2.5-coder:7b");
         assertThat(messageCaptor.getValue().getId()).isEqualTo(7L);
         assertThat(messageCaptor.getValue().getModel()).isEqualTo("qwen2.5-coder:7b");
+    }
+
+    @Test
+    void shouldCascadeCleanMemoryAndPendingWhenClearSession() {
+        when(chatPersistenceService.clear("u1", "s1")).thenReturn(true);
+        when(redisTemplate.delete(anyString())).thenReturn(true);
+        when(userMemoryMapper.deleteBySession("u1", "s1")).thenReturn(3);
+        when(pendingActionMapper.deleteBySession("u1", "s1")).thenReturn(1);
+
+        repository.clear("u1", "s1");
+
+        // P1.3 级联清理：会话删除时同步清掉该会话绑定的记忆 + pending
+        verify(userMemoryMapper).deleteBySession("u1", "s1");
+        verify(pendingActionMapper).deleteBySession("u1", "s1");
+    }
+
+    @Test
+    void shouldNotBlockClearWhenCascadeFails() {
+        when(chatPersistenceService.clear("u1", "s1")).thenReturn(true);
+        when(redisTemplate.delete(anyString())).thenReturn(true);
+        when(userMemoryMapper.deleteBySession("u1", "s1")).thenThrow(new RuntimeException("DB 抖动"));
+        when(pendingActionMapper.deleteBySession("u1", "s1")).thenReturn(0);
+
+        boolean cleared = repository.clear("u1", "s1");
+
+        // 级联清理失败不影响会话本身删除（只记日志）
+        assertThat(cleared).isTrue();
+        verify(chatPersistenceService).clear("u1", "s1");
+        verify(redisTemplate).delete("aichat:chat:session:u1:s1");
     }
 
     @Test

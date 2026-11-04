@@ -1,4 +1,4 @@
-# AI Chat 项目开发状态
+﻿# AI Chat 项目开发状态
 
 ## 项目概览
 - **项目名称**: aichat
@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: MindButler P1.1（长期记忆 + 口语化任务 + 待确认动作 + 查询意图 + 记忆会话隔离）✅
+- **当前阶段**: MindButler P1.2（意图增强：LLM 兜底 + 人设提取 + QUERY 扩充）✅ 2026-11-04
 
 ## 架构分层
 
@@ -233,6 +233,52 @@ com.aichat/
 - [x] 迁移脚本 `docs/migration/2026-11-03-mindbutler-p1-memory-session.sql`（存量 session_id 全 NULL，向后兼容）
 - [x] 单测 205 个全通过（BUILD SUCCESS）
 - [x] P1.1b：确认文案改口语化（"我记住你的风格是简洁，周二 09:00（11-03）提醒你「交作业」，回复「好」我帮你设上"），去掉机械"我准备帮你安排【…】（共 N 条）"格式；`describeTask` 时间描述从 "（2026-11-03 09:00 周二，单次）" 改为 "周二 09:00（11-03）"；测试 224 绿
+- [x] P1.1b 需求2（方案B）：确认后自动把"好的，都帮你设好了…"作为 assistant 消息落库到会话历史（`PendingActionServiceimpl.confirm` 调 `ChatSessionRepository.save`；落库失败不影响确认本身，只记日志）
+- [x] `IntentDetector` 查询主题词扩充：任务主题加"安排/事"，记忆主题加"记住了/你记"，提升 QUERY 意图召回
+- [x] 单测同步更新（IntentDetectorTest / IntentServiceimplTest / PendingActionServiceimplTest）
+- [x] `.gitignore` 新增测试/日志产物（test_p11*.txt、testcheck*.txt、compile_p11*.txt、applog.txt、alllog2.txt、$null 等）
+
+#### MindButler P1.2：意图增强（LLM 兜底 + 人设提取 + QUERY 扩充）⭐（2026-11-04）
+- [x] **P0 LLM 意图兜底（KouriChat 模式）**：`IntentDetector.shouldTryLlmFallback()` 加 `LOOSE_TRIGGERS`（"你是/你叫/当个/扮演/叫我/我是/我平时/你的记忆/你了解我/你记得我/下周一…"），NONE 时命中宽松触发词才过 LLM（避免每条"你好"都调 LLM）
+- [x] `IntentServiceimpl.handleNone()` → `extractLoose()`：NONE + `llmIntentFallback=true` → 用 MEMORY prompt 让 LLM 判断有无可提取内容，非空走 pending 弹窗，空走正常聊天（不阻断）
+- [x] `MindButlerProperties.llmIntentFallback=true` 开关（关掉就退回纯关键词模式）
+- [x] **P1a 人设提取改进**：`IntentPrompts` 明确 relation 存"AI 的角色/人设"而非"用户指令原文"（"你是猫娘"→value=猫娘，scope=session）；`IntentReplyFormatter.keyLabel` relation 从"称呼/关系"改"人设/称呼"
+- [x] **P1b QUERY 疑问词扩充**：`QUERY_INTERROGATIVES` 加"怎么样/如何/啥样"；"你的记忆怎么样"命中 QUERY → 直接读记忆数据回答（按会话隔离 `listForInjection(sessionId)`，别的会话人设不串进来）
+- [x] `IntentQueryReplyBuilder.buildMemoryList` 加"（仅本会话）"标注，让用户看到某条记忆是会话级的
+- [x] `IntentDetectorTest` 加 `shouldReturnNoneForPersonaButLlmFallbackCatches`（"你是猫娘"→NONE+兜底命中；"你的记忆怎么样"→QUERY）
+- [x] 单测 226 个全通过（BUILD SUCCESS）
+
+### 📝 核心改进（2026-11-04 P1.2）
+
+**1. LLM 意图兜底（KouriChat 模式）**
+- 关键词粗筛 NONE 时，命中 `LOOSE_TRIGGERS`（"你是 X"、"叫我 X"、"我平时 X"、"你的记忆"等）才过一次 LLM 提取
+- LLM 识别不出可提取内容 → 走正常聊天（不阻断），识别出 → 走 pending 弹窗确认
+- 解决"你是猫娘"漏到聊天模型自说自话"喵~"的问题；"你的记忆怎么样"不再被聊天模型瞎答
+- 性能可控：纯聊天（"你好/谢谢"）不命中宽松触发词，不过 LLM
+
+**2. 人设提取语义修正**
+- `relation` key 明确存"AI 的角色/人设/称呼"（"你是猫娘"→猫娘，"叫我主人"→主人），不再存"用户希望我是猫娘"这种指令原文
+- 确认文案读起来自然："我记住你的人设/称呼是「猫娘」"（之前是"我记住你的称呼/关系是「用户希望我是猫娘」"）
+
+**3. QUERY 按会话隔离查记忆**
+- "你的记忆怎么样" → `listForInjection(stableLimit, dynamicLimit, sessionId)`，只取"全局(NULL) + 本会话"的记忆
+- 别的会话里设的猫娘不会串进当前会话的回答
+
+### 📝 核心改进（2026-11-04 P1.1b）
+
+**1. 确认文案口语化（IntentReplyFormatter）**
+- 确认前：`我记住你的风格是「简洁」，让我提醒你明天 07:00（11-05 周四）「起床」，回复「好」我帮你设上，说「取消」就不存了。`（不再用"我识别到：记忆/任务"的机械格式）
+- 确认后：`好的，帮你设好了：记住了风格是「简洁」…`
+- 时间描述口语化：单次任务"周四 07:00（11-05）"，重复任务"每周四，09:00"；无截止时间"随时"
+- 保留绝对日期 + 星期 + 时间 + 重复规则（用户才能核对解析对不对）
+
+**2. 确认后反馈落库（方案B）**
+- 用户说"好/确认"后，确认结果文案自动作为 assistant 消息写入会话历史
+- 前端刷新 / 拉历史时能看到这条反馈，聊天自然衔接（不会出现"我说了确认但历史里没有回音"的断层）
+- 反馈落库失败不影响确认本身（事务已提交），只记 warn 日志
+
+**3. 记忆与确认的链路闭环**
+- 提取 → pending → 确认 → 落库 + 反馈落库 → 下次注入画像，全链路闭环
 
 ### 📝 核心改进（2026-11-03 P1.1）
 
@@ -587,6 +633,9 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - [x] Springdoc/Swagger 在线接口文档 + httpclient5 测试依赖 ✅ 2026-11-01
 - [x] MindButler P1（长期记忆 + 口语化任务 + 待确认动作）✅ 2026-11-03
 - [x] MindButler P1.1（查询意图直读数据 + 记忆会话隔离）✅ 2026-11-03
+- [x] MindButler P1.1b（口语化确认文案 + 确认后反馈落库 + 主题词扩充 + gitignore 整理）✅ 2026-11-04
+- [x] MindButler P1.2（意图增强：LLM 兜底 + 人设提取 + QUERY 按会话隔离查记忆）✅ 2026-11-04
+- [ ] MindButler P1.3（记忆面板按会话显示 + 会话删除级联清理记忆/pending）
 - [ ] 聊天/登录接口限流 + 安全加固
 - [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
 - [ ] Docker Compose 部署
@@ -595,4 +644,4 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - [ ] MindButler P1.5（monthly 重复任务 + 推送 + last_notified_at 回写）
 
 ---
-*最后更新: 2026-11-03 20:47*
+*最后更新: 2026-11-04 16:46*

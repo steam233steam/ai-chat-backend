@@ -38,14 +38,16 @@ public class MemoryController {
     private MemoryService memoryService;
 
     @Operation(summary = "查询生效记忆",
-            description = "返回当前用户 active 且未过期的记忆，按类型/更新时间倒序；limit 控制总数 1-100")
+            description = "返回当前用户 active 且未过期的记忆，按类型/更新时间倒序；limit 控制总数 1-100；"
+                    + "P1.3 支持 sessionId 参数按会话隔离过滤（不传则返回全部会话+全局记忆）")
     @GetMapping
     public Result<List<MemoryVO>> list(
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(defaultValue = "100") int limit,
+            @RequestParam(required = false) String sessionId) {
         if (limit < 1 || limit > 100) {
             throw new BusinessException("limit 必须在 1-100 之间");
         }
-        return Result.success(memoryService.list(limit));
+        return Result.success(memoryService.list(limit, sessionId));
     }
 
     @Operation(summary = "导出全部记忆",

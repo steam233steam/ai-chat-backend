@@ -27,6 +27,12 @@ public interface MemoryService {
     /** 查当前用户记忆列表（含 active+superseded，排除 deleted；limit 1-100）。 */
     List<MemoryVO> list(int limit);
 
+    /**
+     * 会话隔离版记忆列表（P1.3）：只返回"全局(session_id=NULL) + 指定会话"的记忆。
+     * sessionScope=null 等价于 {@link #list(int)}（全量）。
+     */
+    List<MemoryVO> list(int limit, String sessionScope);
+
     /** 导出当前用户全部未删除记忆（含 superseded），供隐私/迁移。 */
     List<MemoryVO> export();
 

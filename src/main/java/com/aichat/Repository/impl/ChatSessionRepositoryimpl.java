@@ -25,6 +25,8 @@ import org.springframework.stereotype.Repository;
 import com.aichat.Dto.SMessage;
 import com.aichat.Entity.ChatMessage;
 import com.aichat.Entity.ChatSession;
+import com.aichat.Mapper.PendingActionMapper;
+import com.aichat.Mapper.UserMemoryMapper;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatPersistenceService;
 import static com.aichat.utils.RedisConstants.*;
@@ -41,6 +43,10 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
     private RedisTemplate<String, Object> redisTemplate;
     @Autowired
     private ChatPersistenceService chatPersistenceService;
+    @Autowired
+    private UserMemoryMapper userMemoryMapper;
+    @Autowired
+    private PendingActionMapper pendingActionMapper;
 
     @Override
     public void save(String userId, String sessionid, Message message, String model) {
@@ -140,6 +146,18 @@ public class ChatSessionRepositoryimpl implements ChatSessionRepository {
     @Override
     public boolean clear(String userId, String sessionid) {
         boolean deleted = chatPersistenceService.clear(userId, sessionid);
+
+        // P1.3 级联清理：会话删除时同步清掉该会话绑定的记忆和 pending
+        try {
+            int cleanedMemories = userMemoryMapper.deleteBySession(userId, sessionid);
+            int cleanedPending = pendingActionMapper.deleteBySession(userId, sessionid);
+            if (cleanedMemories > 0 || cleanedPending > 0) {
+                log.info("级联清理会话数据: userId={}, session={}, memories={}, pending={}",
+                        userId, sessionid, cleanedMemories, cleanedPending);
+            }
+        } catch (Exception e) {
+            log.warn("级联清理会话记忆/pending 失败（不影响会话本身删除）: userId={}, session={}", userId, sessionid, e);
+        }
 
         try {
             String sessionsKey = USER_SESSIONS_KEY_PREFIX + userId;

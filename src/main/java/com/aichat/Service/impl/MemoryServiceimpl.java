@@ -67,10 +67,15 @@ public class MemoryServiceimpl implements MemoryService {
 
     @Override
     public List<MemoryVO> list(int limit) {
+        return list(limit, null);
+    }
+
+    @Override
+    public List<MemoryVO> list(int limit, String sessionScope) {
         String userId = currentUserId();
         int cap = Math.max(1, Math.min(limit, 100));
         LocalDateTime now = nowLocal();
-        return userMemoryMapper.selectActiveByUser(userId, now, null, cap).stream()
+        return userMemoryMapper.selectActiveByUser(userId, now, sessionScope, cap).stream()
                 .map(m -> toVO(m, now))
                 .toList();
     }
