@@ -37,6 +37,7 @@ public interface PendingActionService {
      * - 重复确认 → alreadyConfirmed=true（不重复建记忆/任务）
      * - 已过期/已拒绝 → 409 提示重新发起
      * 确认时按 payload 实际内容（memories/tasks）分三种落库，actionType 只用于展示。
+     * P1.1b 需求2（方案B）：确认后自动把"好的，都帮你设好了"作为 assistant 消息落库到会话历史。
      */
     ConfirmResult confirm(long id);
 

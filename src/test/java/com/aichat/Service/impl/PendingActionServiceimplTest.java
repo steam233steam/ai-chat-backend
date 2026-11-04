@@ -36,9 +36,12 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Entity.PendingAction;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.PendingActionMapper;
+import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.TaskService;
 import com.aichat.utils.UserHolder;
+
+import org.springframework.ai.chat.messages.Message;
 
 /**
  * PendingActionService 单测：纯 Mockito（不连 MySQL），反射注入 Mapper/Config/Clock，
@@ -57,6 +60,7 @@ class PendingActionServiceimplTest {
     private PendingActionMapper mapper;
     private MemoryService memoryService;
     private TaskService taskService;
+    private ChatSessionRepository chatSessionRepository;
     private MindButlerProperties props;
     private PendingActionServiceimpl service;
 
@@ -65,6 +69,7 @@ class PendingActionServiceimplTest {
         mapper = mock(PendingActionMapper.class);
         memoryService = mock(MemoryService.class);
         taskService = mock(TaskService.class);
+        chatSessionRepository = mock(ChatSessionRepository.class);
         props = new MindButlerProperties();
         props.setTaskZone("Asia/Shanghai");
         // 固定 TTL=10min 便于断言
@@ -74,6 +79,7 @@ class PendingActionServiceimplTest {
         ReflectionTestUtils.setField(service, "pendingActionMapper", mapper);
         ReflectionTestUtils.setField(service, "memoryService", memoryService);
         ReflectionTestUtils.setField(service, "taskService", taskService);
+        ReflectionTestUtils.setField(service, "chatSessionRepository", chatSessionRepository);
         ReflectionTestUtils.setField(service, "props", props);
         ReflectionTestUtils.setField(service, "clock", FIXED_CLOCK);
         login();
@@ -179,6 +185,24 @@ class PendingActionServiceimplTest {
     }
 
     // ---------- confirm：分支落库 ----------
+
+    @Test
+    void shouldSaveConfirmReplyToChatHistory() {
+        // 需求2（方案B）：确认成功后把"好的，都帮你设好了"作为 assistant 消息落库到会话历史
+        String payload = "{\"memories\":[{\"key\":\"style\",\"value\":\"简洁\",\"memType\":\"stable\",\"confidence\":0.9}]}";
+        PendingAction p = pending(9L, payload, NOW.plusMinutes(5));
+        when(mapper.selectById(9L, UID)).thenReturn(p);
+        when(mapper.markConfirmed(9L, UID)).thenReturn(1);
+        when(memoryService.createWithReplaces(eq("style"), eq("简洁"), eq("stable"),
+                eq(0.9), isNull(), eq(7L), isNull()))
+                .thenReturn(memoryVO(41L));
+
+        var result = service.confirm(9L);
+
+        assertThat(result.getMemories()).hasSize(1);
+        // 验证：assistant 消息已落库到 s-1 会话历史，model="mb"（非聊天模型）
+        verify(chatSessionRepository).save(eq(UID), eq(SES), any(Message.class), eq("mb"));
+    }
 
     @Test
     void shouldConfirmMemoryOnly() {

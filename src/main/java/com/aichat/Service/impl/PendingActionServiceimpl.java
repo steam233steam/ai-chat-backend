@@ -27,11 +27,15 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Entity.PendingAction;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.PendingActionMapper;
+import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.PendingActionService;
 import com.aichat.Service.TaskService;
 import com.aichat.utils.IntentPayloadCodec;
+import com.aichat.utils.IntentReplyFormatter;
 import com.aichat.utils.UserHolder;
+
+import org.springframework.ai.chat.messages.AssistantMessage;
 
 @Service
 public class PendingActionServiceimpl implements PendingActionService {
@@ -47,6 +51,8 @@ public class PendingActionServiceimpl implements PendingActionService {
     private MindButlerProperties props;
     @Autowired
     private Clock clock;
+    @Autowired
+    private ChatSessionRepository chatSessionRepository;
 
 
     @Override
@@ -159,7 +165,21 @@ public class PendingActionServiceimpl implements PendingActionService {
         List<Map<String, Object>> taskResults = applyTasks(action);
         log.info("pending 确认: userId={}, id={}, memories={}, tasks={}",
                 userId, id, memoryResults.size(), taskResults.size());
-        return new ConfirmResult(false, memoryResults, taskResults);
+        ConfirmResult result = new ConfirmResult(false, memoryResults, taskResults);
+
+        // 需求2（方案B）：确认成功后把"好的，都帮你设好了"作为 assistant 消息落库到会话历史，
+        // 前端刷新/拉历史时能看到这条反馈，聊天自然衔接。
+        // 重复确认（alreadyConfirmed 分支）已在上面提前 return，不会走到这里，无需额外判断。
+        try {
+            String confirmReply = IntentReplyFormatter.buildConfirmResultReply(result);
+            chatSessionRepository.save(userId, action.getSessionId(),
+                    new AssistantMessage(confirmReply), "mb");
+        } catch (Exception e) {
+            // 反馈落库失败不影响确认本身（事务已提交），只记日志
+            log.warn("确认反馈落库失败（不影响确认结果）: userId={}, session={}, pendingId={}",
+                    userId, action.getSessionId(), id, e);
+        }
+        return result;
     }
 
     @Override
