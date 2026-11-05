@@ -29,37 +29,44 @@ public class ConfirmationReceiptWriter {
     @Autowired
     private PersonaReplyService personaReplyService;
 
-    /** 弹窗确认后写一条人设化短回执。 */
-    public void writeConfirmed(String sessionId) {
+    /**
+     * 弹窗确认后写一条人设化短回执，并把实际写入的内容返回给调用方。
+     * 前端用这条内容替换之前的硬编码成功文案，保证“看到的就是落库的”。
+     *
+     * @return 实际写入的短回执；session 为空或写入失败时返回 null
+     */
+    public String writeConfirmed(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
-            return;
+            return null;
         }
-        write(sessionId, personaReplyService.confirmed(sessionId));
+        return write(sessionId, personaReplyService.confirmed(sessionId));
     }
 
-    /** 弹窗取消后写一条人设化短回执。 */
-    public void writeCancelled(String sessionId) {
+    /** 弹窗取消后写一条人设化短回执，并返回实际写入的内容。 */
+    public String writeCancelled(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
-            return;
+            return null;
         }
-        write(sessionId, personaReplyService.cancelled(sessionId));
+        return write(sessionId, personaReplyService.cancelled(sessionId));
     }
 
-    private void write(String sessionId, String content) {
+    private String write(String sessionId, String content) {
         if (sessionId == null || sessionId.isBlank()) {
-            return;
+            return null;
         }
         UserDto user = UserHolder.getUser();
         if (user == null || user.getId() == null) {
-            return;
+            return null;
         }
         try {
             String model = chatSessionRepository.getModel(user.getId(), sessionId);
             chatSessionRepository.save(user.getId(), sessionId,
                     new AssistantMessage(content), model);
+            return content;
         } catch (Exception e) {
             log.warn("确认短回执写入失败（不影响确认结果）: userId={}, session={}",
                     user.getId(), sessionId, e);
+            return null;
         }
     }
 }

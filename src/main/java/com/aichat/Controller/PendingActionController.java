@@ -57,7 +57,8 @@ public class PendingActionController {
         ConfirmResult result = pendingActionService.confirm(id);
         // 弹窗路径由后端补一条人设化短回执；文本确认走 ChatService，不会重复。
         if (!result.isAlreadyConfirmed()) {
-            confirmationReceiptWriter.writeConfirmed(result.getSessionId());
+            // 把真正写入历史的那句话回给前端，避免前端再硬编码一句固定成功文案。
+            result.setReceipt(confirmationReceiptWriter.writeConfirmed(result.getSessionId()));
         }
         return Result.success(result);
     }

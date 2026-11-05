@@ -44,6 +44,8 @@ public final class IntentPrompts {
         sb.append("- 一次消息可能同时含记忆和任务，分别填进两个数组。\n");
         sb.append("- memories.key=relation：存的是 AI 的角色/人设/称呼（如\"猫娘\"、\"主人\"、\"简洁\"），不是用户指令原文。用户说\"你是猫娘\"→value=猫娘；说\"叫我主人\"→value=主人。scope 填 session。\n");
         sb.append("- memories.key=style：存回答风格偏好（简洁/详细/幽默）。key=schedule：存作息/习惯。key=goal：存近期目标。\n");
+        sb.append("- style 只在用户明确表达长期/跨会话偏好时提取（“以后都简洁点”“每次都先给结论”）；\n");
+        sb.append("  一次性的“这次简洁点/这段短一点”不要写记忆，直接按当前消息回答。\n");
         sb.append("- memories.scope：长期习惯/偏好（style/schedule/goal、长期称呼）填 global；\n");
         sb.append("  本次会话的人设/角色/临时口吻（如\"这个会话里你是猫娘\"、\"现在你叫我主人\"）填 session。\n");
         sb.append("  拿不准就填 global。scope 只影响记忆在哪些会话生效，不影响内容。\n");

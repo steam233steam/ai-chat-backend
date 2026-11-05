@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v7.6<br>
-> 最后更新：2026-11-04 18:53<br>
+> 文档版本：v7.9<br>
+> 最后更新：2026-11-05 22:20<br>
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v7.6 - 短信发送抽象为 SmsSender 端口（dev 日志 / 生产未配置返回 503），`/user/code` 发送前预检 + 失败清理冷却；新增 MindButler 全链路集成测试；v7.5 - MindButler P1.2（意图增强：LLM 兜底 NONE 也过 LLM + 人设提取语义修正 + QUERY 按会话隔离查记忆 + 疑问词扩充）；v7.4 - MindButler P1.1b（确认文案口语化 + 确认后反馈落库到会话历史 + QUERY 意图主题词扩充）；v7.3 - MindButler P1.1（查询意图直接读数据回答 + 记忆会话隔离）；v7.2 - 前端任务确认弹窗；v7.1 - 聊天文案 `[[MB:pending=N]]` 标记 + `GET /user/pending-actions/{id}`
+> 变更记录：v7.9 - 确认回执回传 receipt + style 记忆指令化 + 历史不回填已删除画像 + 任务能力闸门（QQ/微信/短信等外部通道明确拒绝）；v7.8 - MindButler P1.5（任务溯源 created_from_session + 确认链路收敛 + payload 前置校验）；v7.7 - MindButler P1.3/P1.4（LLM 宽松兜底提取 + 人设化短回执 + 确认/拒绝词精确匹配 + QUERY 状态询问收紧 + 任务敏感信息闸门 + 记忆查询按会话隔离）；v7.6 - 短信发送抽象为 SmsSender 端口（dev 日志 / 生产未配置返回 503），`/user/code` 发送前预检 + 失败清理冷却；新增 MindButler 全链路集成测试；v7.5 - MindButler P1.2（意图增强：LLM 兜底 NONE 也过 LLM + 人设提取语义修正 + QUERY 按会话隔离查记忆 + 疑问词扩充）；v7.4 - MindButler P1.1b（确认文案口语化 + 确认后反馈落库到会话历史 + QUERY 意图主题词扩充）；v7.3 - MindButler P1.1（查询意图直接读数据回答 + 记忆会话隔离）；v7.2 - 前端任务确认弹窗；v7.1 - 聊天文案 `[[MB:pending=N]]` 标记 + `GET /user/pending-actions/{id}`
 
 ---
 
@@ -391,10 +391,10 @@ POST /user/code?phone=13800138000
 获取 AI 回复，同时保存对话历史（MySQL 持久化 + Redis 缓存）。回复内容经输出净化（剥安全标签）后落库。
 
 > ⭐ **意图拦截**：`POST /chat/ask` 发送前会先走 `IntentService.handle`。命中意图（记忆/任务/确认/拒绝/查询）时只返回一条文案，**不继续走模型聊天**；否则走正常聊天。意图分类：
-> - **MEMORY / TASK**（"记住…" / "明天…"）→ LLM 提取候选 + 写 pending，文案尾部带 `[[MB:pending=N]]` 标记，前端据此渲染"确认弹窗"（见 4.3）
-> - **QUERY**（"我有哪些任务 / 你记住了我什么 / 你的记忆怎么样"）→ P1.1 新增：**不调 LLM**，直接读当前用户的任务/记忆数据拼自然文案回答（P1.2 起记忆按会话隔离读：`listForInjection(sessionId)`，别的会话的人设不串进来）；没有数据时明确说"还没有"
-> - **NONE（P1.2 LLM 兜底）**：关键词没命中但命中宽松触发词（"你是 X" / "叫我 X" / "我平时 X"）→ 过一次 LLM 判断有无可提取内容，有则写 pending 弹窗，无则走正常聊天（`app.mindbutler.llm-intent-fallback` 开关控制，默认开）
-> - **CONFIRM / REJECT / UPDATE / NO_PENDING** → 固定文案处理现有 pending
+> - **MEMORY / TASK**（"记住…" / "明天…"）→ LLM 提取候选 + 写 pending，`data` 只返回 `[[MB:pending=N]]` 机器标记（P1.3 起不再附"已识别到 N 条"的确认文案），前端据此渲染"确认弹窗"（见 4.3）
+> - **QUERY**（"我有哪些任务 / 你记住了我什么 / 你的任务怎么样 / 我的记忆如何"）→ P1.1 新增：**不调 LLM**，直接读当前用户的任务/记忆数据拼自然文案回答（P1.3 起记忆按会话隔离读：`list(100, sessionId)` 取"全局 + 本会话"，不用注入配额截断，用户有 20 条也能看全）；没有数据时明确说"还没有"。P1.4 收紧状态询问："你的任务怎么样"需"主语(我的/你的/我/你) + 状态词(怎么样/如何/啥样)"同时命中才走 QUERY，避免"你觉得我这个人怎么样"被误路由
+> - **NONE（P1.2/P1.4 LLM 兜底）**：关键词没命中但命中宽松触发词（"你是 X" / "叫我 X" / "我平时 X" / "下周三要出差"）→ 过一次 LLM 判断有无可提取内容（P1.4 起传 `intent=null` 让 LLM 自由判断记忆/人设/任务/混合，不再固定 MEMORY 侧重），有则写 pending 弹窗，无则走正常聊天（`app.mindbutler.llm-intent-fallback` 开关控制，默认开）。宽松兜底先过**任务敏感信息闸门**（`detectSensitiveData`，只有"密码=xxx"这种真带凭据值的才拒），避免"提醒我改密码"被误拒
+> - **CONFIRM / REJECT / UPDATE / NO_PENDING** → 固定文案处理现有 pending。P1.3 起确认/拒绝词用**精确匹配**（按标点切分后整段等于命令词），"你好呀""这不是我的任务"不再被误确认/误拒绝；UPDATE 词扩充了"删除/移除/清掉"
 
 - **接口地址**：`POST /chat/ask`
 - **Content-Type**：`application/x-www-form-urlencoded`
@@ -687,7 +687,7 @@ data: [DONE]
 #### 4.1.1 到期待办
 
 - **接口地址**：`GET /user/tasks/due`
-- **说明**：`status=pending`、有 `due_at` 且已到期，按 `due_at` 升序；P1 只读不回写 `last_notified_at`，前端按 `(id, dueAt)` 去重
+- **说明**：`status=pending`、有 `due_at` 且已到期，按 `due_at` 升序；P1 只读不回写 `last_notified_at`。前端页面可见时每 30 秒轮询一次，只弹 10 分钟内到期的任务（按 `taskId + dueAt` 去重，单轮最多 3 条），点击通知切到任务 tab；页面关闭/后台不保证提醒。
 
 | 参数名 | 类型 | 必填 | 默认 | 说明 |
 |--------|------|------|------|------|
@@ -734,6 +734,7 @@ data: [DONE]
 
 - **接口地址**：`POST /user/tasks`
 - 不走 LLM；`recurrence` 默认 `once`；`weekly` 必须带 `recurrenceRule`；`recurring` 必须有 `dueAt`
+- **P1.5** 支持可选 `createdFromSession` 字段（≤64）：任务从哪个会话发起（溯源用，不影响可见性）
 
 ```json
 {
@@ -741,7 +742,8 @@ data: [DONE]
   "dueAt": "2026-11-06T09:00:00",
   "recurrence": "weekly",
   "recurrenceRule": "BYDAY=FR",
-  "rawInput": "记得周五交周报"
+  "rawInput": "记得周五交周报",
+  "createdFromSession": "s001"
 }
 ```
 
@@ -774,7 +776,9 @@ data: [DONE]
 - **接口地址**：`DELETE /user/tasks/{id}`
 - 幂等；已是删除态仍返回 200；不存在/非本人返回 404
 
-**TaskVO 字段**：`id, title, dueAt, timezone, recurrence, recurrenceRule, status, deletedAt, completedAt, rawInput, version, createTime, updateTime, overdue`
+**TaskVO 字段**：`id, title, dueAt, timezone, recurrence, recurrenceRule, status, deletedAt, completedAt, rawInput, version, createTime, updateTime, createdFromSession, overdue`（P1.5 新增 `createdFromSession`）
+
+> **P1.5 确认链路说明**：口语化"AI 创建任务"经 `pending → 确认` 路径落库时，`createdFromSession` 自动记录发起任务的会话（`TaskService.createFromPending`），任务可见性仍全账号（不按 session 过滤）；前端任务栏在聊天界面侧边展示当前用户全部任务。
 
 ---
 
@@ -792,7 +796,9 @@ data: [DONE]
 **行为说明**：
 - AI 提取时 LLM 多输出 `scope` 字段（`global` / `session`），长期习惯/偏好默认 global，本会话人设/临时口吻为 session；拿不准填 global
 - 注入链路（`PromptBuilder.build(base, sessionScope)`）只取「全局(NULL) + 当前会话」的记忆，会话 A 设定的人设**不会带进**会话 B
-- 其中 `relation` 是用户弹窗确认过的人设/称呼，会作为 `<confirmed_persona>` 明确要求模型遵循；其他 key 仍只作为背景数据
+- 其中 `relation` 是用户弹窗确认过的人设/称呼，会作为 `<confirmed_persona>` 明确要求模型遵循
+- **v7.9**：`style` 会作为 `<confirmed_style>` 明确要求模型遵循（回答简洁/详细/幽默等），不再只是 JSON 背景数据；`goal/schedule` 仍只作为背景数据
+- **v7.9 历史边界**：system prompt 增加 `<memory_policy>`，明确"历史对话可能包含已删除/已替换的偏好，不要从历史恢复"；用户删除最后一条记忆后也会注入该边界，避免模型沿历史继续使用旧风格
 - system prompt 同时注入当前 `Asia/Shanghai` 时间，模型回答“现在/今天/明天”时不能自己编日期
 - 去重范围随作用域：会话级记忆只在同会话去重，全局记忆跨会话去重
 - 存量数据 `session_id` 全为 NULL → 行为不变，向后兼容
@@ -808,6 +814,12 @@ data: [DONE]
 
 - **接口地址**：`GET /user/memories`
 - 返回当前用户 active 且未过期的记忆，按类型 + 更新时间倒序；`limit` 控制总数 1-100
+- **P1.3 新增** `sessionId` 参数（可选）：按会话隔离过滤，只返回"全局(NULL) + 该会话"的记忆；不传则返回全部会话 + 全局记忆
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| limit | int | 否 | 1-100，默认 100 |
+| sessionId | String | 否 | 传了只返回"全局 + 该会话"的记忆（P1.3 会话隔离） |
 
 #### 4.2.2 导出全部记忆
 
@@ -931,7 +943,10 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 - **接口地址**：`POST /user/pending-actions/{id}/confirm`
 - 原子确认；重复确认返回 `alreadyConfirmed=true`（不重复建）；已拒绝 / 过期 409
 - 确认时按 payload 实际内容（memories/tasks）分 memory-only / task-only / mixed 三路落库
-- 弹窗确认成功后，后端用当前会话人设生成一条短回执（失败时回退“已经定好”）；取消成功同理（回退“计划取消”）。不再重复任务/记忆详情，避免两条重复 AI 气泡。文本确认走 ChatService，同样使用人设回执。
+- **P1.5 payload 前置校验**：`create` 和 `confirm` 都先 `ensureConfirmablePayload`——至少要有一条"可落库"的记忆（key+value 非空）或任务（title 非空 + action=create）候选，空/非法 payload 直接 400，避免"确认成功但什么都没建"
+- **P1.5 任务溯源**：确认链路落任务时走 `TaskService.createFromPending`，把 pending 的 `sessionId` 写进任务的 `created_from_session`（可见性仍全账号，不按 session 过滤）
+- 弹窗确认成功后，REST 层（`ConfirmationReceiptWriter`）用当前会话人设生成一条短回执（失败时回退"已经定好"）；取消成功同理（回退"计划取消"）。**P1.5 起 `PendingActionService` 自身不再写聊天历史**（回执收口到 Controller，职责更清晰），避免"确认提示 + 已设好"两条重复 AI 气泡。文本确认走 ChatService，同样使用人设回执。
+- **v7.9**：确认响应新增 `receipt`，内容是**实际写入聊天历史**的那句回执；前端直接展示它，不再硬编码"好的，都帮你设好了"。`alreadyConfirmed=true` 时 `receipt=null`，前端不重复追加气泡。
 
 ```json
 {
@@ -939,6 +954,7 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
   "message": "成功",
   "data": {
     "alreadyConfirmed": false,
+    "receipt": "已经定好了喵",
     "memories": [ { "id": 7, "memKey": "goal", "content": "转后端" } ],
     "tasks": [ { "id": 3, "title": "周五交周报" } ]
   }
@@ -948,12 +964,13 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 #### 4.3.5 拒绝待确认动作
 
 - **接口地址**：`POST /user/pending-actions/{id}/reject`
-- 幂等；已拒绝静默成功；已确认 / 过期 409
+- 幂等；已拒绝静默成功；已确认 409
+- **P1.5 过期等价于拒绝**：pending 已过期时点"取消"返回 200（静默成功），不把过期又报成 409；只有并发被确认才 409
 
-**PendingActionVO 字段**：`id, actionType, status, memories[], tasks[], preview, expiresAt`  
+**PendingActionVO 字段**：`id, actionType, status, memories[], tasks[], preview, expiresAt`（`sessionId` 为 `@JsonIgnore` 内部字段，不返回前端）
 **MemoryCandidate**：`key, value, memType, confidence, replacesId, scope`（P1.1 新增 `scope`：global=全局画像，session=仅当前会话）  
 **TaskCandidate**：`action, title, dueAt, timezone, recurrence, recurrenceRule`  
-**ConfirmResult**：`alreadyConfirmed, memories[], tasks[]`
+**ConfirmResult**：`alreadyConfirmed, memories[], tasks[], receipt`（`sessionId` 为 `@JsonIgnore` 内部字段，仅 REST 回执用）
 
 ---
 
@@ -1065,6 +1082,7 @@ CREATE TABLE tb_user_task (
   completed_at DATETIME NULL,
   raw_input VARCHAR(512) NULL,
   source_message_id BIGINT NULL,
+  created_from_session VARCHAR(64) NULL COMMENT 'P1.5：任务从哪个会话发起（溯源用，不影响可见性）',
   version INT NOT NULL DEFAULT 0,
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1687,6 +1705,7 @@ Windows 宿主
    - `docs/migration/2026-10-28-add-chat-session-model.sql`
    - `docs/migration/2026-11-02-mindbutler-p1.sql` ⭐
    - `docs/migration/2026-11-03-mindbutler-p1-memory-session.sql` ⭐ P1.1（tb_user_memory 加 session_id）
+   - `docs/migration/2026-11-05-mindbutler-p15-task-session.sql` ⭐ P1.5（tb_user_task 加 created_from_session）
 6. 确认 Ollama：`ollama list`（需有 qwen2.5-coder:7b）
 7. 启动后端：`mvn spring-boot:run`
 8. 启动前端：`npm install && npm run dev`

@@ -166,5 +166,39 @@ class PromptBuilderTest {
         assertThat(system).contains("key=relation");
     }
 
+    @Test
+    void shouldApplyConfirmedStyleAsInstruction() {
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq("s-1")))
+                .thenReturn(List.of(vo(1L, "style", "回答简洁，不要展开", "active")));
 
+        String system = builder.build(BASE, "s-1");
+
+        assertThat(system).contains("<confirmed_style>");
+        assertThat(system).contains("回答简洁，不要展开");
+        assertThat(system).contains("请在后续回复中保持该风格");
+        assertThat(system).contains("key=style");
+    }
+
+    @Test
+    void shouldTellModelNotToRestoreDeletedPreferencesFromHistory() {
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq("s-1")))
+                .thenReturn(List.of());
+
+        String system = builder.build(BASE, "s-1");
+
+        // 删掉最后一条记忆后，history 仍然在上下文里；system 必须明确禁止从 history 恢复旧偏好
+        assertThat(system).contains("<memory_policy>");
+        assertThat(system).contains("不要从历史中恢复这些已失效的内容");
+    }
+
+    @Test
+    void shouldDeclareCurrentProfileWinsOverHistory() {
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq("s-1")))
+                .thenReturn(List.of(vo(1L, "style", "简洁", "active")));
+
+        String system = builder.build(BASE, "s-1");
+
+        assertThat(system).contains("如果历史与当前画像冲突，以当前画像和当前消息为准");
+        assertThat(system).contains("历史对话可能包含用户过去说过、但已经删除或替换的偏好/人设");
+    }
 }

@@ -30,7 +30,8 @@ import com.aichat.utils.UserHolder;
 public class PersonaReplyServiceimpl implements PersonaReplyService {
 
     private static final Logger log = LoggerFactory.getLogger(PersonaReplyServiceimpl.class);
-    private static final int TIMEOUT_MS = 1500;
+    // 确认接口会同步等这句回执；超时必须短，否则用户点确认后会被模型拖住。
+    private static final int TIMEOUT_MS = 1000;
     private static final int MAX_LENGTH = 40;
 
     private static final String RECEIPT_INSTRUCTION = """

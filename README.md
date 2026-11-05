@@ -34,8 +34,9 @@ P1 把"省用户惦记时间"做进聊天：固定 4 维度结构化画像（`st
 | 口语化任务 | `/user/tasks` | CRUD + 完成/重复滚动 + 到期查询（`once/daily/weekly`，weekly 带 `BYDAY=XX`） |
 | 待确认动作 | `/user/pending-actions` | pending→confirmed/rejected/expired 状态机；确认按 payload 实际内容分 memory/task/mixed 落库 |
 | 意图拦截 | `/chat/ask` 内置 | 说"明天 9 点交作业 / 记住我喜欢简洁"→ LLM 提取候选 → 写 pending → 二次确认；普通聊天不受影响 |
+| 到期提醒 | `/user/tasks/due` + 前端轮询 | 页面可见时每 30 秒检查一次，只弹 10 分钟内到期任务，按 `taskId + dueAt` 去重；页面关闭/后台不保证提醒 |
 
-**迁移**：现有库跑 `docs/migration/2026-11-02-mindbutler-p1.sql`；全新库直接 `docs/schema.sql`（已含 3 表）。
+**迁移**：现有库按顺序跑 `docs/migration/2026-11-02-mindbutler-p1.sql` → `2026-11-03-mindbutler-p1-memory-session.sql` → `2026-11-05-mindbutler-p15-task-session.sql`；全新库直接 `docs/schema.sql`（已含 3 表及 P1.5 列）。
 **设计文档**：`docs/MindButler-P1设计.md`。
 
 ## 快速启动

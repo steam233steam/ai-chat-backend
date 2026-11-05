@@ -6,7 +6,7 @@
 - **Java版本**: 17
 - **工作目录**: D:\maven-project\aichat
 - **开始开发日期**: 2026-09-12
-- **当前阶段**: MindButler P1.2（意图增强：LLM 兜底 + 人设提取 + QUERY 扩充）✅ 2026-11-04
+- **当前阶段**: MindButler P1 自动化验收完成（278 后端测试 + 41 前端测试 + 到期提醒）✅ 2026-11-05；仅剩人工 demo
 
 ## 架构分层
 
@@ -112,6 +112,7 @@ com.aichat/
     ├── IntentPrompts.java          # ⭐ 意图提取 Prompt
     ├── PromptBuilder.java          # ⭐ 注入画像 + 历史组装
     ├── MemoryKey.java              # ⭐ 记忆 key 枚举（style/goal/schedule/relation）
+    ├── TaskCapabilityGuard.java    # ⭐ 任务能力边界（QQ/微信/短信等外部通道 LLM 提取前确定性拦截，P1.5b）
     └── SensitiveContentFilter.java # ⭐ 敏感词过滤
 ```
 
@@ -248,6 +249,11 @@ com.aichat/
 - [x] `IntentDetectorTest` 加 `shouldReturnNoneForPersonaButLlmFallbackCatches`（"你是猫娘"→NONE+兜底命中；"你的记忆怎么样"→QUERY）
 - [x] 单测 226 个全通过（BUILD SUCCESS）
 
+#### MindButler P1.3 / P1.4：提取收敛 + 人设回执 + 精确匹配 + 敏感闸门（2026-11-04 20:xx ~ 2026-11-05 14:xx）
+- [x] **P1.3 提取后不插确认文案**：`MbMarkers.pendingOnly(pendingId)` 只返回机器标记，`/chat/ask` 命中提取时 `data` 不再有"已识别到 N 条"的 AI 气泡，详情只在弹窗展示（extract + LLM 兜底两条路径统一）
+- [x] **P1.3 人设化短回执**：`PersonaReplyService`（confirmed/cancelled）+ `ConfirmationReceiptWriter`（仅 REST 弹窗路径）+ `ReceiptReplyExecutorConfig`（专用线程池）——确认后由当前会话人设生成一句 ≤30 字短回执（"已经定好"），取消生成"计划取消"；模型失败/超时/输出不合规一律回退固定文案，绝不反向拖垮确认/取消；文本确认走 ChatService 自带回执，不会重复
+- [x] 回执安全护栏：剥 Markdown/换行、去引号、长度 >40 字拒绝、含"系统设定/提示词/prompt"拒
+
 #### 工程化：SmsSender 端口 + 全链路集成测试（2026-11-04 18:3x–18:5x）
 - [x] `SmsSender` 接口（端口）+ `LogSmsSender`（dev-mode 日志验证码）+ `DisabledSmsSender`（未配置供应商时 503）
 - [x] `SmsConfig` 按 `app.sms.dev-mode` 选 Bean；`SmsProperties` 绑定配置（默认 false 生产安全）
@@ -256,6 +262,23 @@ com.aichat/
 - [x] `GlobalExceptionHandler` 补 503 → HTTP 503 映射
 - [x] 新增 `MindButlerFlowIntegrationTest`（全链路集成测试，真实 Spring + 真实 MySQL，只 mock LLM 提取器，覆盖 提取→pending→确认→落库 + 旧 pending 过期 + 乐观锁 + 任务滚动 + 懒过期 409 + 跨用户隔离 + REST 确认不写重复 AI 消息）
 - [x] 各 Service 单测同步更新（ChatServiceimplTest / IntentServiceimplTest / MemoryServiceimplTest / TaskServiceimplTest / PendingActionServiceimplTest / UserServiceimplTest / SmsConfigTest / GlobalExceptionHandlerTest / IntentDetectorTest）
+
+#### MindButler P1.4：意图精确匹配 + 状态询问收紧 + 敏感闸门 + 会话隔离查询（2026-11-05）
+- [x] **确认/拒绝词精确匹配**：`IntentDetector.matchesCommand()` 按标点切分后**整段等于**命令词才命中，"你好呀""这不是我的任务"不再被误确认/误拒绝（之前用 `contains`，"你好呀"含"好"会误确认）；确认词扩充（好呀/行吧/是的/嗯嗯/同意）、拒绝词扩充（不是啊/不行/不可以）、UPDATE 词扩充（删除/删了/移除/清掉/已经删除）
+- [x] **QUERY 状态询问收紧**："怎么样/如何/啥样"从通用疑问词挪出，改为"主语(我的/你的/我/你) + 状态词(怎么样/如何/啥样/什么样)"组合命中才走 QUERY，避免"你觉得我这个人怎么样""最近心情怎么样"被误路由到查任务/记忆
+- [x] **LLM 兜底传 intent=null**：`IntentExtractor.extract(null, message)` 让 LLM 自由判断"记忆/人设/任务/混合"，不再固定 MEMORY 侧重（P1.4）；`IntentPrompts` 新增 intent=null 的宽松提取规则
+- [x] **任务敏感信息闸门**：`SensitiveContentFilter.detectSensitiveData()`（比 `detectSensitive` 精确，要求"密码=值"这种真凭据才命中）用于 LLM 宽松兜底前置，避免"我的密码是 xxx"被发给第三方提取模型，同时"提醒我改密码"不被误拒；`containsSensitiveTask` 对任务标题做同档过滤
+- [x] **记忆查询按会话隔离**：`MemoryService.list(limit, sessionScope)` 新增，QUERY 问记忆时用 `list(100, sessionId)`（不用注入配额 5+5 截断，用户有 20 条也能看全）；`GET /user/memories` 加可选 `sessionId` 参数
+- [x] 兜底文案区分：TASK 意图识别不出 → "我没识别出具体任务。你想让我提醒你什么？大概几点？"（区别于 MEMORY 的通用兜底）
+- [x] `TaskVO`/`MemoryVO` 无字段变更；`ConfirmResult` 加 `sessionId`（`@JsonIgnore`，仅 REST 回执用，不返回前端）
+
+#### MindButler P1.5a：任务溯源 + 确认链路收敛（2026-11-05 19:0x）
+- [x] 任务表加 `created_from_session` 列（`docs/migration/2026-11-05-mindbutler-p15-task-session.sql`）：记录任务从哪个会话发起（溯源用，**可见性仍全账号**，不按 session 过滤，任务栏挂聊天界面侧边）
+- [x] `TaskService.createFromPending(request, sourceSessionId)` 确认链路专用入口：把 pending 的 `sessionId` 写进任务的 `created_from_session`；`PendingActionServiceimpl.applyTasks` 改用此入口（口语化"AI 创建任务"落库时自动带溯源）
+- [x] `CreateTaskRequest`/`TaskVO` 加 `createdFromSession` 字段（≤64）；手动创建任务也可传
+- [x] **payload 前置校验** `ensureConfirmablePayload`：`create` 和 `confirm` 都先校验 payload 至少有一条"可落库"的记忆（key+value 非空）或任务（title 非空 + action=create）候选，空/非法 payload 直接 400，避免"确认成功但什么都没建"；空/非法 proposal 也不再被写进 pending
+- [x] **确认链路收敛**：`PendingActionService` 不再自己写聊天历史（原来"确认反馈落库"逻辑移除），回执统一收口到 `PendingActionController` 调 `ConfirmationReceiptWriter`，职责更清晰，避免"确认提示 + 已设好"两条重复 AI 气泡
+- [x] **reject 过期等价于拒绝**：pending 已过期时点"取消"返回 200（静默成功），不再报 409；只有并发被确认才 409
 
 ### 📝 核心改进（2026-11-04 P1.2）
 
@@ -501,6 +524,7 @@ CREATE TABLE tb_user_task (
   completed_at      DATETIME NULL,
   raw_input         VARCHAR(512) NULL COMMENT '触发句截断，最大 512 字符',
   source_message_id BIGINT NULL,
+  created_from_session VARCHAR(64) NULL COMMENT 'P1.5：任务从哪个会话发起（溯源用，不影响可见性）',
   version           INT NOT NULL DEFAULT 0,
   create_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -611,6 +635,7 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - `docs/INTERVIEW_ROADMAP.md` - 面试路线图
 - `docs/MindButler-P1设计.md` - MindButler P1 设计（v2）
 - `docs/P1-代码结构.md` - P1 代码结构说明（包职责 + 意图链路类图）
+- `docs/Task-Capability.md` - 任务能力边界 / 外部通道接入设计（P1.5b）
 - `docs/P1-上线验收清单.md` - P1 上线验收清单
 - `docs/聊天记录持久化设计.md` - 持久化设计
 - `docs/踩坑记录.md` - 开发踩坑记录
@@ -647,13 +672,20 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - [x] MindButler P1.1b（确认文案收敛到弹窗 + 文本确认短回执 + 主题词扩充 + gitignore 整理）✅ 2026-11-04
 - [x] MindButler P1.2（意图增强：LLM 兜底 + 人设提取 + QUERY 按会话隔离查记忆）✅ 2026-11-04
 - [x] SmsSender 端口（dev 日志 / 生产 503）+ 全链路集成测试（MindButlerFlowIntegrationTest）✅ 2026-11-04
-- [ ] MindButler P1.3（记忆面板按会话显示 + 会话删除级联清理记忆/pending）
+- [x] MindButler P1.3（提取收敛 pendingOnly + 人设化短回执 + 确认反馈去重）✅ 2026-11-04
+- [x] MindButler P1.4（确认/拒绝精确匹配 + QUERY 状态询问收紧 + LLM 兜底 intent=null + 敏感信息闸门 + 记忆查询会话隔离）✅ 2026-11-05
+- [x] MindButler P1.5a（任务溯源 created_from_session + 确认链路收敛 + payload 前置校验）✅ 2026-11-05
+- [x] MindButler P1.5b（反馈修复：弹窗性能 + 人设回执回传 receipt + style 指令化 + 历史不回填已删除画像 + 任务能力闸门）✅ 2026-11-05
+- [x] MindButler P1 自动化验收（后端 278 tests 全绿 / 前端 41 tests + build / schema+migration 临时库验证 / 应用内到期提醒）✅ 2026-11-05
+- [ ] P1 人工验收：2 分钟 demo + 浏览器走查（应用内通知需页面保持可见）
+- [ ] MindButler P1.6（外部通道：QQ/微信/短信/邮件 adapter + delivery_channel + outbox + 定时投递/重试）
+- [x] MindButler P1.3（记忆面板按会话显示 + 会话删除级联清理记忆/pending）✅ 2026-11-05
 - [ ] 聊天/登录接口限流 + 安全加固
 - [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
 - [ ] Docker Compose 部署
 - [ ] RAG 知识库（可选加分项）
 - [ ] Micrometer 可观测性 + 压测
-- [ ] MindButler P1.5（monthly 重复任务 + 推送 + last_notified_at 回写）
+- [ ] MindButler P1.5（monthly 重复任务 + 推送 + last_notified_at 回写，P1.5a 已做任务溯源）
 
 ---
-*最后更新: 2026-11-04 18:53*
+*最后更新: 2026-11-05 22:20*

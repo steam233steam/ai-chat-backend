@@ -30,6 +30,7 @@ import com.aichat.utils.IntentQueryReplyBuilder;
 import com.aichat.utils.IntentReplyFormatter;
 import com.aichat.utils.MbMarkers;
 import com.aichat.utils.SensitiveContentFilter;
+import com.aichat.utils.TaskCapabilityGuard;
 import com.aichat.utils.UserHolder;
 
 /**
@@ -120,6 +121,11 @@ public class IntentServiceimpl implements IntentService {
      * 提取到非空候选 → 走 pending 确认流程；提取为空 → 返回 null（上层走 chat）。
      */
     private IntentOutcome extractLoose(String sessionId, String message, Long sourceMessageId) {
+        // 先过能力边界：QQ/微信/短信等当前没有通道的请求，不要交给提取模型生成假任务。
+        String capabilityReply = TaskCapabilityGuard.unsupportedReason(message);
+        if (capabilityReply != null) {
+            return IntentOutcome.replyOnly(capabilityReply);
+        }
         // 宽松触发词包含“我的/我是”等高频词，必须先做敏感信息闸门，
         // 否则“我的密码是 xxx”会被直接发给第三方提取模型。
         if (SensitiveContentFilter.detectSensitiveData(message) != null) {
@@ -192,6 +198,13 @@ public class IntentServiceimpl implements IntentService {
     // ---------- 提取 → 校验 → 写 pending → 确认文案 ----------
 
     private IntentOutcome extract(Intent intent, String sessionId, String message, Long sourceMessageId) {
+        if (intent == Intent.TASK) {
+            // P1 没有外部投递通道：明确拒绝 QQ/微信/短信等请求，并给出“改成应用内任务”的替代说法。
+            String capabilityReply = TaskCapabilityGuard.unsupportedReason(message);
+            if (capabilityReply != null) {
+                return IntentOutcome.replyOnly(capabilityReply);
+            }
+        }
         // 记忆/任务类消息如果本身含密码/Token 等敏感信息，连提取模型都不要调用，避免把敏感内容发给第三方模型
         if ((intent == Intent.MEMORY || intent == Intent.TASK)
                 && SensitiveContentFilter.detectSensitive(message) != null) {

@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS tb_user_task (
   completed_at      DATETIME     NULL COMMENT 'once: 完成时间；recurring: 上一次完成时间',
   raw_input         VARCHAR(512) NULL COMMENT '触发句截断，最多 512 字符',
   source_message_id BIGINT       NULL,
+  created_from_session VARCHAR(64) NULL COMMENT 'P1.5：任务从哪个会话发起（溯源用，不影响可见性）',
   version           INT          NOT NULL DEFAULT 0,
   create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

@@ -967,16 +967,30 @@ CI 继续用现有排除式命令 `mvn -B -Dtest='!AichatApplicationTests,!FullF
 
 ### 10.5 P1 验收清单
 
-- [ ] 新库执行 `schema.sql`、旧库执行 migration 都能成功。
-- [ ] CI 单元测试集 + `MindButlerFlowIntegrationTest` 全绿；`AichatApplicationTests`/`FullFlowIntegrationTest` 按 README 在本地手动跑。
-- [ ] 手动记忆在同步和流式聊天都能被注入。
-- [ ] “记住…” -> 确认 -> `GET /memories` 查到 active；拒绝/过期不落库。
-- [ ] “明天 9 点交作业” -> 确认 -> `GET /due` 查到；确认文案显示绝对时间。
-- [ ] `complete` once 完成；daily/weekly 滚动到下一次。
-- [ ] 跨用户 404；版本冲突 409；重复确认幂等。
-- [ ] 命中意图不调用聊天模型（测试断言调用次数）。
-- [ ] API.md / README / Swagger 更新。
+> 2026-11-05 收尾：后端全量测试 278 个全绿（0 skipped），前端 41 个单测 + production build 通过；
+> `schema.sql` 与三条 migration 已在临时库验证通过。仅剩“录 demo”还没做。
+
+- [x] 新库执行 `schema.sql`、旧库执行 migration 都能成功（2026-11-05 临时库验证）。
+- [x] CI 单元测试集 + `MindButlerFlowIntegrationTest` 全绿；`AichatApplicationTests`/`FullFlowIntegrationTest` 按 README 在本地手动跑。
+- [x] 手动记忆在同步和流式聊天都能被注入（ChatService 单测 + FullFlowIntegrationTest 覆盖）。
+- [x] “记住…” -> 确认 -> `GET /memories` 查到 active；拒绝/过期不落库。
+- [x] “明天 9 点交作业” -> 确认 -> `GET /due` 查到；确认文案显示绝对时间。
+- [x] `complete` once 完成；daily/weekly 滚动到下一次。
+- [x] 跨用户 404；版本冲突 409；重复确认幂等。
+- [x] 命中意图不调用聊天模型（测试断言调用次数）。
+- [x] 前端到期提醒：页面可见时 30s 轮询 `/user/tasks/due`，按 `taskId + dueAt` 去重，弹应用内通知；单测覆盖。
+- [x] API.md / README / Swagger 更新。
 - [ ] 录一个 2 分钟 demo。
+
+**验收命令（2026-11-05）：**
+
+```bash
+cd D:\maven-projectichat
+./mvnw test                    # 278 tests, 0 failures, 0 skipped
+cd D:\桌面\Vuei-chat-project
+npm test                       # 41 tests
+npm run build
+```
 
 ---
 

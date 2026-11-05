@@ -196,6 +196,19 @@ class IntentServiceimplTest {
     }
 
     @Test
+    void shouldRejectUnsupportedDeliveryChannelBeforeCallingExtractor() {
+        when(pendingActionService.current("s-1")).thenReturn(null);
+
+        IntentOutcome o = service.handle("s-1", "明天晚上 8 点在 QQ 提醒我打游戏", 30L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("QQ", "应用内");
+        // 不能在本地已经知道没有 QQ 通道的情况下，还调用 LLM 生成一个假任务
+        verify(intentExtractor, never()).extract(any(), anyString());
+        verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
+    }
+
+    @Test
     void shouldDescendToChatWhenExtractionEmpty() {
         when(pendingActionService.current("s-1")).thenReturn(null);
         when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(

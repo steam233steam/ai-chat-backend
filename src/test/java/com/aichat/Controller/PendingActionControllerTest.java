@@ -44,10 +44,12 @@ class PendingActionControllerTest {
         ConfirmResult result = new ConfirmResult(false, List.of(), List.of());
         result.setSessionId("s1");
         when(service.confirm(9L)).thenReturn(result);
+        when(receiptWriter.writeConfirmed("s1")).thenReturn("已经定好了喵");
 
         Result<ConfirmResult> response = controller.confirm(9L);
 
         assertThat(response.getCode()).isEqualTo(200);
+        assertThat(response.getData().getReceipt()).isEqualTo("已经定好了喵");
         verify(receiptWriter).writeConfirmed("s1");
     }
 
@@ -70,6 +72,8 @@ class PendingActionControllerTest {
         pending.setStatus("pending");
         when(service.getById(9L)).thenReturn(pending);
         when(service.reject(9L)).thenReturn(true);
+
+        when(receiptWriter.writeCancelled("s1")).thenReturn("计划取消喵");
 
         controller.reject(9L);
 

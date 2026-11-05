@@ -13,6 +13,11 @@ public class ConfirmResult {
     private boolean alreadyConfirmed;
     private List<Map<String, Object>> memories;
     private List<Map<String, Object>> tasks;
+    /**
+     * 弹窗确认后实际写入聊天历史的短回执（人设化失败时是固定兜底文案）。
+     * 前端直接展示这条，避免再硬编码一句“好的，都帮你设好了”。
+     */
+    private String receipt;
     /** 确认所属会话，仅用于 REST 确认后写短回执，不返回前端。 */
     private String sessionId;
 
@@ -48,6 +53,14 @@ public class ConfirmResult {
 
     public void setTasks(List<Map<String, Object>> tasks) {
         this.tasks = tasks;
+    }
+
+    public String getReceipt() {
+        return receipt;
+    }
+
+    public void setReceipt(String receipt) {
+        this.receipt = receipt;
     }
 
     @JsonIgnore
