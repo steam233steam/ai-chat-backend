@@ -87,6 +87,7 @@ public class TaskServiceimpl implements TaskService {
         task.setRecurrence(recurrence);
         task.setRecurrenceRule(rule);
         task.setRawInput(trimTo(request.getRawInput(), 512));
+        task.setCreatedFromSession(request.getCreatedFromSession());
         // status='pending'、version=0 由 Mapper insert 语句写死
 
         userTaskMapper.insert(task);
@@ -195,6 +196,12 @@ public class TaskServiceimpl implements TaskService {
         int cap = Math.max(1, Math.min(limit, 100));
         LocalDateTime now = nowLocal();
         return userTaskMapper.selectDue(userId, now, cap).stream().map(t -> toVO(t, now)).toList();
+    }
+
+    @Override
+    public TaskVO createFromPending(CreateTaskRequest request, String sourceSessionId) {
+        request.setCreatedFromSession(sourceSessionId);
+        return create(request);
     }
 
     // ---------- 内部辅助 ----------
@@ -374,6 +381,7 @@ public class TaskServiceimpl implements TaskService {
         vo.setCompletedAt(t.getCompletedAt());
         vo.setRawInput(t.getRawInput());
         vo.setVersion(t.getVersion());
+        vo.setCreatedFromSession(t.getCreatedFromSession());
         vo.setCreateTime(t.getCreateTime());
         vo.setUpdateTime(t.getUpdateTime());
         vo.setOverdue(t.getDueAt() != null && !t.getDueAt().isAfter(now)

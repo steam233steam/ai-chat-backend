@@ -20,6 +20,8 @@ public class TaskVO {
     private Integer version;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
+    /** P1.5：任务从哪个会话发起（溯源用，不影响可见性） */
+    private String createdFromSession;
     /** 计算字段：due_at 非空且 < now（仅 pending 有意义） */
     private Boolean overdue;
 
@@ -125,6 +127,14 @@ public class TaskVO {
 
     public void setUpdateTime(LocalDateTime updateTime) {
         this.updateTime = updateTime;
+    }
+
+    public String getCreatedFromSession() {
+        return createdFromSession;
+    }
+
+    public void setCreatedFromSession(String createdFromSession) {
+        this.createdFromSession = createdFromSession;
     }
 
     public Boolean getOverdue() {

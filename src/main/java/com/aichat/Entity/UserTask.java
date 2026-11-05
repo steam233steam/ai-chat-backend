@@ -22,6 +22,8 @@ public class UserTask {
     private LocalDateTime completedAt;
     private String rawInput;
     private Long sourceMessageId;
+    /** P1.5：任务从哪个会话发起（溯源用，不影响可见性，可见性仍全账号）。 */
+    private String createdFromSession;
     private Integer version;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
@@ -131,6 +133,14 @@ public class UserTask {
 
     public void setSourceMessageId(Long sourceMessageId) {
         this.sourceMessageId = sourceMessageId;
+    }
+
+    public String getCreatedFromSession() {
+        return createdFromSession;
+    }
+
+    public void setCreatedFromSession(String createdFromSession) {
+        this.createdFromSession = createdFromSession;
     }
 
     public Integer getVersion() {

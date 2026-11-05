@@ -289,7 +289,8 @@ public class PendingActionServiceimpl implements PendingActionService {
             req.setDueAt(c.getDueAt());
             req.setRecurrence(c.getRecurrence());
             req.setRecurrenceRule(c.getRecurrenceRule());
-            TaskVO vo = taskService.create(req);
+            // P1.5：记录任务从哪个会话发起（溯源），可见性仍全账号
+            TaskVO vo = taskService.createFromPending(req, action.getSessionId());
             Map<String, Object> r = new HashMap<>();
             r.put("id", vo.getId());
             r.put("action", "created");

@@ -29,6 +29,10 @@ public class CreateTaskRequest {
     @Size(max = 512)
     private String rawInput;
 
+    /** P1.5：任务从哪个会话发起（溯源用，可空）。 */
+    @Size(max = 64)
+    private String createdFromSession;
+
     public String getTitle() {
         return title;
     }
@@ -67,5 +71,13 @@ public class CreateTaskRequest {
 
     public void setRawInput(String rawInput) {
         this.rawInput = rawInput;
+    }
+
+    public String getCreatedFromSession() {
+        return createdFromSession;
+    }
+
+    public void setCreatedFromSession(String createdFromSession) {
+        this.createdFromSession = createdFromSession;
     }
 }

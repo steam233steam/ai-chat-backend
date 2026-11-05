@@ -36,4 +36,13 @@ public interface TaskService {
 
     /** 到期待办（status=pending、有 due_at 且已到期，按 due_at 升序；P1 只读不回写）。 */
     List<TaskVO> due(int limit);
+
+    /**
+     * P1.5：确认链路专用入口。把 pending 的 sessionId 写进任务的 created_from_session（溯源），
+     * 但任务可见性仍全账号（不按 session 过滤）。
+     *
+     * @param request        任务创建请求
+     * @param sourceSessionId 发起该任务的会话 id（可为 null）
+     */
+    TaskVO createFromPending(CreateTaskRequest request, String sourceSessionId);
 }

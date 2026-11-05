@@ -16,22 +16,25 @@ public interface UserTaskMapper {
 
     // 插入一条任务，自增 id 回填
     @Insert("INSERT INTO tb_user_task(user_id, title, due_at, timezone, recurrence, recurrence_rule, " +
-            "status, raw_input, source_message_id, version) " +
+            "status, raw_input, source_message_id, created_from_session, version) " +
             "VALUES(#{userId}, #{title}, #{dueAt}, #{timezone}, #{recurrence}, #{recurrenceRule}, " +
-            "'pending', #{rawInput}, #{sourceMessageId}, 0)")
+            "'pending', #{rawInput}, #{sourceMessageId}, #{createdFromSession}, 0)")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(UserTask task);
 
     // 查当前用户某条任务（带归属校验，跨用户查不到 → 上层 404）
     @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, status, " +
-            "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, version, " +
+            "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, " +
+            "created_from_session, version, " +
             "create_time, update_time " +
             "FROM tb_user_task WHERE id = #{id} AND user_id = #{userId} AND deleted_at IS NULL")
     UserTask selectById(@Param("id") long id, @Param("userId") String userId);
 
     // 任务列表：默认 pending，排除软删；游标分页 beforeId（id < beforeId，倒序取 limit，调用方反转）
+    // P1.5：任务栏挂聊天界面侧边，溯源 created_from_session，但可见性仍全账号（不按 session 过滤）
     @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, status, " +
-            "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, version, " +
+            "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, " +
+            "created_from_session, version, " +
             "create_time, update_time " +
             "FROM tb_user_task " +
             "WHERE user_id = #{userId} AND deleted_at IS NULL AND status = #{status} AND id < #{beforeId} " +
@@ -43,7 +46,8 @@ public interface UserTaskMapper {
 
     // 到期待办：status=pending、未软删、有截止时间且已到期；P1 只读不回写 last_notified_at
     @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, status, " +
-            "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, version, " +
+            "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, " +
+            "created_from_session, version, " +
             "create_time, update_time " +
             "FROM tb_user_task " +
             "WHERE user_id = #{userId} AND status = 'pending' AND deleted_at IS NULL " +
