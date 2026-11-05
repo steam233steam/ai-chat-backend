@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Dto.LoginFormDTO;
@@ -19,20 +22,24 @@ import com.aichat.Dto.User;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.UserMapper;
 import com.aichat.Repository.UserRepository;
+import com.aichat.Service.SmsSender;
 
 class UserServiceimplTest {
 
     private UserMapper userMapper;
     private UserRepository userRepository;
+    private SmsSender smsSender;
     private UserServiceimpl service;
 
     @BeforeEach
     void setUp() {
         userMapper = mock(UserMapper.class);
         userRepository = mock(UserRepository.class);
+        smsSender = mock(SmsSender.class);
         service = new UserServiceimpl();
         ReflectionTestUtils.setField(service, "userMapper", userMapper);
         ReflectionTestUtils.setField(service, "userRepository", userRepository);
+        ReflectionTestUtils.setField(service, "smsSender", smsSender);
     }
 
     @Test
@@ -87,4 +94,46 @@ class UserServiceimplTest {
         user.setPassword(null);
         return user;
     }
+    @Test
+    void shouldSendCodeWhenSmsSenderAvailable() {
+        when(userRepository.tryAcquireSendCodeCooldown("13800000000")).thenReturn(true);
+
+        Result<String> result = service.sendCode("13800000000");
+
+        assertThat(result.getCode()).isEqualTo(200);
+        ArgumentCaptor<String> codeCaptor = ArgumentCaptor.forClass(String.class);
+        verify(userRepository).saveCode(eq("13800000000"), codeCaptor.capture());
+        assertThat(codeCaptor.getValue()).hasSize(6);
+        verify(smsSender).sendVerificationCode("13800000000", codeCaptor.getValue());
+    }
+
+    @Test
+    void shouldReturn503BeforeConsumingCooldownWhenSmsUnavailable() {
+        doThrow(new BusinessException(503, "短信服务暂未配置，请使用密码登录或联系管理员"))
+                .when(smsSender).ensureAvailable();
+
+        assertThatThrownBy(() -> service.sendCode("13800000000"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未配置");
+
+        verify(userRepository, never()).tryAcquireSendCodeCooldown(anyString());
+        verify(userRepository, never()).saveCode(anyString(), anyString());
+        verify(smsSender, never()).sendVerificationCode(anyString(), anyString());
+    }
+
+    @Test
+    void shouldReleaseCodeAndCooldownWhenSmsSendFails() {
+        when(userRepository.tryAcquireSendCodeCooldown("13800000000")).thenReturn(true);
+        doThrow(new RuntimeException("provider down"))
+                .when(smsSender).sendVerificationCode(eq("13800000000"), anyString());
+
+        assertThatThrownBy(() -> service.sendCode("13800000000"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("发送失败");
+
+        verify(userRepository).deleteCode("13800000000");
+        verify(userRepository).deleteSendCodeCooldown("13800000000");
+    }
+
+
 }

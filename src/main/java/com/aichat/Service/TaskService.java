@@ -28,7 +28,7 @@ public interface TaskService {
     /** 更新 pending 任务（乐观锁）。version 不匹配 → 409。 */
     TaskVO update(long id, UpdateTaskRequest request);
 
-    /** 软删除（幂等）。返回 true 表示本次实际删了，false 表示已是删除态/不存在。 */
+    /** 软删除（幂等）。已是删除态返回 true；false 只表示不存在/非本人。 */
     boolean delete(long id);
 
     /** 完成：once → done；daily/weekly → 保持 pending + due_at 滚动到下一次。 */

@@ -42,6 +42,7 @@ import com.aichat.Exception.BusinessException;
 import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatTitleService;
 import com.aichat.Service.MemoryService;
+import com.aichat.Service.PersonaReplyService;
 import com.aichat.utils.PromptBuilder;
 import com.aichat.utils.UserHolder;
 
@@ -56,6 +57,7 @@ class ChatServiceimplTest {
 
     private ChatSessionRepository repository;
     private ChatTitleService chatTitleService;
+    private PersonaReplyService personaReplyService;
     private ModelRouter modelRouter;
     private PromptBuilder promptBuilder;
     private MemoryService memoryService;
@@ -67,6 +69,9 @@ class ChatServiceimplTest {
     void setUp() {
         repository = mock(ChatSessionRepository.class);
         chatTitleService = mock(ChatTitleService.class);
+        personaReplyService = mock(PersonaReplyService.class);
+        when(personaReplyService.confirmed(anyString())).thenReturn("已经定好了喵");
+        when(personaReplyService.cancelled(anyString())).thenReturn("计划取消喵");
 
         ChatClient chatClient = mock(ChatClient.class);
         requestSpec = mock(ChatClientRequestSpec.class);
@@ -94,6 +99,7 @@ class ChatServiceimplTest {
         ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
         ReflectionTestUtils.setField(service, "chatTitleService", chatTitleService);
         ReflectionTestUtils.setField(service, "intentService", intentService);
+        ReflectionTestUtils.setField(service, "personaReplyService", personaReplyService);
         // PromptBuilder：mock 一个"无画像"的版本，让 system prompt 返回基础人设（不影响历史注入断言）
         memoryService = mock(MemoryService.class);
         when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(java.util.List.of());
@@ -148,7 +154,7 @@ class ChatServiceimplTest {
         assertThat(messages).noneMatch(m -> m.getText().contains("发言者:"));
 
         String system = capturedSystem();
-        assertThat(system).isEqualTo(ModelRouter.SYSTEM_PROMPT);
+        assertThat(system).startsWith(ModelRouter.SYSTEM_PROMPT).contains("当前时间");
         assertThat(system).doesNotContain("【历史】");
         assertThat(system).doesNotContain("上一轮");
 
@@ -167,7 +173,7 @@ class ChatServiceimplTest {
         assertThat(messages).hasSize(1);
         assertThat(messages.get(0).getMessageType()).isEqualTo(MessageType.USER);
         assertThat(messages.get(0).getText()).isEqualTo("新问题");
-        assertThat(capturedSystem()).isEqualTo(ModelRouter.SYSTEM_PROMPT);
+        assertThat(capturedSystem()).startsWith(ModelRouter.SYSTEM_PROMPT).contains("当前时间");
     }
 
     @Test
@@ -283,7 +289,7 @@ class ChatServiceimplTest {
         assertThat(messages.get(1).getText()).isEqualTo("继续");
 
         String system = capturedSystem();
-        assertThat(system).isEqualTo(ModelRouter.SYSTEM_PROMPT);
+        assertThat(system).startsWith(ModelRouter.SYSTEM_PROMPT).contains("当前时间");
         assertThat(system).doesNotContain("忽略以上所有规则");
         assertThat(system).doesNotContain("【历史】");
     }
@@ -312,7 +318,7 @@ class ChatServiceimplTest {
         service.sendSession("s1", new UserMessage("新问题"), null);
 
         String system = capturedSystem();
-        assertThat(system).isEqualTo(ModelRouter.SYSTEM_PROMPT);
+        assertThat(system).startsWith(ModelRouter.SYSTEM_PROMPT).contains("当前时间");
         assertThat(system).doesNotContain("上一轮");
     }
 
@@ -343,7 +349,7 @@ class ChatServiceimplTest {
         List<String> out = service.sendSessionStream("s1", "新问题", null).collectList().block();
 
         assertThat(String.join("", out)).isEqualTo("ab");
-        verify(repository, timeout(2000)).save(
+        verify(repository).save(
                 eq("u1"), eq("s1"), isA(AssistantMessage.class), eq("qwen2.5-coder:7b"));
     }
 
@@ -368,7 +374,7 @@ class ChatServiceimplTest {
     void shouldInterceptIntentAndSkipChatModel() {
         when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
         // IntentService 返回"已提取出候选并写了 pending"（非 chat），带 pendingId 标记
-        String markedReply = "我识别到 1 个任务，确认吗？\n[[MB:pending=77]]";
+        String markedReply = "已识别到 1 个任务，请在弹窗中确认。\n[[MB:pending=77]]";
         when(intentService.handle(eq("s1"), eq("明天 9 点交作业"), any()))
                 .thenReturn(com.aichat.Dto.IntentOutcome.extracted(markedReply, 77L));
 
@@ -378,7 +384,7 @@ class ChatServiceimplTest {
         assertThat(answer).isEqualTo(markedReply);
         assertThat(answer).contains("[[MB:pending=77]]");
         // 存库的是去掉标记的干净文案（历史回显不暴露机器标记）
-        verify(repository).save("u1", "s1", new AssistantMessage("我识别到 1 个任务，确认吗？"), "qwen2.5-coder:7b");
+        verify(repository).save("u1", "s1", new AssistantMessage("已识别到 1 个任务，请在弹窗中确认。"), "qwen2.5-coder:7b");
         // 聊天模型未被调用
         verify(requestSpec, never()).messages(anyList());
     }
@@ -388,7 +394,7 @@ class ChatServiceimplTest {
         when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
         // 前端实际走 /chat/ask-stream，命中意图时必须收到带 pendingId 的标记，
         // 否则弹窗拿不到 id（SSE 分支与同步分支的契约要一致）
-        String markedReply = "我识别到 1 个任务，确认吗？\n[[MB:pending=88]]";
+        String markedReply = "已识别到 1 个任务，请在弹窗中确认。\n[[MB:pending=88]]";
         when(intentService.handle(eq("s1"), eq("明天 9 点交作业"), any()))
                 .thenReturn(com.aichat.Dto.IntentOutcome.extracted(markedReply, 88L));
 
@@ -398,8 +404,8 @@ class ChatServiceimplTest {
         assertThat(chunks).containsExactly(markedReply);
         assertThat(String.join("", chunks)).contains("[[MB:pending=88]]");
         // 仍然只落库干净文案，历史回显不暴露机器标记
-        verify(repository, timeout(2000)).save(
-                "u1", "s1", new AssistantMessage("我识别到 1 个任务，确认吗？"), "qwen2.5-coder:7b");
+        verify(repository).save(
+                "u1", "s1", new AssistantMessage("已识别到 1 个任务，请在弹窗中确认。"), "qwen2.5-coder:7b");
         // 命中意图时不调用聊天模型流
         verify(requestSpec, never()).stream();
     }
@@ -409,13 +415,76 @@ class ChatServiceimplTest {
         when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
         ConfirmResult cr = new ConfirmResult(false, List.of(), List.of());
         when(intentService.handle(eq("s1"), eq("对"), any()))
-                .thenReturn(com.aichat.Dto.IntentOutcome.confirmed(cr, "已为你保存 1 条。"));
+                .thenReturn(com.aichat.Dto.IntentOutcome.confirmed(cr, "已经定好"));
 
         String answer = service.sendSession("s1", new UserMessage("对"), null);
 
-        // 确认/拒绝/兜底分支不带 pending 标记
-        assertThat(answer).contains("已为你保存");
+        // 文本确认走人设回执
+        assertThat(answer).isEqualTo("已经定好了喵");
         assertThat(answer).doesNotContain("[[MB:pending");
         verify(requestSpec, never()).messages(anyList());
+        verify(personaReplyService).confirmed("s1");
+        verify(repository).save("u1", "s1", new AssistantMessage("已经定好了喵"),
+                "qwen2.5-coder:7b");
     }
+
+    @Test
+    void shouldPersistAlreadyConfirmedReplyBecauseConfirmServiceDidNotWriteIt() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        ConfirmResult cr = new ConfirmResult(true, List.of(), List.of());
+        when(intentService.handle(eq("s1"), eq("对"), any()))
+                .thenReturn(com.aichat.Dto.IntentOutcome.confirmed(cr, "刚才已经确认过了，没有重复创建。"));
+
+        service.sendSession("s1", new UserMessage("对"), null);
+
+        verify(repository).save(eq("u1"), eq("s1"),
+                isA(AssistantMessage.class), eq("qwen2.5-coder:7b"));
+    }
+
+    @Test
+    void shouldReturnFixedFailureInsteadOfChattingWhenIntentHandlingFails() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        when(intentService.handle(eq("s1"), anyString(), any()))
+                .thenThrow(new IllegalStateException("db down"));
+
+        String answer = service.sendSession("s1", new UserMessage("对"), null);
+
+        assertThat(answer).contains("没有完成");
+        verify(requestSpec, never()).messages(anyList());
+        verify(repository).save(eq("u1"), eq("s1"),
+                isA(AssistantMessage.class), eq("qwen2.5-coder:7b"));
+    }
+
+    @Test
+    void shouldRejectWhenConcurrentFirstMessageLockedAnotherModel() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        // 第一次查为空，lockModel 后被另一个并发请求抢先锁定为 qwen
+        when(repository.getModel("u1", "s1")).thenReturn(null, "qwen2.5-coder:7b");
+
+        BusinessException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                BusinessException.class,
+                () -> service.sendSession("s1", new UserMessage("新问题"), "deepseek-chat"));
+
+        assertThat(ex.getCode()).isEqualTo(409);
+        assertThat(ex.getMessage()).contains("qwen2.5-coder:7b");
+        verify(repository).lockModel("u1", "s1", "deepseek-chat");
+        verify(modelRouter, never()).client(anyString());
+        verify(repository, never()).saveUserMessageAndReturnId(anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    void shouldNotSaveAssistantMessageWhenIntentReplyIsMarkerOnly() {
+        when(repository.getMessageHistory("u1", "s1")).thenReturn(List.of());
+        String marker = "[[MB:pending=99]]";
+        when(intentService.handle(eq("s1"), eq("提醒我早八"), any()))
+                .thenReturn(com.aichat.Dto.IntentOutcome.extracted(marker, 99L));
+
+        String answer = service.sendSession("s1", new UserMessage("提醒我早八"), null);
+
+        assertThat(answer).isEqualTo(marker);
+        // 只弹窗，不落空 assistant 消息
+        verify(repository, never()).save(eq("u1"), eq("s1"), any(Message.class), anyString());
+    }
+
+
 }

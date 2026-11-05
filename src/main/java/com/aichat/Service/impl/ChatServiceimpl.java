@@ -26,6 +26,7 @@ import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.ChatService;
 import com.aichat.Service.ChatTitleService;
 import com.aichat.Service.IntentService;
+import com.aichat.Service.PersonaReplyService;
 import com.aichat.utils.ChatHistoryBuilder;
 import com.aichat.utils.ModelOutputSanitizer;
 import com.aichat.utils.MbMarkers;
@@ -34,9 +35,6 @@ import com.aichat.utils.StreamingSafetyFilter;
 import com.aichat.utils.UserHolder;
 
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.core.publisher.SignalType;
-import reactor.core.scheduler.Schedulers;
 
 @Service
 public class ChatServiceimpl implements ChatService {
@@ -44,6 +42,13 @@ public class ChatServiceimpl implements ChatService {
 
     /** 会话标题最大长度（按 Unicode 字符计） */
     private static final int TITLE_MAX_LENGTH = 20;
+
+    /** 意图链路异常时的固定回复：不能再回退到聊天模型，否则模型可能顺着上下文假装操作成功。 */
+    private static final String INTENT_FAILURE_FALLBACK =
+            "刚才的操作没有完成，请稍后重试；如果涉及任务或记忆，请刷新后确认当前状态。";
+
+    /** 模型返回空内容时的兜底，避免把 null/空 assistant 消息写入历史。 */
+    private static final String EMPTY_MODEL_FALLBACK = "（模型未返回内容，请稍后重试）";
 
     /** 送给模型的历史消息条数上限；<=0 表示不裁剪 */
     @Value("${app.chat.context-max-messages:20}")
@@ -63,6 +68,8 @@ public class ChatServiceimpl implements ChatService {
     private PromptBuilder promptBuilder;
     @Autowired
     private IntentService intentService;
+    @Autowired
+    private PersonaReplyService personaReplyService;
 
     @Override
     public String sendSession(String sessionid, UserMessage userMessage, String modelName) {
@@ -86,24 +93,31 @@ public class ChatServiceimpl implements ChatService {
         // M3 意图拦截（同步/流式同一套顺序，v3 4.5）：命中意图直接返回确认/结果文案，不再调聊天模型
         IntentOutcome outcome = interceptIntent(userId, sessionid, question, sourceMessageId);
         if (outcome != null) {
-            // 存库用去标记的干净文案（历史回显不暴露机器标记）；返回给前端带标记（据此弹窗）
-            chatSessionRepository.save(userId, sessionid,
-                    new AssistantMessage(MbMarkers.strip(outcome.getReply())), model);
-            return outcome.getReply();
+            // 文本确认/取消的回执由同一个会话人设生成；弹窗路径由 Controller 调用同一个服务。
+            String reply = personaReceipt(outcome, sessionid);
+            // 只有 pending 标记、没有可展示文案时不要写空 assistant 消息，前端也不会插入气泡。
+            String cleanReply = MbMarkers.strip(reply);
+            if (!cleanReply.isBlank()) {
+                chatSessionRepository.save(userId, sessionid, new AssistantMessage(cleanReply), model);
+            }
+            return reply;
         }
 
+        String rawResponse;
         try {
-            String rawResponse = withHistory(chatClient, historyMessages, question, sessionid)
+            rawResponse = withHistory(chatClient, historyMessages, question, sessionid)
                     .call()
                     .content();
-            // 输出净化：剥掉模型偶尔泄漏的内部 <ds_safety> 审核标签，避免脏数据落库/进前端
-            String response = ModelOutputSanitizer.sanitize(rawResponse);
-            chatSessionRepository.save(userId, sessionid, new AssistantMessage(response), model);
-            return response;
         } catch (Exception e) {
             log.error("AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e);
             throw new BusinessException(500, "AI 服务暂时不可用，请稍后重试");
         }
+        // 输出净化：剥掉模型偶尔泄漏的内部 <ds_safety> 审核标签，避免脏数据落库/进前端
+        String response = safeAssistantContent(rawResponse);
+        // 模型调用与落库分开处理：落库失败不能被误报成“AI 服务不可用”，
+        // 否则用户会以为重试就能解决，实际可能是数据库/缓存问题。
+        chatSessionRepository.save(userId, sessionid, new AssistantMessage(response), model);
+        return response;
     }
 
     @Override
@@ -176,14 +190,37 @@ public class ChatServiceimpl implements ChatService {
         // M3 意图拦截（流式与同步同一套顺序，v3 4.5）：命中意图时只发一条 data 事件后结束，不走模型流
         IntentOutcome outcome = interceptIntent(userId, sessionid, question, streamSourceMessageId);
         if (outcome != null) {
-            // 存库去标记，SSE 事件带标记（前端解析 [[MB:pending=N]] 弹窗）
-            saveAssistantReply(userId, sessionid, MbMarkers.strip(outcome.getReply()), model);
-            return Flux.just(outcome.getReply());
+            // 文本确认/取消的回执由同一个会话人设生成；弹窗路径由 Controller 调用同一个服务。
+            String reply = personaReceipt(outcome, sessionid);
+            // 只有标记、没有可展示文案时不写空消息，前端收到后只弹窗、不插气泡。
+            String cleanReply = MbMarkers.strip(reply);
+            if (!cleanReply.isBlank()) {
+                saveAssistantReply(userId, sessionid, cleanReply, model);
+            }
+            return Flux.just(reply);
         }
 
         StringBuilder fullResponse = new StringBuilder();
         AtomicBoolean failed = new AtomicBoolean(false);
+        AtomicBoolean persisted = new AtomicBoolean(false);
         StreamingSafetyFilter safetyFilter = new StreamingSafetyFilter();
+        Runnable persist = () -> {
+            // 正常结束或客户端主动断开才保存；失败兜底文案不写入历史，避免污染下一轮上下文。
+            // 必须在 onComplete/onCancel 内同步写完：否则前端收到结束事件后立刻发下一条消息，
+            // 可能读到尚未落库的 assistant 回复，导致上下文缺一轮。
+            if (failed.get() || !persisted.compareAndSet(false, true)) {
+                return;
+            }
+            // 客户端断开时 concatWith(finish) 可能不会执行，这里主动把过滤器尾部缓冲冲出来，
+            // 否则历史里会少最后几十个字符。
+            String tail = safetyFilter.finish();
+            if (!tail.isEmpty()) {
+                fullResponse.append(tail);
+            }
+            if (fullResponse.length() > 0) {
+                saveAssistantReply(userId, sessionid, fullResponse.toString(), model);
+            }
+        };
 
         return withHistory(chatClient, historyMessages, question, sessionid)
                 .stream()
@@ -200,13 +237,8 @@ public class ChatServiceimpl implements ChatService {
                     log.error("流式 AI 调用失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e);
                 })
                 .onErrorResume(e -> Flux.just("AI 服务暂时不可用，请稍后重试"))
-                .doFinally(signal -> {
-                    // 正常结束或客户端主动断开才保存；失败兜底文案不写入历史，避免污染下一轮上下文
-                    if (!failed.get() && fullResponse.length() > 0
-                            && (signal == SignalType.ON_COMPLETE || signal == SignalType.CANCEL)) {
-                        saveAssistantReply(userId, sessionid, fullResponse.toString(), model);
-                    }
-                });
+                .doOnComplete(persist)
+                .doOnCancel(persist);
     }
 
     @Override
@@ -216,7 +248,8 @@ public class ChatServiceimpl implements ChatService {
 
     /**
      * M3 意图拦截（v3 4.5）：命中意图时直接返回文案；shouldContinueChat=true 表示走正常聊天模型。
-     * 失败（LLM 不可用/DB 异常）一律降级到正常聊天（chat()），不 500、不污染上下文。
+     * 失败时返回固定失败文案，不能降级到聊天模型——意图链路可能已部分执行，
+     * 模型顺着上下文很容易编造“已保存/已确认”。
      */
     private IntentOutcome interceptIntent(String userId, String sessionid, String question, Long sourceMessageId) {
         try {
@@ -226,18 +259,38 @@ public class ChatServiceimpl implements ChatService {
             }
             return outcome;
         } catch (Exception e) {
-            log.warn("intent 处理失败，降级正常聊天: userId={}, sessionid={}", userId, sessionid, e);
-            return null;
+            // 不能回退到聊天模型：意图链路可能已经部分执行，模型顺着上下文很容易编造“已保存/已确认”。
+            log.warn("intent 处理失败，返回固定失败文案: userId={}, sessionid={}", userId, sessionid, e);
+            return IntentOutcome.replyOnly(INTENT_FAILURE_FALLBACK);
         }
     }
 
+    /** 确认/取消走人设回执；其他意图保持原有文案（pending 标记/查询/兜底）。 */
+    private String personaReceipt(IntentOutcome outcome, String sessionId) {
+        if (outcome.isConfirmed()) {
+            return personaReplyService.confirmed(sessionId);
+        }
+        if (outcome.isRejected()) {
+            return personaReplyService.cancelled(sessionId);
+        }
+        return outcome.getReply();
+    }
+
     private void saveAssistantReply(String userId, String sessionid, String content, String model) {
-        // 输出净化：剥掉流式回复里可能泄漏的 <ds_safety> 内部标签，避免脏数据落库
+        try {
+            // 输出净化：剥掉流式回复里可能泄漏的 <ds_safety> 内部标签，避免脏数据落库
+            String clean = safeAssistantContent(content);
+            chatSessionRepository.save(userId, sessionid, new AssistantMessage(clean), model);
+        } catch (Exception e) {
+            // 保存失败不能反向破坏已经完成的 SSE 流；下一轮会缺这条上下文，但至少不静默吞掉。
+            log.error("保存助手回复失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e);
+        }
+    }
+
+    /** 输出净化的统一入口：null/空内容也要变成可落库、可展示的非空文本。 */
+    private String safeAssistantContent(String content) {
         String clean = ModelOutputSanitizer.sanitize(content);
-        Mono.fromRunnable(() -> chatSessionRepository.save(userId, sessionid, new AssistantMessage(clean), model))
-                .subscribeOn(Schedulers.boundedElastic())
-                .subscribe(v -> {
-                }, e -> log.error("保存助手回复失败: userId={}, sessionid={}, model={}", userId, sessionid, model, e));
+        return (clean == null || clean.isBlank()) ? EMPTY_MODEL_FALLBACK : clean;
     }
 
     /**
@@ -251,7 +304,15 @@ public class ChatServiceimpl implements ChatService {
         String lockedModel = chatSessionRepository.getModel(userId, sessionid);
         if (lockedModel == null) {
             chatSessionRepository.lockModel(userId, sessionid, model);
-            log.info("会话锁定模型: userId={}, sessionid={}, model={}", userId, sessionid, model);
+            // 并发首条消息时，另一个请求可能先锁定了别的模型。lockModel 内部以 MySQL 为准，
+            // 这里必须回读实际生效值，否则第二个请求会用自己的 model 继续聊天，破坏“会话锁模型”。
+            String effective = chatSessionRepository.getModel(userId, sessionid);
+            if (effective != null && !effective.equals(model)) {
+                throw new BusinessException(409,
+                        "该会话已锁定为 " + effective + "，切换模型请新建会话");
+            }
+            log.info("会话锁定模型: userId={}, sessionid={}, model={}",
+                    userId, sessionid, effective == null ? model : effective);
         } else if (!lockedModel.equals(model)) {
             throw new BusinessException(409,
                     "该会话已锁定为 " + lockedModel + "，切换模型请新建会话");

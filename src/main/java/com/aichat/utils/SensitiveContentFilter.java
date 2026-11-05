@@ -21,6 +21,18 @@ public final class SensitiveContentFilter {
             Pattern.compile("\\b[1-9]\\d{5}(18|19|20)\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{3}[0-9Xx]\\b"),
             Pattern.compile("\\b(?:[0-9]{4}\\s?){3}[0-9]{4}\\b"));
 
+    /**
+     * 任务标题/原文用的“真实凭据”特征：必须有赋值/分隔符 + 值。
+     * 不能复用上面的宽泛规则，否则“提醒我改密码”“学习 tokenizer”都会被误拒。
+     */
+    private static final List<Pattern> SENSITIVE_DATA = List.of(
+            Pattern.compile("(?i)(密码|口令|passwd|password)\\s*(是|为|[:=：])\\s*\\S{3,}",
+                    Pattern.UNICODE_CHARACTER_CLASS),
+            Pattern.compile("(?i)\\b(api[_\\-]?key|token|access[_\\-]?token|authorization)\\s*[:=：]\\s*\\S{3,}",
+                    Pattern.UNICODE_CHARACTER_CLASS),
+            Pattern.compile("\\b[1-9]\\d{5}(18|19|20)\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{3}[0-9Xx]\\b"),
+            Pattern.compile("\\b(?:[0-9]{4}\\s?){3}[0-9]{4}\\b"));
+
     private SensitiveContentFilter() {
     }
 
@@ -51,6 +63,30 @@ public final class SensitiveContentFilter {
             return "疑似包含身份证号";
         }
         if (matches(c, SENSITIVE.get(4))) {
+            return "疑似包含银行卡号";
+        }
+        return null;
+    }
+
+    /**
+     * 检测“任务文本里是否包含真实凭据”。比 {@link #detectSensitive(String)} 精确：
+     * 只有密码/Token/API Key 后面真的跟了值，或出现身份证/银行卡号才命中。
+     */
+    public static String detectSensitiveData(String content) {
+        if (content == null) {
+            return null;
+        }
+        String c = stripControlChars(content);
+        if (matches(c, SENSITIVE_DATA.get(0))) {
+            return "疑似包含密码";
+        }
+        if (matches(c, SENSITIVE_DATA.get(1))) {
+            return "疑似包含 Token/API Key";
+        }
+        if (matches(c, SENSITIVE_DATA.get(2))) {
+            return "疑似包含身份证号";
+        }
+        if (matches(c, SENSITIVE_DATA.get(3))) {
             return "疑似包含银行卡号";
         }
         return null;

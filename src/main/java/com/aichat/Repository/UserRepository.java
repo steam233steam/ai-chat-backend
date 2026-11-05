@@ -13,6 +13,9 @@ public interface UserRepository {
     // 验证码发送冷却，返回 true 表示本次可以发送
     boolean tryAcquireSendCodeCooldown(String phone);
 
+    // 发送失败时释放冷却，允许用户立即重试
+    void deleteSendCodeCooldown(String phone);
+
     // 保存用户信息到 redis
     void saveUser(String token, User user);
 

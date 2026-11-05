@@ -45,6 +45,13 @@ public interface PendingActionMapper {
             "WHERE id = #{id} AND user_id = #{userId} AND status = 'pending'")
     int markRejected(@Param("id") long id, @Param("userId") String userId);
 
+    // 精准懒过期：只把“这一条”到期 pending 置 expired，不能误伤同 session 里更新的提案
+    @Update("UPDATE tb_pending_action SET status = 'expired', update_time = NOW() " +
+            "WHERE id = #{id} AND user_id = #{userId} AND status = 'pending' " +
+            "AND expires_at <= #{now}")
+    int markExpiredIfDue(@Param("id") long id, @Param("userId") String userId,
+            @Param("now") java.time.LocalDateTime now);
+
     // 把同一 user+session 的旧 pending 置 expired（新提案前调用，避免"对"指错对象）
     @Update("UPDATE tb_pending_action SET status = 'expired', update_time = NOW() " +
             "WHERE user_id = #{userId} AND session_id = #{sessionId} AND status = 'pending'")

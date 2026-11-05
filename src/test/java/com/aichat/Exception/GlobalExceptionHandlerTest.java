@@ -32,4 +32,14 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
+    @Test
+    void shouldMapServiceUnavailableToHttp503() {
+        ResponseEntity<Result<Void>> response =
+                handler.handleBusinessException(new BusinessException(503, "短信服务暂未配置"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(503);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getCode()).isEqualTo(503);
+    }
+
 }

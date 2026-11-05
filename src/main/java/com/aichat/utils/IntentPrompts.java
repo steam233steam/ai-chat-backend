@@ -22,12 +22,11 @@ public final class IntentPrompts {
     }
 
     /**
-     * @param intent   本次要提取的意图（MEMORY / TASK），决定提示侧重
-     * @param message  用户原始口语
+     * @param intent   本次要提取的意图（MEMORY / TASK / null），null 表示宽松兜底让 LLM 自行判断
      * @param now      当前时间（Asia/Shanghai），供 LLM 解析相对时间
      */
     public static String buildSystemPrompt(
-            IntentDetector.Intent intent, String message, LocalDateTime now) {
+            IntentDetector.Intent intent, LocalDateTime now) {
         String nowStr = FMT.format(now);
         StringBuilder sb = new StringBuilder();
         sb.append("你是 MindButler 的意图提取器，任务是把用户一句口语转成结构化候选，供用户二次确认后落库。\n");
@@ -51,10 +50,16 @@ public final class IntentPrompts {
         if (intent == IntentDetector.Intent.MEMORY) {
             sb.append("- 本句偏记忆/人设：重点判断 key（style/goal/schedule/relation）与 memType（长期偏好=stable，近期动态=dynamic）。\n");
             sb.append("- 用户给 AI 定人设/角色（\"你是 X\"、\"当 X\"、\"扮演 X\"、\"叫我 X\"）→ key=relation, memType=stable, scope=session。\n");
-        } else {
+        } else if (intent == IntentDetector.Intent.TASK) {
             sb.append("- 本句偏任务：重点解析截止时间与重复规则；一次性任务 recurrence=once，daily/weekly 必须给 dueAt。\n");
+        } else {
+            // P1.4 宽松兜底：不预设侧重，让 LLM 自由判断"这句是记忆、人设、任务还是混合"
+            sb.append("- 本句是宽松提取：自由判断属于记忆（偏好/目标/作息/人设）还是任务（带时间/重复的提醒/计划），或两者兼有。\n");
+            sb.append("- 用户给 AI 定人设/角色（\"你是 X\"、\"当 X\"、\"扮演 X\"、\"叫我 X\"）→ key=relation, memType=stable, scope=session。\n");
+            sb.append("- 带时间表达（明天/下周三/每天 9 点）→ 填 tasks，dueAt 必须换算成绝对时间。\n");
+            sb.append("- 不确定是否要提取时，宁可留空 []，不要硬凑候选。\n");
         }
-        sb.append("\n用户原话：\n").append(message);
+        // 用户原话由 IntentExtractorimpl 以 UserMessage 传入，不能拼进 system prompt。
         return sb.toString();
     }
 }

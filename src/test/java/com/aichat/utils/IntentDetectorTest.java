@@ -89,6 +89,9 @@ class IntentDetectorTest {
     void shouldDetectUpdateIntentBeforeTaskCreation() {
         assertThat(IntentDetector.detect("算了延后十分钟吧", false)).isEqualTo(Intent.UPDATE);
         assertThat(IntentDetector.detect("把任务改个名", false)).isEqualTo(Intent.UPDATE);
+        // 删除/移除也不能交给聊天模型附和
+        assertThat(IntentDetector.detect("删除这个任务", false)).isEqualTo(Intent.UPDATE);
+        assertThat(IntentDetector.detect("可是我已经删除了", false)).isEqualTo(Intent.UPDATE);
     }
 
     @Test
@@ -137,4 +140,21 @@ class IntentDetectorTest {
         // "你的记忆怎么样" 直接命中 QUERY，不需要 LLM 兜底
         assertThat(IntentDetector.detect("你的记忆怎么样", false)).isEqualTo(Intent.QUERY);
     }
+
+    @Test
+    void shouldNotTreatConfirmWordInsideNormalSentenceAsCommand() {
+        // 有 pending 时也不能用 contains 匹配单字确认词，否则“你好呀”会误确认
+        assertThat(IntentDetector.detect("你好呀", true)).isEqualTo(Intent.NONE);
+        assertThat(IntentDetector.detect("我可以帮你吗", true)).isEqualTo(Intent.NONE);
+        assertThat(IntentDetector.detect("这不是我的问题", true)).isEqualTo(Intent.NONE);
+    }
+
+    @Test
+    void shouldAcceptExplicitCommandSegments() {
+        assertThat(IntentDetector.detect("好的，确认", true)).isEqualTo(Intent.CONFIRM);
+        assertThat(IntentDetector.detect("行吧", true)).isEqualTo(Intent.CONFIRM);
+        assertThat(IntentDetector.detect("不行", true)).isEqualTo(Intent.REJECT);
+        assertThat(IntentDetector.detect("不对，取消", true)).isEqualTo(Intent.REJECT);
+    }
+
 }

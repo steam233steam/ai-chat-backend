@@ -12,7 +12,8 @@ public interface IntentExtractor {
     /**
      * 提取候选。
      *
-     * @param intent   粗分类意图（MEMORY / TASK），决定提示侧重
+     * @param intent   粗分类意图（MEMORY / TASK / null）。null 表示宽松兜底，
+     *                 让 LLM 自由判断"这句是记忆、人设、任务还是混合"，不预设侧重。
      * @param message  用户原话
      * @return 解析后的候选；空表示“没识别到”
      */

@@ -1,5 +1,8 @@
 package com.aichat.Controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +17,7 @@ import com.aichat.Dto.ConfirmResult;
 import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.Result;
 import com.aichat.Service.PendingActionService;
+import com.aichat.Service.support.ConfirmationReceiptWriter;
 
 /**
  * 待确认动作接口（MindButler P1）。
@@ -24,9 +28,12 @@ import com.aichat.Service.PendingActionService;
 @RequestMapping("/user/pending-actions")
 @Tag(name = "待确认动作", description = "AI 提案的记忆/任务，用户确认后才生效（v3 状态机）")
 public class PendingActionController {
+    private static final Logger log = LoggerFactory.getLogger(PendingActionController.class);
 
     @Autowired
     private PendingActionService pendingActionService;
+    @Autowired
+    private ConfirmationReceiptWriter confirmationReceiptWriter;
 
     @Operation(summary = "查当前会话的待确认动作",
             description = "没有/已过期返回 data=null；前端据此渲染确认卡片")
@@ -47,14 +54,27 @@ public class PendingActionController {
             description = "原子确认；重复确认返回 alreadyConfirmed=true（不重复建）；已拒绝/过期 409")
     @PostMapping("/{id}/confirm")
     public Result<ConfirmResult> confirm(@PathVariable long id) {
-        return Result.success(pendingActionService.confirm(id));
+        ConfirmResult result = pendingActionService.confirm(id);
+        // 弹窗路径由后端补一条人设化短回执；文本确认走 ChatService，不会重复。
+        if (!result.isAlreadyConfirmed()) {
+            confirmationReceiptWriter.writeConfirmed(result.getSessionId());
+        }
+        return Result.success(result);
     }
 
     @Operation(summary = "拒绝待确认动作",
             description = "幂等；已拒绝静默成功，已确认/过期 409")
     @PostMapping("/{id}/reject")
     public Result<Void> reject(@PathVariable long id) {
-        pendingActionService.reject(id);
+        // 拒绝前拿到 sessionId；只有本次真的把 pending 改成 rejected 才写短回执，
+        // 重复点击/并发拒绝不会重复刷取消回执。
+        PendingActionVO pending = pendingActionService.getById(id);
+        String sessionId = pending == null ? null : pending.getSessionId();
+        boolean changed = pendingActionService.reject(id);
+        log.info("弹窗取消 pending: pendingId={}, session={}, changed={}", id, sessionId, changed);
+        if (changed && sessionId != null) {
+            confirmationReceiptWriter.writeCancelled(sessionId);
+        }
         return Result.success(null);
     }
 }

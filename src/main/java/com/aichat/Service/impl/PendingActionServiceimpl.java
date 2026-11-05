@@ -27,15 +27,12 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Entity.PendingAction;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.PendingActionMapper;
-import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.PendingActionService;
 import com.aichat.Service.TaskService;
 import com.aichat.utils.IntentPayloadCodec;
-import com.aichat.utils.IntentReplyFormatter;
 import com.aichat.utils.UserHolder;
 
-import org.springframework.ai.chat.messages.AssistantMessage;
 
 @Service
 public class PendingActionServiceimpl implements PendingActionService {
@@ -51,19 +48,29 @@ public class PendingActionServiceimpl implements PendingActionService {
     private MindButlerProperties props;
     @Autowired
     private Clock clock;
-    @Autowired
-    private ChatSessionRepository chatSessionRepository;
-
-
     @Override
     @Transactional
     public long create(String sessionId, String actionType, String payload, Long sourceMessageId) {
         String userId = currentUserId();
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new BusinessException("sessionId 不能为空");
+        }
+        if (sessionId.length() > 64) {
+            throw new BusinessException("sessionId 长度不能超过 64");
+        }
+        if (!"memory".equals(actionType) && !"task".equals(actionType) && !"mixed".equals(actionType)) {
+            throw new BusinessException("actionType 只能是 memory/task/mixed");
+        }
+        if (payload == null || payload.isBlank()) {
+            throw new BusinessException("待确认内容不能为空");
+        }
         // payload 大小上限（防滥用）
-        if (payload != null && payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+        if (payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
                 > props.getPendingPayloadMaxBytes()) {
             throw new BusinessException("待确认内容过长");
         }
+        // 不要把 confirm 必然拒绝的空/非法 proposal 写进 pending。
+        ensureConfirmablePayload(payload);
 
         PendingAction action = new PendingAction();
         action.setUserId(userId);
@@ -98,7 +105,7 @@ public class PendingActionServiceimpl implements PendingActionService {
         // 懒过期：到点未确认 → 顺手置 expired，返回 null（上层让重新发起）
         LocalDateTime now = LocalDateTime.now(clock);
         if (action.getExpiresAt() != null && !action.getExpiresAt().isAfter(now)) {
-            pendingActionMapper.expireSession(userId, sessionId);
+            pendingActionMapper.markExpiredIfDue(action.getId(), userId, now);
             return null;
         }
         return toVO(action, now);
@@ -115,7 +122,7 @@ public class PendingActionServiceimpl implements PendingActionService {
         LocalDateTime now = LocalDateTime.now(clock);
         if ("pending".equals(action.getStatus())
                 && action.getExpiresAt() != null && !action.getExpiresAt().isAfter(now)) {
-            pendingActionMapper.expireSession(action.getUserId(), action.getSessionId());
+            pendingActionMapper.markExpiredIfDue(action.getId(), action.getUserId(), now);
             return null;
         }
         return toVO(action, now);
@@ -131,7 +138,9 @@ public class PendingActionServiceimpl implements PendingActionService {
         }
         // 重复确认 → 幂等返回 alreadyConfirmed
         if ("confirmed".equals(action.getStatus())) {
-            return new ConfirmResult(true, new ArrayList<>(), new ArrayList<>());
+            ConfirmResult already = new ConfirmResult(true, new ArrayList<>(), new ArrayList<>());
+            already.setSessionId(action.getSessionId());
+            return already;
         }
         // 已拒绝/已过期 → 409
         if ("rejected".equals(action.getStatus())) {
@@ -141,7 +150,7 @@ public class PendingActionServiceimpl implements PendingActionService {
         LocalDateTime now = LocalDateTime.now(clock);
         if ("pending".equals(action.getStatus())
                 && action.getExpiresAt() != null && !action.getExpiresAt().isAfter(now)) {
-            pendingActionMapper.expireSession(action.getUserId(), action.getSessionId());
+            pendingActionMapper.markExpiredIfDue(action.getId(), action.getUserId(), now);
             throw new BusinessException(409, "该确认已过期，请重新发起");
         }
         if (!"pending".equals(action.getStatus())) {
@@ -154,10 +163,16 @@ public class PendingActionServiceimpl implements PendingActionService {
             // 被并发抢先（已 confirmed/rejected/expired）
             PendingAction latest = pendingActionMapper.selectById(id, userId);
             if (latest != null && "confirmed".equals(latest.getStatus())) {
-                return new ConfirmResult(true, new ArrayList<>(), new ArrayList<>());
+                ConfirmResult already = new ConfirmResult(true, new ArrayList<>(), new ArrayList<>());
+                already.setSessionId(latest.getSessionId());
+                return already;
             }
             throw new BusinessException(409, "该确认已失效，请刷新后重试");
         }
+
+        // 成功抢到状态迁移后再校验 payload。这样并发重复确认会先走 alreadyConfirmed 幂等分支，
+        // 而空/非法 payload 会抛异常让事务回滚，不会出现“确认成功但什么都没创建”。
+        ensureConfirmablePayload(action.getPayload());
 
         // 按 payload 实际内容落库（memories + tasks，可能都为空则只确认不建）
         // P1.1 会话隔离：记忆按候选自带的 scope 决定落库 session（session 级 = 本会话，global = 全局）
@@ -166,24 +181,16 @@ public class PendingActionServiceimpl implements PendingActionService {
         log.info("pending 确认: userId={}, id={}, memories={}, tasks={}",
                 userId, id, memoryResults.size(), taskResults.size());
         ConfirmResult result = new ConfirmResult(false, memoryResults, taskResults);
+        result.setSessionId(action.getSessionId());
 
-        // 需求2（方案B）：确认成功后把"好的，都帮你设好了"作为 assistant 消息落库到会话历史，
-        // 前端刷新/拉历史时能看到这条反馈，聊天自然衔接。
-        // 重复确认（alreadyConfirmed 分支）已在上面提前 return，不会走到这里，无需额外判断。
-        try {
-            String confirmReply = IntentReplyFormatter.buildConfirmResultReply(result);
-            chatSessionRepository.save(userId, action.getSessionId(),
-                    new AssistantMessage(confirmReply), "mb");
-        } catch (Exception e) {
-            // 反馈落库失败不影响确认本身（事务已提交），只记日志
-            log.warn("确认反馈落库失败（不影响确认结果）: userId={}, session={}, pendingId={}",
-                    userId, action.getSessionId(), id, e);
-        }
+        // 聊天历史由聊天链路负责，PendingActionService 只负责状态机 + 业务落库。
+        // 弹窗确认已经有 success 状态；如果这里再写一条 assistant 消息，
+        // 前端刷新历史时会变成“确认提示 + 已设好”两条 AI 气泡，重复且噪音。
         return result;
     }
 
     @Override
-    public void reject(long id) {
+    public boolean reject(long id) {
         String userId = currentUserId();
         PendingAction action = pendingActionMapper.selectById(id, userId);
         if (action == null) {
@@ -191,25 +198,50 @@ public class PendingActionServiceimpl implements PendingActionService {
         }
         // 幂等：已拒绝的重复 reject 静默成功
         if ("rejected".equals(action.getStatus())) {
-            return;
+            return false;
         }
         if ("confirmed".equals(action.getStatus())) {
             throw new BusinessException(409, "该确认已确认，不能再拒绝");
         }
+        // 已过期等价于拒绝：允许用户点“取消”后拿到 200，不要把过期状态又报成 409。
+        if ("expired".equals(action.getStatus())) {
+            return false;
+        }
         LocalDateTime now = LocalDateTime.now(clock);
         if ("pending".equals(action.getStatus())
                 && action.getExpiresAt() != null && !action.getExpiresAt().isAfter(now)) {
-            pendingActionMapper.expireSession(action.getUserId(), action.getSessionId());
-            return; // 过期等价于拒绝，静默
+            pendingActionMapper.markExpiredIfDue(action.getId(), action.getUserId(), now);
+            return false; // 过期等价于拒绝，静默
         }
         int rows = pendingActionMapper.markRejected(id, userId);
         if (rows == 0) {
             // 并发被确认/过期
             PendingAction latest = pendingActionMapper.selectById(id, userId);
-            if (latest != null && "rejected".equals(latest.getStatus())) {
-                return; // 幂等
+            if (latest != null
+                    && ("rejected".equals(latest.getStatus()) || "expired".equals(latest.getStatus()))) {
+                return false; // 幂等：并发拒绝或并发过期都视为取消成功
             }
             throw new BusinessException(409, "该确认已失效，请刷新后重试");
+        }
+        return true;
+    }
+
+    /**
+     * 确认前校验 payload：至少要有一条“可落库”的记忆/任务候选。
+     * 解析失败、空数组、只有 P1 不支持的 update/delete 候选都直接 400，
+     * 不能把 pending 置 confirmed 后返回“都帮你设好了”。
+     */
+    private void ensureConfirmablePayload(String payload) {
+        boolean hasMemory = IntentPayloadCodec
+                .parseCandidates(payload, "memories", MemoryCandidate.class).stream()
+                .anyMatch(c -> c != null && c.getKey() != null && c.getValue() != null
+                        && !c.getValue().isBlank());
+        boolean hasTask = IntentPayloadCodec
+                .parseCandidates(payload, "tasks", TaskCandidate.class).stream()
+                .anyMatch(c -> c != null && c.getTitle() != null && !c.getTitle().isBlank()
+                        && (c.getAction() == null || "create".equals(c.getAction())));
+        if (!hasMemory && !hasTask) {
+            throw new BusinessException("待确认内容为空或已失效，请重新发起");
         }
     }
 
@@ -275,6 +307,7 @@ public class PendingActionServiceimpl implements PendingActionService {
         vo.setId(action.getId());
         vo.setActionType(action.getActionType());
         vo.setStatus(action.getStatus());
+        vo.setSessionId(action.getSessionId());
         vo.setExpiresAt(action.getExpiresAt());
         vo.setMemories(IntentPayloadCodec.parseCandidates(
                 action.getPayload(), "memories", MemoryCandidate.class));

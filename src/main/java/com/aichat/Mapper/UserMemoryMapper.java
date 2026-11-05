@@ -87,7 +87,10 @@ public interface UserMemoryMapper {
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' AND content = #{content} " +
             "AND (expires_at IS NULL OR expires_at > #{now}) " +
-            "<if test='sessionScope != null'> AND (session_id IS NULL OR session_id = #{sessionScope}) </if>" +
+            "<choose>" +
+            "  <when test='sessionScope != null'> AND session_id = #{sessionScope} </when>" +
+            "  <otherwise> AND session_id IS NULL </otherwise>" +
+            "</choose>" +
             "ORDER BY update_time DESC LIMIT 1" +
             "</script>")
     UserMemory selectActiveByContent(@Param("userId") String userId,

@@ -3,6 +3,8 @@ package com.aichat.Dto;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /**
  * 确认动作的结果。alreadyConfirmed=true 表示是重复确认（幂等，不会重复建）。
  * memories/tasks 列出本次确认实际落库的 id（重复确认时为空列表）。
@@ -11,6 +13,8 @@ public class ConfirmResult {
     private boolean alreadyConfirmed;
     private List<Map<String, Object>> memories;
     private List<Map<String, Object>> tasks;
+    /** 确认所属会话，仅用于 REST 确认后写短回执，不返回前端。 */
+    private String sessionId;
 
     public ConfirmResult() {
     }
@@ -44,5 +48,14 @@ public class ConfirmResult {
 
     public void setTasks(List<Map<String, Object>> tasks) {
         this.tasks = tasks;
+    }
+
+    @JsonIgnore
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 }

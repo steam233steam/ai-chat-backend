@@ -87,7 +87,7 @@ public class MemoryController {
     }
 
     @Operation(summary = "删除记忆（软删）",
-            description = "幂等；已是删除态返回 404")
+            description = "幂等；已是删除态仍返回 200；不存在/非本人返回 404")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable long id) {
         boolean ok = memoryService.delete(id);

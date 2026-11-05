@@ -1,0 +1,25 @@
+feat(mindbutler-p1): P1.4 后端 bug 修复（P0/P1 简单项）+ 未提交改动统一入库
+
+P0（正确性）：
+- 流式 sendSessionStream 命中意图时同步落库（personaReceipt + MbMarkers.strip + 非空才 saveAssistantReply），
+  修复确认/取消回执在流式路径丢失、刷新历史后断层的问题
+- TASK 意图加敏感词闸门（和 MEMORY 一样，三处同步：提取前 / 提取空 / 候选净化空），
+  避免"明天交密码"这类敏感内容发给 LLM 提取器
+
+P1（体验）：
+- QUERY 主题词收紧："怎么样/如何/啥样"从通用疑问词挪出，改为"主语词 + 状态词"组合命中，
+  避免"你觉得我这个人怎么样""最近心情怎么样"被误路由到查任务/记忆
+- extractLoose 不传固定 intent（传 null），IntentPrompts 加宽松兜底分支，
+  让 LLM 自由判断"记忆/人设/任务/混合"，任务型表达不再被 MEMORY 侧重漏抽
+
+未提交改动统一入库（之前散落的工作树）：
+- MbMarkers.pendingOnly：只返回标记不附带口语文案，弹窗自己展示详情
+- PersonaReplyService + ConfirmationReceiptWriter：弹窗确认/取消后用会话人设生成短回执，
+  独立线程池 + 1.5s 超时 + 关键词白名单校验，模型失败回退固定文案
+- SmsConfig/SmsProperties/SmsSender：短信发送器抽象（dev-mode=true → LogSmsSender 日志验证码，
+  dev-mode=false → DisabledSmsSender 503），避免生产假成功
+- GlobalExceptionHandler / 各 Controller 参数校验 / 文档同步
+- 测试：PersonaReplyServiceimplTest / ConfirmationReceiptWriterTest / IntentQueryReplyBuilderTest /
+  SmsConfigTest / 各 ServiceImpl 测试同步更新
+
+271 测试全绿。

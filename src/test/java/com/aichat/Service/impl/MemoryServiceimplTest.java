@@ -402,4 +402,66 @@ class MemoryServiceimplTest {
     private UserMemory memory(Long id) {
         return mem(id, "style", "简洁", "stable", "active", null, NOW);
     }
+
+    @Test
+    void shouldExposeSessionIdInMemoryVO() {
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("猫娘"),
+                any(LocalDateTime.class), eq("s-1"))).thenReturn(null);
+        when(mapper.countActive(eq("USER_ID_1234567890"), any(LocalDateTime.class))).thenReturn(0);
+        when(mapper.insert(any(UserMemory.class))).thenAnswer(inv -> {
+            UserMemory m = inv.getArgument(0);
+            m.setId(43L);
+            return 1;
+        });
+        UserMemory saved = mem(43L, "style", "猫娘", "stable", "active", null, NOW);
+        saved.setSessionId("s-1");
+        when(mapper.selectById(43L, "USER_ID_1234567890")).thenReturn(saved);
+
+        MemoryVO vo = service.createWithReplaces("style", "猫娘", "stable", 0.9, null, 7L, "s-1");
+
+        assertThat(vo.getSessionId()).isEqualTo("s-1");
+    }
+
+    @Test
+    void shouldIgnoreReplacesIdFromAnotherSessionScope() {
+        UserMemory old = mem(99L, "style", "旧风格", "stable", "active", null, NOW);
+        old.setSessionId("s-1");
+        when(mapper.selectById(99L, "USER_ID_1234567890")).thenReturn(old);
+        when(mapper.selectActiveByContent(eq("USER_ID_1234567890"), eq("新风格"),
+                any(LocalDateTime.class), eq(null))).thenReturn(null);
+        when(mapper.countActive(eq("USER_ID_1234567890"), any(LocalDateTime.class))).thenReturn(0);
+        when(mapper.insert(any(UserMemory.class))).thenAnswer(inv -> {
+            UserMemory m = inv.getArgument(0);
+            m.setId(42L);
+            return 1;
+        });
+        when(mapper.selectById(42L, "USER_ID_1234567890"))
+                .thenReturn(mem(42L, "style", "新风格", "stable", "active", null, NOW));
+
+        service.createWithReplaces("style", "新风格", "stable", 0.9, 99L, 7L, null);
+
+        verify(mapper, never()).markSuperseded(anyLong(), anyString());
+        ArgumentCaptor<UserMemory> captor = ArgumentCaptor.forClass(UserMemory.class);
+        verify(mapper).insert(captor.capture());
+        assertThat(captor.getValue().getReplacesId()).isNull();
+    }
+
+    @Test
+    void shouldTreatAlreadyDeletedMemoryAsIdempotentSuccess() {
+        when(mapper.softDelete(1L, "USER_ID_1234567890")).thenReturn(0);
+        UserMemory deleted = mem(1L, "style", "简洁", "stable", "deleted", null, NOW);
+        when(mapper.selectById(1L, "USER_ID_1234567890")).thenReturn(deleted);
+
+        assertThat(service.delete(1L)).isTrue();
+        verify(mapper).selectById(1L, "USER_ID_1234567890");
+    }
+
+    @Test
+    void shouldReturnNullWhenGettingDeletedMemory() {
+        UserMemory deleted = mem(1L, "style", "简洁", "stable", "deleted", null, NOW);
+        when(mapper.selectById(1L, "USER_ID_1234567890")).thenReturn(deleted);
+
+        assertThat(service.get(1L)).isNull();
+    }
+
 }

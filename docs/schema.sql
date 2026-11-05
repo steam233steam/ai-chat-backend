@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS tb_chat_message (
 CREATE TABLE IF NOT EXISTS tb_user_memory (
   id                BIGINT       NOT NULL AUTO_INCREMENT,
   user_id           VARCHAR(32)  NOT NULL COMMENT '用户 uid，与 tb_user.uid 对齐',
+  session_id        VARCHAR(64)  NULL COMMENT '会话隔离：NULL=全局画像；有值=仅该会话生效（P1.1）',
   mem_key           VARCHAR(32)  NOT NULL COMMENT 'P1: style|goal|schedule|relation；应用层枚举校验',
   content           VARCHAR(512) NOT NULL COMMENT '记忆内容，应用层限制 256 字符',
   mem_type          ENUM('stable','dynamic') NOT NULL DEFAULT 'stable' COMMENT 'stable 长存；dynamic 会过期',
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS tb_user_memory (
   update_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_memory_inject (user_id, status, mem_type, update_time),
+  KEY idx_memory_session (user_id, session_id, status),
   KEY idx_mem_key (user_id, mem_key, status),
   KEY idx_memory_expire (user_id, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户长期记忆（结构化画像）';

@@ -36,12 +36,9 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Entity.PendingAction;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.PendingActionMapper;
-import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.TaskService;
 import com.aichat.utils.UserHolder;
-
-import org.springframework.ai.chat.messages.Message;
 
 /**
  * PendingActionService 单测：纯 Mockito（不连 MySQL），反射注入 Mapper/Config/Clock，
@@ -60,7 +57,6 @@ class PendingActionServiceimplTest {
     private PendingActionMapper mapper;
     private MemoryService memoryService;
     private TaskService taskService;
-    private ChatSessionRepository chatSessionRepository;
     private MindButlerProperties props;
     private PendingActionServiceimpl service;
 
@@ -69,7 +65,6 @@ class PendingActionServiceimplTest {
         mapper = mock(PendingActionMapper.class);
         memoryService = mock(MemoryService.class);
         taskService = mock(TaskService.class);
-        chatSessionRepository = mock(ChatSessionRepository.class);
         props = new MindButlerProperties();
         props.setTaskZone("Asia/Shanghai");
         // 固定 TTL=10min 便于断言
@@ -79,7 +74,6 @@ class PendingActionServiceimplTest {
         ReflectionTestUtils.setField(service, "pendingActionMapper", mapper);
         ReflectionTestUtils.setField(service, "memoryService", memoryService);
         ReflectionTestUtils.setField(service, "taskService", taskService);
-        ReflectionTestUtils.setField(service, "chatSessionRepository", chatSessionRepository);
         ReflectionTestUtils.setField(service, "props", props);
         ReflectionTestUtils.setField(service, "clock", FIXED_CLOCK);
         login();
@@ -142,10 +136,19 @@ class PendingActionServiceimplTest {
     }
 
     @Test
+    void shouldRejectEmptyPayloadOnCreate() {
+        assertThatThrownBy(() -> service.create(SES, "task", "{\"tasks\":[]}", 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("待确认内容");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
     void shouldReturn409WhenConcurrentInsertHitsPendingSlot() {
         when(mapper.insert(any(PendingAction.class)))
                 .thenThrow(new DuplicateKeyException("uk_pending_slot"));
-        assertThatThrownBy(() -> service.create(SES, "task", "{\"tasks\":[]}", 1L))
+        assertThatThrownBy(() -> service.create(SES, "task",
+                "{\"tasks\":[{\"title\":\"交报告\"}]}", 1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("更新");
     }
@@ -175,7 +178,8 @@ class PendingActionServiceimplTest {
         when(mapper.selectPendingBySession(UID, SES)).thenReturn(p);
 
         assertThat(service.current(SES)).isNull();
-        verify(mapper).expireSession(UID, SES);
+        verify(mapper).markExpiredIfDue(9L, UID, NOW);
+        verify(mapper, never()).expireSession(UID, SES);
     }
 
     @Test
@@ -185,24 +189,6 @@ class PendingActionServiceimplTest {
     }
 
     // ---------- confirm：分支落库 ----------
-
-    @Test
-    void shouldSaveConfirmReplyToChatHistory() {
-        // 需求2（方案B）：确认成功后把"好的，都帮你设好了"作为 assistant 消息落库到会话历史
-        String payload = "{\"memories\":[{\"key\":\"style\",\"value\":\"简洁\",\"memType\":\"stable\",\"confidence\":0.9}]}";
-        PendingAction p = pending(9L, payload, NOW.plusMinutes(5));
-        when(mapper.selectById(9L, UID)).thenReturn(p);
-        when(mapper.markConfirmed(9L, UID)).thenReturn(1);
-        when(memoryService.createWithReplaces(eq("style"), eq("简洁"), eq("stable"),
-                eq(0.9), isNull(), eq(7L), isNull()))
-                .thenReturn(memoryVO(41L));
-
-        var result = service.confirm(9L);
-
-        assertThat(result.getMemories()).hasSize(1);
-        // 验证：assistant 消息已落库到 s-1 会话历史，model="mb"（非聊天模型）
-        verify(chatSessionRepository).save(eq(UID), eq(SES), any(Message.class), eq("mb"));
-    }
 
     @Test
     void shouldConfirmMemoryOnly() {
@@ -262,16 +248,30 @@ class PendingActionServiceimplTest {
     }
 
     @Test
-    void shouldSkipNonCreateTaskCandidate() {
+    void shouldRejectPendingThatOnlyContainsUnsupportedTaskAction() {
         String payload = "{\"tasks\":[{\"action\":\"update\",\"title\":\"改标题\"}]}";
         PendingAction p = pending(9L, payload, NOW.plusMinutes(5));
         when(mapper.selectById(9L, UID)).thenReturn(p);
         when(mapper.markConfirmed(9L, UID)).thenReturn(1);
 
-        var result = service.confirm(9L);
+        assertThatThrownBy(() -> service.confirm(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("待确认内容");
 
-        assertThat(result.getTasks()).isEmpty();
         verify(taskService, never()).create(any());
+    }
+
+    @Test
+    void shouldRejectEmptyPayloadBeforeChangingPendingStatus() {
+        PendingAction p = pending(9L, "{}", NOW.plusMinutes(5));
+        when(mapper.selectById(9L, UID)).thenReturn(p);
+        when(mapper.markConfirmed(9L, UID)).thenReturn(1);
+
+        assertThatThrownBy(() -> service.confirm(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("待确认内容");
+
+        verify(mapper).markConfirmed(9L, UID);
     }
 
     // ---------- confirm：幂等 & 409 ----------
@@ -307,7 +307,8 @@ class PendingActionServiceimplTest {
         assertThatThrownBy(() -> service.confirm(9L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("过期");
-        verify(mapper).expireSession(UID, SES);
+        verify(mapper).markExpiredIfDue(9L, UID, NOW);
+        verify(mapper, never()).expireSession(UID, SES);
     }
 
     @Test
@@ -359,7 +360,8 @@ class PendingActionServiceimplTest {
         when(mapper.selectById(9L, UID)).thenReturn(p);
 
         assertThat(service.getById(9L)).isNull();
-        verify(mapper).expireSession(UID, SES);
+        verify(mapper).markExpiredIfDue(9L, UID, NOW);
+        verify(mapper, never()).expireSession(UID, SES);
     }
 
     // ---------- reject ----------
@@ -370,7 +372,7 @@ class PendingActionServiceimplTest {
         when(mapper.selectById(9L, UID)).thenReturn(p);
         when(mapper.markRejected(9L, UID)).thenReturn(1);
 
-        service.reject(9L);
+        assertThat(service.reject(9L)).isTrue();
 
         verify(mapper).markRejected(9L, UID);
     }
@@ -381,9 +383,34 @@ class PendingActionServiceimplTest {
         p.setStatus("rejected");
         when(mapper.selectById(9L, UID)).thenReturn(p);
 
-        service.reject(9L); // 幂等，不抛
+        assertThat(service.reject(9L)).isFalse(); // 幂等，不抛
 
         verify(mapper, never()).markRejected(anyLong(), anyString());
+    }
+
+    @Test
+    void shouldSilentlySucceedWhenRejectExpiredStatus() {
+        PendingAction p = pending(9L, "{}", NOW.minusMinutes(1));
+        p.setStatus("expired");
+        when(mapper.selectById(9L, UID)).thenReturn(p);
+
+        assertThat(service.reject(9L)).isFalse();
+
+        verify(mapper, never()).markRejected(anyLong(), anyString());
+    }
+
+    @Test
+    void shouldSilentlySucceedWhenConcurrentRejectExpires() {
+        PendingAction p = pending(9L, "{}", NOW.plusMinutes(5));
+        when(mapper.selectById(9L, UID)).thenReturn(p);
+        when(mapper.markRejected(9L, UID)).thenReturn(0);
+        PendingAction latest = pending(9L, "{}", NOW.plusMinutes(5));
+        latest.setStatus("expired");
+        when(mapper.selectById(9L, UID)).thenReturn(p).thenReturn(latest);
+
+        assertThat(service.reject(9L)).isFalse();
+
+        verify(mapper).markRejected(9L, UID);
     }
 
     @Test
@@ -402,9 +429,10 @@ class PendingActionServiceimplTest {
         PendingAction p = pending(9L, "{}", NOW.minusMinutes(1)); // 已过期
         when(mapper.selectById(9L, UID)).thenReturn(p);
 
-        service.reject(9L); // 过期等价拒绝，静默
+        assertThat(service.reject(9L)).isFalse(); // 过期等价拒绝，静默
 
-        verify(mapper).expireSession(UID, SES);
+        verify(mapper).markExpiredIfDue(9L, UID, NOW);
+        verify(mapper, never()).expireSession(UID, SES);
         verify(mapper, never()).markRejected(anyLong(), anyString());
     }
 

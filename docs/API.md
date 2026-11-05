@@ -1,9 +1,9 @@
 # AI Chat 后端接口文档
 
-> 文档版本：v7.5  
-> 最后更新：2026-11-04 17:50  
+> 文档版本：v7.6<br>
+> 最后更新：2026-11-04 18:53<br>
 > 基础路径：`http://localhost:8080`  
-> 变更记录：v7.5 - MindButler P1.2（意图增强：LLM 兜底 NONE 也过 LLM + 人设提取语义修正 + QUERY 按会话隔离查记忆 + 疑问词扩充）；v7.4 - MindButler P1.1b（确认文案口语化 + 确认后反馈落库到会话历史 + QUERY 意图主题词扩充）；v7.3 - MindButler P1.1（查询意图直接读数据回答 + 记忆会话隔离）；v7.2 - 前端任务确认弹窗；v7.1 - 聊天文案 `[[MB:pending=N]]` 标记 + `GET /user/pending-actions/{id}`
+> 变更记录：v7.6 - 短信发送抽象为 SmsSender 端口（dev 日志 / 生产未配置返回 503），`/user/code` 发送前预检 + 失败清理冷却；新增 MindButler 全链路集成测试；v7.5 - MindButler P1.2（意图增强：LLM 兜底 NONE 也过 LLM + 人设提取语义修正 + QUERY 按会话隔离查记忆 + 疑问词扩充）；v7.4 - MindButler P1.1b（确认文案口语化 + 确认后反馈落库到会话历史 + QUERY 意图主题词扩充）；v7.3 - MindButler P1.1（查询意图直接读数据回答 + 记忆会话隔离）；v7.2 - 前端任务确认弹窗；v7.1 - 聊天文案 `[[MB:pending=N]]` 标记 + `GET /user/pending-actions/{id}`
 
 ---
 
@@ -90,10 +90,20 @@ POST /user/code?phone=13800138000
 }
 ```
 
+```json
+{
+  "code": 503,
+  "message": "短信服务暂未配置，请使用密码登录或联系管理员",
+  "data": null
+}
+```
+
 **说明**：
 - 验证码有效期 5 分钟
 - 同一手机号 60 秒冷却，防止短信轰炸
-- 开发模式下验证码打印在日志中（仅前 2 位脱敏），不直接返回
+- **发送前先预检短信能力**（`SmsSender.ensureAvailable()`）：未接入供应商时直接返回 503，不生成验证码、不占用 60 秒冷却，避免"接口说已发送、用户却收不到"
+- 发送失败会清理验证码并释放冷却，让用户可立即重试，同时返回 503
+- 开发模式（`app.sms.dev-mode=true`）下验证码会以 `[DEV]` 前缀完整打印在日志中，仅限本地；生产默认关闭
 
 ---
 
@@ -440,10 +450,10 @@ Authorization: 550e8400-e29b-41d4-a716-446655440000
 - AI 标题异步生成（不阻塞主流程），标题也走净化
 - 会话锁模型：新会话锁到本次传入的模型；已有会话若传入模型与锁定模型不一致 → 409
 - 命中意图时，`data` 是确认文案，此时不产生 AI 模型回复：
-  - **MEMORY / TASK**（"记住…" / "明天…"）→ LLM 提取候选 + 写 pending，文案尾部带 `[[MB:pending=N]]` 机器标记，前端据此渲染确认弹窗（见 4.3）
+  - **MEMORY / TASK**（"记住…" / "明天…"）→ LLM 提取候选 + 写 pending，`data` 只返回 `[[MB:pending=N]]` 机器标记，前端据此打开确认弹窗，聊天流不新增 AI 气泡（见 4.3）
   - **QUERY**（"我有哪些任务 / 你记住了我什么 / 你的记忆怎么样"，P1.1 新增）→ **不调 LLM**，直接读当前用户任务/记忆数据回答（P1.2 起记忆按会话隔离读：`listForInjection(sessionId)`，别的会话人设不串进来）；无数据时明确说"还没有"
   - **NONE（P1.2 LLM 兜底）**：关键词没命中但命中宽松触发词（"你是 X" / "叫我 X" / "我平时 X"）→ 过一次 LLM 判断有无可提取内容，有则写 pending 弹窗，无则走正常聊天（`app.mindbutler.llm-intent-fallback` 开关控制，默认开）
-  - **CONFIRM / REJECT** → 处理现有 pending；P1.1b 起确认后会把反馈文案作为 assistant 消息落库到会话历史（前端拉历史可见，聊天自然衔接）
+  - **CONFIRM / REJECT** → 处理现有 pending；确认/取消后由当前会话人设生成一条短回执（模型失败时回退“已经定好”/“计划取消”），不再重复任务/记忆详情
   - **UPDATE / NO_PENDING / 兜底** → 固定文案，不带标记
 
 ---
@@ -762,7 +772,7 @@ data: [DONE]
 #### 4.1.7 删除任务（软删）
 
 - **接口地址**：`DELETE /user/tasks/{id}`
-- 幂等；已是删除态返回 404
+- 幂等；已是删除态仍返回 200；不存在/非本人返回 404
 
 **TaskVO 字段**：`id, title, dueAt, timezone, recurrence, recurrenceRule, status, deletedAt, completedAt, rawInput, version, createTime, updateTime, overdue`
 
@@ -782,6 +792,8 @@ data: [DONE]
 **行为说明**：
 - AI 提取时 LLM 多输出 `scope` 字段（`global` / `session`），长期习惯/偏好默认 global，本会话人设/临时口吻为 session；拿不准填 global
 - 注入链路（`PromptBuilder.build(base, sessionScope)`）只取「全局(NULL) + 当前会话」的记忆，会话 A 设定的人设**不会带进**会话 B
+- 其中 `relation` 是用户弹窗确认过的人设/称呼，会作为 `<confirmed_persona>` 明确要求模型遵循；其他 key 仍只作为背景数据
+- system prompt 同时注入当前 `Asia/Shanghai` 时间，模型回答“现在/今天/明天”时不能自己编日期
 - 去重范围随作用域：会话级记忆只在同会话去重，全局记忆跨会话去重
 - 存量数据 `session_id` 全为 NULL → 行为不变，向后兼容
 - 前端无需改接口：记忆 CRUD 不变；`MemoryVO` 新增 `sessionId` 字段（NULL=全局，有值=会话级）
@@ -841,7 +853,7 @@ data: [DONE]
 #### 4.2.6 删除记忆（软删）
 
 - **接口地址**：`DELETE /user/memories/{id}`
-- 幂等；已是删除态返回 404
+- 幂等；已是删除态仍返回 200；不存在/非本人返回 404
 
 **MemoryVO 字段**：`id, memKey, content, memType, status, confidence, source, sourceMessageId, replacesId, expiresAt, version, createTime, updateTime, expired, sessionId`（P1.1 新增 `sessionId`：NULL=全局，有值=会话级）
 
@@ -892,10 +904,9 @@ M3 口语路径：聊天里命中触发词 → 提取器写 pending → 前端�
 #### 4.3.3 聊天文案里的 pending 标记（前端弹窗契约）⭐
 
 `POST /chat/ask` 命中"提取出新候选并写 pending"时，返回的 `data` 文案**尾部**会带一个机器可读标记。
-P1.1b 起文案本身改为口语化（不再用"我识别到："机械格式），例如：
+弹窗已经展示任务/记忆详情，所以聊天流不再插入待确认文案，只返回机器标记；前端收到标记后只打开弹窗，不新增 AI 气泡。
 
 ```
-我记住你的风格是「简洁」，周五 09:00（11-06）提醒你「交周报」，回复「好」我帮你设上，说「取消」就不存了。
 [[MB:pending=42]]
 ```
 
@@ -905,7 +916,7 @@ P1.1b 起文案本身改为口语化（不再用"我识别到："机械格式）
 | 前端检测 | 正则 `\[\[MB:pending=(\d+)\]\]`，捕获到 id 就弹窗 |
 | 弹窗数据源 | `GET /user/pending-actions/{pendingId}`（或 `GET /current?sessionId=`） |
 | 确认 / 拒绝 | `POST /user/pending-actions/{pendingId}/confirm` / `reject` |
-| 确认反馈落库 | P1.1b：确认后"好的，都帮你设好了…"自动作为 assistant 消息写入会话历史（前端拉历史可见；落库失败不影响确认本身） |
+| 确认反馈 | 确认/取消后由当前会话人设生成一条短回执；模型失败时回退“已经定好”/“计划取消”；重复确认/取消不重复写；详情只留在弹窗 |
 | 展示 | 标记是给机器读的，前端展示文案时**剥离** `[[MB:pending=...]]` 行 |
 | 不带标记 | 普通聊天、确认/拒绝/过期/限流等所有兜底文案都**没有**标记 → 不弹窗 |
 
@@ -920,7 +931,7 @@ P1.1b 起文案本身改为口语化（不再用"我识别到："机械格式）
 - **接口地址**：`POST /user/pending-actions/{id}/confirm`
 - 原子确认；重复确认返回 `alreadyConfirmed=true`（不重复建）；已拒绝 / 过期 409
 - 确认时按 payload 实际内容（memories/tasks）分 memory-only / task-only / mixed 三路落库
-- **P1.1b 起**：确认成功后自动把"好的，都帮你设好了…"反馈文案作为 assistant 消息落库到该会话历史（落库失败不影响确认本身），前端拉历史 / 刷新时可见这条回音
+- 弹窗确认成功后，后端用当前会话人设生成一条短回执（失败时回退“已经定好”）；取消成功同理（回退“计划取消”）。不再重复任务/记忆详情，避免两条重复 AI 气泡。文本确认走 ChatService，同样使用人设回执。
 
 ```json
 {
@@ -957,6 +968,10 @@ P1.1b 起文案本身改为口语化（不再用"我识别到："机械格式）
 | 409 | 冲突（锁模型 / 乐观锁 / pending 状态 / 重复记忆） | 刷新数据或新建会话 |
 | 413 | 上传文件过大 | 检查文件大小 |
 | 500 | 系统错误 | AI 服务不可用或服务器异常 |
+| 503 | 服务不可用 | 短信服务未配置（`/user/code`），用密码登录或联系管理员 |
+
+**503 常见场景**：
+- 生产未接入短信供应商时调 `POST /user/code`（发送前预检失败，不生成验证码、不占冷却）
 
 **409 常见场景**：
 - 会话锁模型冲突（切换模型需新建会话）
@@ -1581,7 +1596,7 @@ export default api;
 |------|------|
 | 验证码冷却 | 同一手机号 60 秒内只能发一次 |
 | 验证码一次性 | 校验通过后立即删除，防止重放 |
-| 验证码日志脱敏 | 开发模式只打前 2 位，避免手机号 + 验证码成对泄露 |
+| 验证码日志策略 | dev-mode=true 时完整打印到 `[DEV]` 日志（仅本地）；生产默认 false，未接供应商时 `/user/code` 返回 503 |
 | 密码强度 | 4-32 位字母、数字或下划线 |
 | 手机号归属 | 设置密码时校验手机号属于当前账号 |
 | 统一错误提示 | 密码登录不暴露手机号是否注册 |
@@ -1684,7 +1699,7 @@ Windows 宿主
 - `application-local.properties` - 本地敏感配置（密码，已 gitignore）
 
 **说明**：本地开发需在 `application-local.properties` 里显式设 `app.sms.dev-mode=true`，
-否则默认关闭（生产安全），验证码不会打印到日志。
+验证码会完整打印到 `[DEV]` 日志；生产默认 false，未接入短信供应商时 `/user/code` 返回 503。
 
 ### 13.5 MindButler P1 配置项
 

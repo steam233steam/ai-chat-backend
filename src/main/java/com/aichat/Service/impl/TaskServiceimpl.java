@@ -71,6 +71,10 @@ public class TaskServiceimpl implements TaskService {
             throw new BusinessException("任务数量已达上限（" + props.getTaskMaxPerUser() + " 条），请先删除旧任务");
         }
         String title = normalizeTitle(request.getTitle());
+        rejectIfSensitive(title);
+        if (request.getRawInput() != null) {
+            rejectIfSensitive(request.getRawInput());
+        }
         String recurrence = normalizeRecurrence(request.getRecurrence(), request.getDueAt());
         String rule = normalizeRule(request.getRecurrence(), request.getRecurrenceRule());
         LocalDateTime dueAt = normalizeDueAt(recurrence, rule, request.getDueAt());
@@ -111,7 +115,9 @@ public class TaskServiceimpl implements TaskService {
         UserTask upd = new UserTask();
         upd.setId(id);
         upd.setUserId(userId);
-        upd.setTitle(request.getTitle() != null ? normalizeTitle(request.getTitle()) : current.getTitle());
+        String newTitle = request.getTitle() != null ? normalizeTitle(request.getTitle()) : current.getTitle();
+        rejectIfSensitive(newTitle);
+        upd.setTitle(newTitle);
         upd.setTimezone(current.getTimezone());
 
         String newRecurrence = request.getRecurrence() != null
@@ -143,7 +149,7 @@ public class TaskServiceimpl implements TaskService {
     public boolean delete(long id) {
         String userId = currentUserId();
         int rows = userTaskMapper.softDelete(id, userId);
-        // 幂等：已软删也算成功（v3 8.2）
+        // 已是软删仍返回 true（幂等），只有不存在/非本人才返回 false → Controller 404。
         return rows > 0 || userTaskMapper.countById(id, userId) > 0;
     }
 
@@ -178,6 +184,8 @@ public class TaskServiceimpl implements TaskService {
         if (rows == 0) {
             throw new BusinessException(409, "版本冲突，请刷新后重试");
         }
+        log.info("任务完成: userId={}, taskId={}, recurrence={}, newStatus={}, newDue={}",
+                userId, id, current.getRecurrence(), newStatus, newDue);
         return toVO(userTaskMapper.selectById(id, userId), now);
     }
 
@@ -212,6 +220,13 @@ public class TaskServiceimpl implements TaskService {
             cursor = "daily".equals(t.getRecurrence()) ? cursor.plusDays(1) : cursor.plusWeeks(1);
         }
         return cursor.toLocalDateTime();
+    }
+
+    private void rejectIfSensitive(String content) {
+        String hit = com.aichat.utils.SensitiveContentFilter.detectSensitiveData(content);
+        if (hit != null) {
+            throw new BusinessException(hit + "，不会保存");
+        }
     }
 
     private String normalizeTitle(String raw) {

@@ -93,7 +93,7 @@ public class MemoryServiceimpl implements MemoryService {
     public MemoryVO get(long id) {
         String userId = currentUserId();
         UserMemory m = userMemoryMapper.selectById(id, userId);
-        if (m == null) {
+        if (m == null || "deleted".equals(m.getStatus())) {
             return null;
         }
         return toVO(m, nowLocal());
@@ -199,7 +199,7 @@ public class MemoryServiceimpl implements MemoryService {
     public boolean delete(long id) {
         String userId = currentUserId();
         int rows = userMemoryMapper.softDelete(id, userId);
-        // 幂等：已是 deleted 状态也算成功（v3 8.1）
+        // 已是 deleted 仍返回 true（幂等），只有不存在/非本人才返回 false → Controller 404。
         return rows > 0 || userMemoryMapper.selectById(id, userId) != null;
     }
 
@@ -221,7 +221,7 @@ public class MemoryServiceimpl implements MemoryService {
         }
 
         // replaces_id 只接受本人 active 且 mem_key/mem_type 一致的旧条；否则忽略替换按新增处理
-        Long effectiveReplacesId = validateReplacesId(replacesId, userId, key, type);
+        Long effectiveReplacesId = validateReplacesId(replacesId, userId, key, type, sessionScope);
         if (effectiveReplacesId != null) {
             int superseded = userMemoryMapper.markSuperseded(effectiveReplacesId, userId);
             if (superseded == 0) {
@@ -286,13 +286,17 @@ public class MemoryServiceimpl implements MemoryService {
         return nowLocal().plusDays(props.getMemoryDynamicTtlDays());
     }
 
-    private Long validateReplacesId(Long replacesId, String userId, String memKey, String memType) {
+    private Long validateReplacesId(Long replacesId, String userId, String memKey, String memType,
+            String sessionScope) {
         if (replacesId == null) {
             return null;
         }
         UserMemory old = userMemoryMapper.selectById(replacesId, userId);
+        // replacesId 来自不可信的 LLM 输出，必须同时校验 key/type 和 scope，
+        // 否则会话级候选可以把全局画像顶掉，或反向污染别的会话。
         if (old == null || !"active".equals(old.getStatus())
-                || !memKey.equals(old.getMemKey()) || !memType.equals(old.getMemType())) {
+                || !memKey.equals(old.getMemKey()) || !memType.equals(old.getMemType())
+                || !java.util.Objects.equals(old.getSessionId(), sessionScope)) {
             log.warn("忽略非法 replacesId: userId={}, id={}", userId, replacesId);
             return null;
         }
@@ -349,6 +353,7 @@ public class MemoryServiceimpl implements MemoryService {
         vo.setSource(m.getSource());
         vo.setSourceMessageId(m.getSourceMessageId());
         vo.setReplacesId(m.getReplacesId());
+        vo.setSessionId(m.getSessionId());
         vo.setExpiresAt(m.getExpiresAt());
         vo.setVersion(m.getVersion());
         vo.setCreateTime(m.getCreateTime());

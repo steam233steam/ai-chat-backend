@@ -34,7 +34,9 @@ public final class IntentQueryReplyBuilder {
         }
         StringBuilder sb = new StringBuilder();
         List<String> dueTitles = due.stream().map(TaskVO::getTitle).toList();
-        if (!pending.isEmpty()) {
+        if (pending.isEmpty()) {
+            sb.append("你现在没有未完成任务。\n");
+        } else {
             sb.append("你还没完成的任务（共 ").append(pending.size()).append(" 条）：\n");
             int shown = Math.min(pending.size(), showLimit);
             for (int i = 0; i < shown; i++) {
@@ -50,7 +52,7 @@ public final class IntentQueryReplyBuilder {
                 sb.append(taskLine(done.get(i), List.of()));
             }
         }
-        sb.append("\n要完成哪条，直接说任务名就行（P1 暂不支持聊天里删改任务）。");
+        sb.append("\n任务完成/删除请到任务列表操作。");
         return sb.toString();
     }
 

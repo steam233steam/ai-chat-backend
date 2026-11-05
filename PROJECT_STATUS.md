@@ -119,7 +119,7 @@ com.aichat/
 
 ### ✅ 已完成功能
 #### 用户认证系统
-- [x] 发送验证码（POST /user/code）+ 60秒防刷冷却 + 日志脱敏
+- [x] 发送验证码（POST /user/code）+ 60秒防刷冷却 + dev 日志验证码 / 生产未配置 503
 - [x] 验证码登录（POST /user/login）+ 验证码一次性
 - [x] 密码登录（POST /user/login/password）
 - [x] 设置密码（PUT /user/set-password）+ 手机号归属校验
@@ -232,8 +232,8 @@ com.aichat/
 - [x] `MemoryCandidate.scope`（global/session）- LLM 判定作用域，prompt 里说明长期习惯=global、本会话人设=session
 - [x] 迁移脚本 `docs/migration/2026-11-03-mindbutler-p1-memory-session.sql`（存量 session_id 全 NULL，向后兼容）
 - [x] 单测 205 个全通过（BUILD SUCCESS）
-- [x] P1.1b：确认文案改口语化（"我记住你的风格是简洁，周二 09:00（11-03）提醒你「交作业」，回复「好」我帮你设上"），去掉机械"我准备帮你安排【…】（共 N 条）"格式；`describeTask` 时间描述从 "（2026-11-03 09:00 周二，单次）" 改为 "周二 09:00（11-03）"；测试 224 绿
-- [x] P1.1b 需求2（方案B）：确认后自动把"好的，都帮你设好了…"作为 assistant 消息落库到会话历史（`PendingActionServiceimpl.confirm` 调 `ChatSessionRepository.save`；落库失败不影响确认本身，只记日志）
+- [x] 待确认提示收敛：聊天流不再插入“已识别到 N 条”的 AI 气泡，只返回 pending 标记并打开弹窗
+- [x] 确认反馈收敛：确认/取消由当前会话人设生成短回执（失败回退“已经定好”/“计划取消”）；不重复详情；重复操作不重复写
 - [x] `IntentDetector` 查询主题词扩充：任务主题加"安排/事"，记忆主题加"记住了/你记"，提升 QUERY 意图召回
 - [x] 单测同步更新（IntentDetectorTest / IntentServiceimplTest / PendingActionServiceimplTest）
 - [x] `.gitignore` 新增测试/日志产物（test_p11*.txt、testcheck*.txt、compile_p11*.txt、applog.txt、alllog2.txt、$null 等）
@@ -247,6 +247,15 @@ com.aichat/
 - [x] `IntentQueryReplyBuilder.buildMemoryList` 加"（仅本会话）"标注，让用户看到某条记忆是会话级的
 - [x] `IntentDetectorTest` 加 `shouldReturnNoneForPersonaButLlmFallbackCatches`（"你是猫娘"→NONE+兜底命中；"你的记忆怎么样"→QUERY）
 - [x] 单测 226 个全通过（BUILD SUCCESS）
+
+#### 工程化：SmsSender 端口 + 全链路集成测试（2026-11-04 18:3x–18:5x）
+- [x] `SmsSender` 接口（端口）+ `LogSmsSender`（dev-mode 日志验证码）+ `DisabledSmsSender`（未配置供应商时 503）
+- [x] `SmsConfig` 按 `app.sms.dev-mode` 选 Bean；`SmsProperties` 绑定配置（默认 false 生产安全）
+- [x] `UserServiceimpl.sendCode` 重构：先 `ensureAvailable()` 预检（未配置→503，不生成验证码/不占冷却）→ 再冷却 → 生成/存码 → 发送；发送失败清理验证码+冷却并 503（不留"用户不知道、Redis 里有"的孤儿验证码）
+- [x] `UserRepository` 冷却方法更名（`tryAcquireSendCodeCooldown` / `deleteSendCodeCooldown`）
+- [x] `GlobalExceptionHandler` 补 503 → HTTP 503 映射
+- [x] 新增 `MindButlerFlowIntegrationTest`（全链路集成测试，真实 Spring + 真实 MySQL，只 mock LLM 提取器，覆盖 提取→pending→确认→落库 + 旧 pending 过期 + 乐观锁 + 任务滚动 + 懒过期 409 + 跨用户隔离 + REST 确认不写重复 AI 消息）
+- [x] 各 Service 单测同步更新（ChatServiceimplTest / IntentServiceimplTest / MemoryServiceimplTest / TaskServiceimplTest / PendingActionServiceimplTest / UserServiceimplTest / SmsConfigTest / GlobalExceptionHandlerTest / IntentDetectorTest）
 
 ### 📝 核心改进（2026-11-04 P1.2）
 
@@ -267,18 +276,19 @@ com.aichat/
 ### 📝 核心改进（2026-11-04 P1.1b）
 
 **1. 确认文案口语化（IntentReplyFormatter）**
-- 确认前：`我记住你的风格是「简洁」，让我提醒你明天 07:00（11-05 周四）「起床」，回复「好」我帮你设上，说「取消」就不存了。`（不再用"我识别到：记忆/任务"的机械格式）
-- 确认后：`好的，帮你设好了：记住了风格是「简洁」…`
+- 确认前：聊天流不插入 AI 气泡，只返回 pending 标记并打开弹窗（详情只在弹窗展示）
+- 确认后：弹窗显示 success；文本确认只回`好了，任务和记忆都设好了。`之类的短结果
 - 时间描述口语化：单次任务"周四 07:00（11-05）"，重复任务"每周四，09:00"；无截止时间"随时"
 - 保留绝对日期 + 星期 + 时间 + 重复规则（用户才能核对解析对不对）
 
-**2. 确认后反馈落库（方案B）**
-- 用户说"好/确认"后，确认结果文案自动作为 assistant 消息写入会话历史
-- 前端刷新 / 拉历史时能看到这条反馈，聊天自然衔接（不会出现"我说了确认但历史里没有回音"的断层）
-- 反馈落库失败不影响确认本身（事务已提交），只记 warn 日志
+**2. 确认反馈单一口径**
+- 弹窗确认：后端用当前会话人设生成短回执（失败回退“已经定好”），弹窗展示 success
+- 弹窗取消：同理（失败回退“计划取消”）
+- 文本确认/取消：由 ChatService 走同一个人设回执服务
+- 不再重复任务/记忆详情，避免聊天流里出现两条长内容重复的 AI 气泡
 
 **3. 记忆与确认的链路闭环**
-- 提取 → pending → 确认 → 落库 + 反馈落库 → 下次注入画像，全链路闭环
+- 提取 → pending → 确认 → 落库 → 下次注入画像，全链路闭环
 
 ### 📝 核心改进（2026-11-03 P1.1）
 
@@ -291,6 +301,7 @@ com.aichat/
 - `tb_user_memory.session_id`：NULL=全局画像（跨会话生效，默认），有值=仅该会话生效（如"这个会话里你是猫娘"）
 - LLM 提取时多输出 `scope` 字段（global/session），`IntentJsonParser` 归一（非 session 一律 global）
 - 注入链路：`PromptBuilder.build(base, sessionScope)` → `listForInjection(..., sessionScope)` → 只取"全局(NULL) + 该会话"，别的会话人设不串进来
+- `relation` 作为用户确认的人设注入 `<confirmed_persona>`；system prompt 同时注入当前时间，避免模型编日期
 - 去重范围随 sessionScope：会话级记忆只在同会话去重，全局记忆跨会话去重
 - 存量数据 session_id 全 NULL → 行为不变，向后兼容
 
@@ -390,7 +401,7 @@ com.aichat/
 1. **MySQL 是聊天数据持久化主存储**，Redis 只做 7 天热缓存
 2. 密码使用 BCrypt 自动加盐加密
 3. Token 有效期 7 天，每次请求自动续期
-4. 验证码有效期 5 分钟，同一手机号 60 秒冷却，日志脱敏
+4. 验证码有效期 5 分钟，同一手机号 60 秒冷却；dev-mode 打印验证码，生产未配置短信返回 503
 5. 新用户标记有效期 365 天，仅设置密码后自动取消
 6. 会话数据按用户隔离，key 格式：`aichat:chat:sessions:{userId}`
 7. 消息按自增 `id` 稳定排序，`id` 作为分页游标
@@ -628,13 +639,14 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - [x] 上下文裁剪 ✅ 2026-10-25
 - [x] 异步 AI 标题生成 ✅ 2026-10-25
 - [x] 会话锁模型 + 带发言人标注的历史 ✅ 2026-10-28
-- [x] 验证码日志脱敏 + dev-mode 默认关闭 ✅ 2026-10-27
+- [x] dev-mode 默认关闭 + 未配置短信返回 503 ✅ 2026-10-27
 - [x] 模型输出净化 + 历史角色真实化 + 字符预算 + 线程安全 ✅ 2026-11-01
 - [x] Springdoc/Swagger 在线接口文档 + httpclient5 测试依赖 ✅ 2026-11-01
 - [x] MindButler P1（长期记忆 + 口语化任务 + 待确认动作）✅ 2026-11-03
 - [x] MindButler P1.1（查询意图直读数据 + 记忆会话隔离）✅ 2026-11-03
-- [x] MindButler P1.1b（口语化确认文案 + 确认后反馈落库 + 主题词扩充 + gitignore 整理）✅ 2026-11-04
+- [x] MindButler P1.1b（确认文案收敛到弹窗 + 文本确认短回执 + 主题词扩充 + gitignore 整理）✅ 2026-11-04
 - [x] MindButler P1.2（意图增强：LLM 兜底 + 人设提取 + QUERY 按会话隔离查记忆）✅ 2026-11-04
+- [x] SmsSender 端口（dev 日志 / 生产 503）+ 全链路集成测试（MindButlerFlowIntegrationTest）✅ 2026-11-04
 - [ ] MindButler P1.3（记忆面板按会话显示 + 会话删除级联清理记忆/pending）
 - [ ] 聊天/登录接口限流 + 安全加固
 - [ ] Testcontainers 集成测试 + GitHub Actions CI（单元测试已有）
@@ -644,4 +656,4 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - [ ] MindButler P1.5（monthly 重复任务 + 推送 + last_notified_at 回写）
 
 ---
-*最后更新: 2026-11-04 16:46*
+*最后更新: 2026-11-04 18:53*

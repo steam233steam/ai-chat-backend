@@ -92,6 +92,8 @@ class MindButlerFlowIntegrationTest {
         sessionId = "mbf_s_" + System.nanoTime();
         UserHolder.saveUser(selfUser());
         // 只清库，不碰线程登录态（清完后后续 Service 调用仍需要登录态）
+        jdbc.update("DELETE FROM tb_chat_message WHERE user_id=?", userId);
+        jdbc.update("DELETE FROM tb_chat_session WHERE user_id=?", userId);
         pendingActionMapper.deleteByUser(userId);
         userTaskMapper.deleteByUser(userId);
         userMemoryMapper.deleteByUser(userId);
@@ -112,6 +114,8 @@ class MindButlerFlowIntegrationTest {
 
     private void cleanup(String uid) {
         UserHolder.saveUser(selfUser());
+        jdbc.update("DELETE FROM tb_chat_message WHERE user_id=?", uid);
+        jdbc.update("DELETE FROM tb_chat_session WHERE user_id=?", uid);
         pendingActionMapper.deleteByUser(uid);
         userTaskMapper.deleteByUser(uid);
         userMemoryMapper.deleteByUser(uid);
@@ -311,6 +315,19 @@ class MindButlerFlowIntegrationTest {
             UserHolder.saveUser(back);
             pendingActionMapper.deleteByUser(otherUser);
         }
+    }
+
+    @Test
+    void shouldNotWriteSyntheticAssistantMessageOnRestConfirm() {
+        String payload = buildPayload(List.of(mem("style", "简洁", "stable", 0.9, null)), List.of());
+        long pid = pendingActionService.create(sessionId, "memory", payload, null);
+        pendingActionService.confirm(pid);
+
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM tb_chat_message WHERE user_id=? AND session_id=? AND role='assistant'",
+                Integer.class, userId, sessionId);
+        // 弹窗确认的反馈由前端 success 状态展示；后端不再额外写第二条 AI 消息
+        assertThat(count).isZero();
     }
 
     // ---------- 辅助 ----------

@@ -42,6 +42,11 @@ public class UserRepositoryimpl implements UserRepository {
     }
 
     @Override
+    public void deleteSendCodeCooldown(String phone) {
+        stringRedisTemplate.delete(LOGIN_CODE_COOLDOWN_KEY_PREFIX + phone);
+    }
+
+    @Override
     public void saveUser(String token, User user) {
         // 将 User 对象转为 HashMap 存储（只存必要字段）
         Map<String, Object> userMap = new HashMap<>();

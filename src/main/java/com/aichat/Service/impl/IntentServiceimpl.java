@@ -54,7 +54,9 @@ public class IntentServiceimpl implements IntentService {
     private static final String NO_PENDING_FALLBACK =
             "当前没有待确认的内容。如果要记住或提醒，请先说出具体内容。";
     private static final String UPDATE_FALLBACK =
-            "P1 暂不支持通过聊天修改任务。请到任务列表手动修改，或先取消原任务再新建。";
+            "P1 暂不支持通过聊天修改或删除任务；如果你已经在任务列表操作，以任务列表为准。需要改/删请到任务列表。";
+    private static final String TASK_CLARIFY_FALLBACK =
+            "我没识别出具体任务。你想让我提醒你什么？大概几点？";
     private static final String SENSITIVE_FALLBACK =
             "这段内容包含密码/Token/证件/银行卡等敏感信息，我不会保存。请不要在聊天中发送密码或密钥。";
 
@@ -114,15 +116,21 @@ public class IntentServiceimpl implements IntentService {
     }
 
     /**
-     * 宽松 LLM 提取：用 MEMORY 意图的 prompt 让 LLM 自行判断"这句有没有可提取的记忆/人设/任务"。
+     * 宽松 LLM 提取：让 LLM 自由判断"这句有没有可提取的记忆/人设/任务"，不预设侧重。
      * 提取到非空候选 → 走 pending 确认流程；提取为空 → 返回 null（上层走 chat）。
      */
     private IntentOutcome extractLoose(String sessionId, String message, Long sourceMessageId) {
+        // 宽松触发词包含“我的/我是”等高频词，必须先做敏感信息闸门，
+        // 否则“我的密码是 xxx”会被直接发给第三方提取模型。
+        if (SensitiveContentFilter.detectSensitiveData(message) != null) {
+            return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
+        }
         String userId = currentUserId();
         if (!intentDailyLimiter.tryAcquire(userId)) {
             return null; // 限额用完，走正常聊天
         }
-        IntentExtractionResult extracted = intentExtractor.extract(Intent.MEMORY, message);
+        // P1.4：不再固定传 MEMORY 侧重；让 LLM 自行判断"这句是记忆、人设、任务还是混合"
+        IntentExtractionResult extracted = intentExtractor.extract(null, message);
         if (extracted == null || extracted.isEmpty()) {
             return null; // LLM 没识别出可提取内容，走正常聊天
         }
@@ -140,10 +148,12 @@ public class IntentServiceimpl implements IntentService {
             pendingId = pendingActionService.create(sessionId, actionType, payload, sourceMessageId);
         } catch (BusinessException e) {
             log.warn("LLM 兜底写 pending 失败（{}）: session={}", e.getMessage(), sessionId);
-            return null;
+            // 不要静默回退聊天：否则模型可能顺着上下文编造“已记住/已安排”。
+            return IntentOutcome.replyOnly("刚才的提案发生冲突，请再试一次。");
         }
 
-        String reply = MbMarkers.appendPending(IntentReplyFormatter.buildConfirmReply(memories, tasks), pendingId);
+        // 弹窗自己展示详情和确认按钮，聊天流里不再插入“已识别到 N 条”的额外 AI 气泡。
+        String reply = MbMarkers.pendingOnly(pendingId);
         log.info("intent LLM 兜底提取: session={}, pendingId={}, memories={}, tasks={}",
                 sessionId, pendingId, memories.size(), tasks.size());
         return IntentOutcome.extracted(reply, pendingId);
@@ -159,9 +169,9 @@ public class IntentServiceimpl implements IntentService {
      */
     private IntentOutcome query(String sessionId, String message) {
         if (isMemoryQuery(message)) {
-            // P1.2：按会话隔离查记忆（"你的记忆"→全局+本会话），避免别的会话的人设串进来
-            List<com.aichat.Dto.MemoryVO> memories = memoryService.listForInjection(
-                    props.getMemoryInjectMaxStable(), props.getMemoryInjectMaxDynamic(), sessionId);
+            // 查询是“用户查看自己的数据”，不是 prompt 注入：不能用注入配额（默认 5+5）截断，
+            // 否则用户有 20 条记忆时只会被告知 10 条。list() 会返回全局+本会话的 active 记忆。
+            List<com.aichat.Dto.MemoryVO> memories = memoryService.list(100, sessionId);
             return IntentOutcome.replyOnly(IntentQueryReplyBuilder.buildMemoryList(memories, QUERY_SHOW_LIMIT));
         }
         // 默认查任务
@@ -182,8 +192,9 @@ public class IntentServiceimpl implements IntentService {
     // ---------- 提取 → 校验 → 写 pending → 确认文案 ----------
 
     private IntentOutcome extract(Intent intent, String sessionId, String message, Long sourceMessageId) {
-        // 记忆类消息如果本身含密码/Token 等敏感信息，连提取模型都不要调用，避免把敏感内容发给第三方模型
-        if (intent == Intent.MEMORY && SensitiveContentFilter.detectSensitive(message) != null) {
+        // 记忆/任务类消息如果本身含密码/Token 等敏感信息，连提取模型都不要调用，避免把敏感内容发给第三方模型
+        if ((intent == Intent.MEMORY || intent == Intent.TASK)
+                && SensitiveContentFilter.detectSensitive(message) != null) {
             return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
         }
         String userId = currentUserId();
@@ -194,20 +205,25 @@ public class IntentServiceimpl implements IntentService {
         IntentExtractionResult extracted = intentExtractor.extract(intent, message);
         if (extracted == null || extracted.isEmpty()) {
             // 提取器可能按 prompt 规则主动不提取敏感信息；这时仍要给用户明确提示
-            if (intent == Intent.MEMORY && SensitiveContentFilter.detectSensitive(message) != null) {
+            if ((intent == Intent.MEMORY || intent == Intent.TASK)
+                    && SensitiveContentFilter.detectSensitive(message) != null) {
                 return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
             }
-            return IntentOutcome.replyOnly(EXTRACT_FALLBACK); // v3 8.4：固定兜底，不调聊天模型
+            return IntentOutcome.replyOnly(
+                    intent == Intent.TASK ? TASK_CLARIFY_FALLBACK : EXTRACT_FALLBACK);
         }
 
         List<MemoryCandidate> memories = candidateSanitizer.sanitizeMemories(extracted.getMemories());
         List<TaskCandidate> tasks = candidateSanitizer.sanitizeTasks(extracted.getTasks());
         if (memories.isEmpty() && tasks.isEmpty()) {
             if (candidateSanitizer.containsSensitiveMemory(extracted.getMemories())
-                    || (intent == Intent.MEMORY && SensitiveContentFilter.detectSensitive(message) != null)) {
+                    || candidateSanitizer.containsSensitiveTask(extracted.getTasks())
+                    || ((intent == Intent.MEMORY || intent == Intent.TASK)
+                        && SensitiveContentFilter.detectSensitive(message) != null)) {
                 return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
             }
-            return IntentOutcome.replyOnly(EXTRACT_FALLBACK);
+            return IntentOutcome.replyOnly(
+                    intent == Intent.TASK ? TASK_CLARIFY_FALLBACK : EXTRACT_FALLBACK);
         }
 
         String actionType = (memories.isEmpty() ? "task" : tasks.isEmpty() ? "memory" : "mixed");
@@ -221,7 +237,8 @@ public class IntentServiceimpl implements IntentService {
             return IntentOutcome.replyOnly("刚才的提案发生冲突，请再试一次。");
         }
 
-        String reply = MbMarkers.appendPending(IntentReplyFormatter.buildConfirmReply(memories, tasks), pendingId);
+        // 弹窗自己展示详情和确认按钮，聊天流里不再插入“已识别到 N 条”的额外 AI 气泡。
+        String reply = MbMarkers.pendingOnly(pendingId);
         log.info("intent 提取: session={}, pendingId={}, memories={}, tasks={}",
                 sessionId, pendingId, memories.size(), tasks.size());
         return IntentOutcome.extracted(reply, pendingId);
@@ -238,9 +255,11 @@ public class IntentServiceimpl implements IntentService {
         try {
             result = pendingActionService.confirm(pending.getId());
         } catch (BusinessException e) {
-            // 409 已拒绝/已过期：固定说明，不调聊天模型
+            // 不能把所有失败都伪装成“过期”：记忆上限、任务校验失败等也要把真实原因告诉用户。
             log.info("confirm 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
-            return IntentOutcome.replyOnly(CONFIRM_EXPIRED_FALLBACK);
+            String message = e.getMessage();
+            return IntentOutcome.replyOnly(
+                    message == null || message.isBlank() ? CONFIRM_EXPIRED_FALLBACK : message);
         }
         if (result.isAlreadyConfirmed()) {
             return IntentOutcome.confirmed(result, "刚才已经确认过了，没有重复创建。");
@@ -265,12 +284,15 @@ public class IntentServiceimpl implements IntentService {
             return IntentOutcome.chat();
         }
         try {
-            pendingActionService.reject(pending.getId());
+            boolean changed = pendingActionService.reject(pending.getId());
+            log.info("文本取消 pending: pendingId={}, changed={}", pending.getId(), changed);
         } catch (BusinessException e) {
             log.info("reject 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
-            return IntentOutcome.replyOnly(CONFIRM_EXPIRED_FALLBACK);
+            String message = e.getMessage();
+            return IntentOutcome.replyOnly(
+                    message == null || message.isBlank() ? CONFIRM_EXPIRED_FALLBACK : message);
         }
-        return IntentOutcome.rejected("好的，已取消这条待确认。");
+        return IntentOutcome.rejected("计划取消");
     }
 
     private String currentUserId() {

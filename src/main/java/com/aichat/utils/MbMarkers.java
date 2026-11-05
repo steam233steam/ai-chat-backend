@@ -36,6 +36,11 @@ public final class MbMarkers {
         return text + "\n" + String.format(PENDING_MARKER, pendingId);
     }
 
+    /** 只返回 pending 标记，不附带任何聊天文案（前端只弹窗，不插入 AI 气泡）。 */
+    public static String pendingOnly(long pendingId) {
+        return pendingId <= 0 ? "" : String.format(PENDING_MARKER, pendingId);
+    }
+
     /** 文案里是否含 pending 标记。 */
     public static boolean hasPendingMarker(String text) {
         return text != null && PENDING_MARKER_REGEX.matcher(text).find();

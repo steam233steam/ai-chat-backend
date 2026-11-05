@@ -56,7 +56,6 @@ public class IntentExtractorimpl implements IntentExtractor {
             ChatClient client = modelRouter.client(model);
             String system = IntentPrompts.buildSystemPrompt(
                     intent,
-                    message,
                     LocalDateTime.now(clock));
 
             String raw = callWithTimeout(

@@ -48,7 +48,7 @@ public interface MemoryService {
     /** 更新（乐观锁）。version 不匹配 → 409。返回更新后的 VO。 */
     MemoryVO update(long id, UpdateMemoryRequest request);
 
-    /** 软删除（幂等）。返回 true 表示本次实际删了，false 表示已是删除态。 */
+    /** 软删除（幂等）。已是删除态返回 true；false 只表示不存在/非本人。 */
     boolean delete(long id);
 
     /**

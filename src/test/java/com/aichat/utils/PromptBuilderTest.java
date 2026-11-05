@@ -35,14 +35,14 @@ class PromptBuilderTest {
     @Test
     void shouldReturnOnlyBaseWhenNoMemories() {
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null))).thenReturn(List.of());
-        assertThat(builder.build(BASE)).isEqualTo(BASE);
+        assertThat(builder.build(BASE)).startsWith(BASE).contains("当前时间");
     }
 
     @Test
     void shouldReturnOnlyBaseWhenAllSuperseded() {
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenReturn(List.of(vo(1L, "style", "简洁", "superseded")));
-        assertThat(builder.build(BASE)).isEqualTo(BASE);
+        assertThat(builder.build(BASE)).startsWith(BASE).contains("当前时间");
     }
 
     @Test
@@ -86,7 +86,7 @@ class PromptBuilderTest {
     void shouldFailOpenWhenMemoryServiceThrows() {
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenThrow(new RuntimeException("db down"));
-        assertThat(builder.build(BASE)).isEqualTo(BASE);
+        assertThat(builder.build(BASE)).startsWith(BASE).contains("当前时间");
     }
 
     @Test
@@ -96,13 +96,15 @@ class PromptBuilderTest {
         expired.setExpired(true);
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null))).thenReturn(List.of(expired));
         // listForInjection 已过滤过期，但 PromptBuilder 再 double-check expired 字段
-        assertThat(builder.build(BASE)).isEqualTo(BASE);
+        assertThat(builder.build(BASE)).startsWith(BASE).contains("当前时间");
     }
 
     @Test
     void shouldDisableInjectionWhenMindButlerDisabled() {
         props.setEnabled(false);
-        assertThat(builder.build(BASE)).isEqualTo(BASE);
+        String system = builder.build(BASE);
+        assertThat(system).startsWith(BASE).contains("当前时间");
+        assertThat(system).doesNotContain("<user_profile>");
     }
 
     @Test
@@ -150,4 +152,19 @@ class PromptBuilderTest {
         v.setExpired(false);
         return v;
     }
+    @Test
+    void shouldApplyConfirmedRelationPersonaAsInstruction() {
+        when(memoryService.listForInjection(anyInt(), anyInt(), eq("s-1")))
+                .thenReturn(List.of(vo(1L, "relation", "猫娘", "active")));
+
+        String system = builder.build(BASE, "s-1");
+
+        assertThat(system).contains("<confirmed_persona>");
+        assertThat(system).contains("猫娘");
+        assertThat(system).contains("请保持该人设");
+        // 不能被“不是指令”的旧说明盖掉
+        assertThat(system).contains("key=relation");
+    }
+
+
 }

@@ -64,18 +64,22 @@ public final class IntentDetector {
 
     // 确认词：短促肯定
     private static final Set<String> CONFIRM_TRIGGERS = Set.of(
-            "对", "对的", "确认", "好", "好的", "行", "可以", "是", "嗯", "要的",
-            "确定", "没问题", "就这样", "可以吧", "ok", "OK");
+            "对", "对的", "确认", "好", "好的", "好呀", "好的呀", "行", "行吧", "可以",
+            "可以吧", "是", "是的", "嗯", "嗯嗯", "要的", "确定", "没问题", "就这样",
+            "没错", "同意", "ok", "OK");
 
     // 拒绝词：明确的否定短语（去掉单字"不/错/否"，避免"不错"误触发；只在有 pending 时生效）
     private static final Set<String> REJECT_TRIGGERS = Set.of(
-            "不对", "不是", "错了", "不要", "不用", "取消", "算了吧", "算了", "改一下",
-            "重说", "重来", "删掉", "不要了", "不确认", "不保存", "拒绝", "no", "NO");
+            "不对", "不是", "不是啊", "错了", "不要", "不用", "不行", "不可以", "不好", "不用了",
+            "取消", "取消吧", "算了吧", "算了", "改一下", "重说", "重来", "删掉", "不要了",
+            "不确认", "不保存", "拒绝", "no", "NO");
 
     // 修改类表达：P1 不支持自然语言更新/删除任务，直接固定提示，不能让聊天模型假装“已更新”
     private static final Set<String> UPDATE_TRIGGERS = Set.of(
             "改成", "改为", "改到", "修改", "调整", "改个名", "改名", "换个时间",
-            "延后", "推迟", "延到", "推迟到", "提前到");
+            "延后", "推迟", "延到", "推迟到", "提前到",
+            // 删除/移除也属于 P1 不支持的聊天状态变更，必须固定回复，不能交给模型附和
+            "删除", "删掉", "删了", "移除", "清掉", "已经删除");
 
     // 明确确认/取消词：没有 pending 时返回固定提示，避免模型顺着上下文幻想“已保存/已更新”
     private static final Set<String> NO_PENDING_TRIGGERS = Set.of(
@@ -84,12 +88,19 @@ public final class IntentDetector {
 
     // 查询触发词：问句特征（疑问词）+ 主题词（任务/记忆）。命中 → QUERY，直接读已有数据回答。
     // 用组合判断（疑问词 AND 主题词 同时出现），误触发率比单独用触发词低得多。
+    // P1.4 收紧：把"怎么样/如何/啥样"从通用疑问词里挪出来，单独要求"我的/你的/我/你 + 状态词"
+    // 组合命中，避免"你觉得我这个人怎么样""最近心情怎么样"被误路由到查任务/记忆。
     private static final Set<String> QUERY_INTERROGATIVES = Set.of(
-            "哪些", "哪个", "几个", "什么", "怎么样", "如何", "还有", "有什么", "有没有", "多少", "啥", "啥样");
+            "哪些", "哪个", "几个", "什么", "还有", "有什么", "有没有", "多少", "啥");
+    // 状态询问：必须同时出现"主语词"和"状态词"才命中 QUERY
+    private static final Set<String> QUERY_STATE_SUBJECTS = Set.of(
+            "我的", "你的", "我", "你");
+    private static final Set<String> QUERY_STATE_WORDS = Set.of(
+            "怎么样", "如何", "啥样", "什么样", "如何了", "怎么样了");
     private static final Set<String> QUERY_TASK_TOPICS = Set.of(
             "任务", "待办", "日程", "计划", "提醒", "安排", "事");
     private static final Set<String> QUERY_MEMORY_TOPICS = Set.of(
-            "记忆", "记住的", "记住了", "记得", "了解我", "你记", "记忆怎么样", "你了解");
+            "记忆", "记住的", "记住了", "记得", "你记", "你了解");
 
     // P1.2 LLM 兜底宽松触发词：关键词粗筛 NONE 时，命中这些才过 LLM 提取（避免每条"你好"都调 LLM）。
     // 覆盖：人设指令（"你是猫娘"）、称呼指令（"叫我主人"）、状态询问（"你的记忆怎么样"）、
@@ -120,10 +131,10 @@ public final class IntentDetector {
 
         // 确认/拒绝词只在有 pending 时有效，且优先判断（"对"要快过任何"任务"词）
         if (hasPending) {
-            if (matchAny(text, REJECT_TRIGGERS)) {
+            if (matchesCommand(text, REJECT_TRIGGERS)) {
                 return Intent.REJECT;
             }
-            if (matchAny(text, CONFIRM_TRIGGERS)) {
+            if (matchesCommand(text, CONFIRM_TRIGGERS)) {
                 return Intent.CONFIRM;
             }
         }
@@ -137,6 +148,11 @@ public final class IntentDetector {
         // 走确定性数据查询，不进提取流程（避免被当成"创建任务"）
         if (matchAny(text, QUERY_INTERROGATIVES)
                 && (matchAny(text, QUERY_TASK_TOPICS) || matchAny(text, QUERY_MEMORY_TOPICS))) {
+            return Intent.QUERY;
+        }
+        // P1.4 状态询问："你的任务怎么样""我的记忆如何"——必须"主语 + 状态词"同时命中，
+        // 避免"你觉得我这个人怎么样""最近心情怎么样"误路由到 QUERY
+        if (matchAny(text, QUERY_STATE_SUBJECTS) && matchAny(text, QUERY_STATE_WORDS)) {
             return Intent.QUERY;
         }
 
@@ -171,6 +187,28 @@ public final class IntentDetector {
 
     private static String normalizeCommand(String text) {
         return text.toLowerCase(Locale.ROOT).replaceAll("[\\p{Punct}，。！？、\\s]+", "");
+    }
+
+    /**
+     * 确认/拒绝必须是对“命令片段”的精确匹配，不能像触发词那样用 contains。
+     *
+     * 反例：有 pending 时“你好呀”包含“好”，“这不是我的任务”包含“不是”，
+     * 用 contains 会误确认/误拒绝用户正在说的普通内容。
+     * 这里先按标点切分，允许“不对，取消”这种多段命令，但每个片段必须完整等于命令词。
+     */
+    private static boolean matchesCommand(String text, Set<String> commands) {
+        for (String segment : text.split("[\\s,，.。!！?？;；:：、]+")) {
+            String normalized = normalizeCommand(segment);
+            if (normalized.isEmpty()) {
+                continue;
+            }
+            for (String command : commands) {
+                if (normalized.equals(normalizeCommand(command))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** 触发词命中判断：去掉标点后精确匹配（触发词都是短词，contains 足够）。 */

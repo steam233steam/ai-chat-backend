@@ -2,6 +2,8 @@ package com.aichat.Dto;
 
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /**
  * 待确认动作对外视图。memories/tasks 是从 payload JSON 解析出来的结构化候选，
  * 用于前端渲染"确认卡片"；preview 是给前端/聊天直接展示的一句话。
@@ -14,6 +16,8 @@ public class PendingActionVO {
     private List<TaskCandidate> tasks;
     private String preview;
     private java.time.LocalDateTime expiresAt;
+    /** 所属会话，仅用于 REST 取消后写短回执，不返回前端。 */
+    private String sessionId;
 
     public Long getId() {
         return id;
@@ -69,5 +73,14 @@ public class PendingActionVO {
 
     public void setExpiresAt(java.time.LocalDateTime expiresAt) {
         this.expiresAt = expiresAt;
+    }
+
+    @JsonIgnore
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 }

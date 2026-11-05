@@ -1,8 +1,10 @@
 package com.aichat.Config;
 
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.context.annotation.Bean;
@@ -25,6 +27,9 @@ public class IntentExecutorConfig {
             thread.setDaemon(true);
             return thread;
         };
-        return Executors.newFixedThreadPool(2, factory);
+        // 有界队列：模型卡死/超时后底层调用若没有及时释放线程，不能无限堆积任务把内存吃满。
+        // 队列满时 submit 抛 RejectedExecutionException，IntentExtractor 会降级为空候选。
+        return new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(16), factory, new ThreadPoolExecutor.AbortPolicy());
     }
 }

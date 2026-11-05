@@ -404,4 +404,61 @@ class TaskServiceimplTest {
         r.setVersion(v);
         return r;
     }
+
+    @Test
+    void shouldRejectSensitiveTaskTitle() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("我的密码是 abc123");
+        req.setRecurrence("once");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("密码");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void shouldRejectSensitiveTaskTitleOnUpdate() {
+        UserTask current = task(1L, "交作业", "once", null, NOW.plusDays(1), "pending");
+        when(mapper.selectById(1L, "USER_ID_1234567890")).thenReturn(current);
+
+        UpdateTaskRequest req = new UpdateTaskRequest();
+        req.setTitle("token=abcd1234");
+        req.setVersion(0);
+
+        assertThatThrownBy(() -> service.update(1L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Token");
+        verify(mapper, never()).updateByIdAndVersion(any());
+    }
+
+    @Test
+    void shouldTreatAlreadyDeletedTaskAsIdempotentSuccess() {
+        when(mapper.softDelete(1L, "USER_ID_1234567890")).thenReturn(0);
+        when(mapper.countById(1L, "USER_ID_1234567890")).thenReturn(1);
+
+        assertThat(service.delete(1L)).isTrue();
+        verify(mapper).countById(1L, "USER_ID_1234567890");
+    }
+
+    @Test
+    void shouldAllowOrdinaryPasswordTaskWithoutSecretValue() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("提醒我改密码");
+        req.setRecurrence("once");
+        when(mapper.insert(any(UserTask.class))).thenAnswer(inv -> {
+            UserTask t = inv.getArgument(0);
+            t.setId(3L);
+            return 1;
+        });
+        when(mapper.selectById(3L, "USER_ID_1234567890"))
+                .thenReturn(task(3L, "提醒我改密码", "once", null, null, "pending"));
+
+        TaskVO vo = service.create(req);
+
+        assertThat(vo.getTitle()).isEqualTo("提醒我改密码");
+        verify(mapper).insert(any(UserTask.class));
+    }
+
+
 }

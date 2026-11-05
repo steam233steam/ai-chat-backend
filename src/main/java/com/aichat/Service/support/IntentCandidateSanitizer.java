@@ -98,6 +98,19 @@ public class IntentCandidateSanitizer {
         return false;
     }
 
+    /** 是否至少有一条任务候选因敏感词被拒绝（用于明确提示，而不是“没识别出”）。 */
+    public boolean containsSensitiveTask(List<TaskCandidate> in) {
+        if (in == null) {
+            return false;
+        }
+        for (TaskCandidate c : in) {
+            if (c != null && SensitiveContentFilter.detectSensitiveData(c.getTitle()) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public List<TaskCandidate> sanitizeTasks(List<TaskCandidate> in) {
         List<TaskCandidate> out = new ArrayList<>();
         if (in == null) {
@@ -118,6 +131,11 @@ public class IntentCandidateSanitizer {
             int len = title.codePointCount(0, title.length());
             if (len > TASK_TITLE_MAX) {
                 title = title.substring(0, title.offsetByCodePoints(0, TASK_TITLE_MAX));
+            }
+            String sensitive = SensitiveContentFilter.detectSensitiveData(title);
+            if (sensitive != null) {
+                log.warn("跳过含{}的任务候选: title 已脱敏", sensitive);
+                continue;
             }
             // P1 只允许 create（update/delete 留 P1.5）
             String action = (c.getAction() == null || c.getAction().isBlank())

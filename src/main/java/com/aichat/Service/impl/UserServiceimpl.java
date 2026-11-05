@@ -17,7 +17,10 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.UserMapper;
 import com.aichat.Repository.UserRepository;
+import com.aichat.Service.SmsSender;
 import com.aichat.Service.UserService;
+import com.aichat.Service.support.DisabledSmsSender;
+import com.aichat.Service.support.LogSmsSender;
 import com.aichat.utils.PasswordUtils;
 import com.aichat.utils.RegexUtils;
 import com.aichat.utils.UserHolder;
@@ -34,30 +37,59 @@ public class UserServiceimpl implements UserService {
     @Autowired
     private UserRepository userRepository;
 
-    /** 本地开发时把验证码打到日志；接入短信服务后通过配置关闭 */
-    @Value("${app.sms.dev-mode:true}")
+    /** 无 SmsSender Bean 时的单测兜底：true 用日志发送器，false 用 503 发送器。 */
+    @Value("${app.sms.dev-mode:false}")
     private boolean smsDevMode;
+
+    @Autowired(required = false)
+    private SmsSender smsSender;
 
     @Override
     public Result<String> sendCode(String phone) {
         if (RegexUtils.isPhoneInvalid(phone)) {
             throw new BusinessException("手机号码格式错误");
         }
+        // 先预检短信能力：未配置时在生成验证码/占用 60 秒冷却之前直接 503。
+        SmsSender sender = resolveSmsSender();
+        sender.ensureAvailable();
+
         // 同一手机号 60 秒内只能发一次，防止短信轰炸
         if (!userRepository.tryAcquireSendCodeCooldown(phone)) {
             throw new BusinessException("验证码发送过于频繁，请 60 秒后再试");
         }
         String code = RandomUtil.randomNumbers(6);
         userRepository.saveCode(phone, code);
-        // TODO: 接入短信服务，当前仅存 Redis
-        if (smsDevMode) {
-            // 生产日志不回显完整验证码，避免手机号 + 验证码成对泄露；仅打印前 2 位脱敏
-            log.warn("[DEV] 未接入短信服务，验证码已打印在日志: phone={}, code={}**",
-                    phone, code.substring(0, 2));
-        } else {
-            log.info("验证码已发送: phone={}", phone);
+        try {
+            sender.sendVerificationCode(phone, code);
+        } catch (RuntimeException e) {
+            // 发送失败不能留下一个“用户不知道、但 Redis 里存在”的验证码；
+            // 同时释放冷却，让用户可以马上重试。清理失败只记日志，不能盖掉原始发送错误。
+            try {
+                userRepository.deleteCode(phone);
+            } catch (Exception cleanup) {
+                log.warn("发送失败后清理验证码失败: phone={}", phone, cleanup);
+            }
+            try {
+                userRepository.deleteSendCodeCooldown(phone);
+            } catch (Exception cleanup) {
+                log.warn("发送失败后释放冷却失败: phone={}", phone, cleanup);
+            }
+            if (e instanceof BusinessException be) {
+                throw be;
+            }
+            log.error("验证码发送失败: phone={}", phone, e);
+            throw new BusinessException(503, "验证码发送失败，请稍后重试");
         }
+        log.info("验证码已发送: phone={}", phone);
         return Result.success("验证码已发送");
+    }
+
+    private SmsSender resolveSmsSender() {
+        if (smsSender != null) {
+            return smsSender;
+        }
+        // 单测直接 new UserServiceimpl() 时没有 Spring 注入，按配置兜底。
+        return smsDevMode ? new LogSmsSender() : new DisabledSmsSender();
     }
 
     @Override
