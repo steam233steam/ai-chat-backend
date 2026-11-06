@@ -214,15 +214,18 @@ mvn test -Dtest=FullFlowIntegrationTest
 
 ## 文档
 
-- `docs/API.md` — 接口文档（含 §13 MindButler P1 接口）
-- `docs/schema.sql` — 数据库脚本
-- `docs/MindButler-P1设计.md` — MindButler P1 建设设计（长期记忆 + 口语化任务 + 确认状态机）
-- `docs/migration/2026-11-02-mindbutler-p1.sql` — MindButler P1 三表迁移脚本
-- `docs/P1-上线验收清单.md` — 后端上线范围、配置、人工验收用例与回滚说明
-- `docs/P1-代码结构.md` — P1 包职责、意图链路类图与复盘顺序
-- `docs/eval/mindbutler-intent-eval.json` — 口语意图提取评测集（40 条，M4 验收指标）
-- `docs/聊天持久化设计.md` — 持久化、缓存一致性与面试讲点
-- `docs/DEVELOPMENT_PLAN.md` — 后续开发与求职准备计划
-- `docs/本地启动.md` — 本地运行指南
-- `docs/学习笔记.md` — 开发笔记
-- `PROJECT_STATUS.md` — 开发状态记录
+**先看 [`docs/README.md`](docs/README.md)（文档索引）**，再按需点下面：
+
+- [`docs/路线图.md`](docs/路线图.md) — 当前排期：先做什么、为什么、明确不做什么
+- [`docs/MindButler-P1设计.md`](docs/MindButler-P1设计.md) — P1 施工版设计（记忆 + 口语化任务 + 确认状态机）
+- [`docs/P1-上线验收清单.md`](docs/P1-上线验收清单.md) — 上线范围、配置、12 个人工验收用例与执行记录
+- [`docs/聊天持久化设计.md`](docs/聊天持久化设计.md) — 持久化、缓存一致性与面试讲点
+- [`docs/P1-代码结构.md`](docs/P1-代码结构.md) — 包职责、意图链路与复盘顺序
+- [`docs/Task-Capability.md`](docs/Task-Capability.md) — 任务能力边界（能做/不能做）
+- [`docs/API.md`](docs/API.md) — 接口文档（以 `/swagger-ui.html` 为准）
+- [`docs/schema.sql`](docs/schema.sql) — 当前全量表结构；增量脚本在 `docs/migration/`
+- [`docs/eval/`](docs/eval/) — 意图提取评测集（40 条）
+- [`docs/本地启动.md`](docs/本地启动.md) — 本地运行指南（VirtualBox 虚拟机 + 端口映射）
+- [`docs/踩坑记录.md`](docs/踩坑记录.md) — 踩过的坑与结论
+- [`docs/学习笔记.md`](docs/学习笔记.md) — 开发笔记
+- [`PROJECT_STATUS.md`](PROJECT_STATUS.md) — 开发日志（按时间倒序，查"某天改了什么"）
