@@ -24,10 +24,13 @@ public class ConfirmationReceiptWriter {
 
     private static final Logger log = LoggerFactory.getLogger(ConfirmationReceiptWriter.class);
 
-    @Autowired
-    private ChatSessionRepository chatSessionRepository;
-    @Autowired
-    private PersonaReplyService personaReplyService;
+    private final ChatSessionRepository chatSessionRepository;
+    private final PersonaReplyService personaReplyService;
+
+    public ConfirmationReceiptWriter(ChatSessionRepository chatSessionRepository, PersonaReplyService personaReplyService) {
+        this.chatSessionRepository = chatSessionRepository;
+        this.personaReplyService = personaReplyService;
+    }
 
     /**
      * 弹窗确认后写一条人设化短回执，并把实际写入的内容返回给调用方。

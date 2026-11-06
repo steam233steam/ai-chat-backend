@@ -17,13 +17,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.aichat.Config.ModelRouter;
 import com.aichat.Repository.ChatSessionRepository;
 
-class ChatTitleServiceimplTest {
+class ChatTitleServiceImplTest {
 
     private ChatSessionRepository repository;
     private ModelRouter modelRouter;
     private ChatClientRequestSpec requestSpec;
     private CallResponseSpec callResponseSpec;
-    private ChatTitleServiceimpl service;
+    private ChatTitleServiceImpl service;
 
     @BeforeEach
     void setUp() {
@@ -42,9 +42,7 @@ class ChatTitleServiceimplTest {
         modelRouter = mock(ModelRouter.class);
         when(modelRouter.client(null)).thenReturn(chatClient);
 
-        service = new ChatTitleServiceimpl();
-        ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
-        ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
+        service = new ChatTitleServiceImpl(modelRouter, repository);
     }
 
     @Test

@@ -27,9 +27,9 @@ import com.aichat.utils.UserHolder;
  * 这里生成失败只回退固定文案，绝不反向影响确认/取消结果。
  */
 @Service
-public class PersonaReplyServiceimpl implements PersonaReplyService {
+public class PersonaReplyServiceImpl implements PersonaReplyService {
 
-    private static final Logger log = LoggerFactory.getLogger(PersonaReplyServiceimpl.class);
+    private static final Logger log = LoggerFactory.getLogger(PersonaReplyServiceImpl.class);
     // 确认接口会同步等这句回执；超时必须短，否则用户点确认后会被模型拖住。
     private static final int TIMEOUT_MS = 1000;
     private static final int MAX_LENGTH = 40;
@@ -44,15 +44,19 @@ public class PersonaReplyServiceimpl implements PersonaReplyService {
             - 如果没有人设，就用自然、简洁的口语。
             """;
 
-    @Autowired
-    private ModelRouter modelRouter;
-    @Autowired
-    private PromptBuilder promptBuilder;
-    @Autowired
-    private ChatSessionRepository chatSessionRepository;
-    @Autowired
-    @Qualifier(ReceiptReplyExecutorConfig.RECEIPT_EXECUTOR)
-    private ExecutorService receiptExecutor;
+    private final ModelRouter modelRouter;
+    private final PromptBuilder promptBuilder;
+    private final ChatSessionRepository chatSessionRepository;
+    private final ExecutorService receiptExecutor;
+
+    public PersonaReplyServiceImpl(ModelRouter modelRouter, PromptBuilder promptBuilder,
+            ChatSessionRepository chatSessionRepository,
+            @Qualifier(ReceiptReplyExecutorConfig.RECEIPT_EXECUTOR) ExecutorService receiptExecutor) {
+        this.modelRouter = modelRouter;
+        this.promptBuilder = promptBuilder;
+        this.chatSessionRepository = chatSessionRepository;
+        this.receiptExecutor = receiptExecutor;
+    }
 
     @Override
     public String confirmed(String sessionId) {

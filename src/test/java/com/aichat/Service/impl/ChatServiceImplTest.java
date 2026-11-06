@@ -53,7 +53,7 @@ import reactor.core.publisher.Flux;
  * 1. 同步对话不能把当前问题发送两次
  * 2. 历史必须是真实 UserMessage / AssistantMessage，不能拼进 system prompt
  */
-class ChatServiceimplTest {
+class ChatServiceImplTest {
 
     private ChatSessionRepository repository;
     private ChatTitleService chatTitleService;
@@ -63,7 +63,7 @@ class ChatServiceimplTest {
     private MemoryService memoryService;
     private com.aichat.Service.IntentService intentService;
     private ChatClientRequestSpec requestSpec;
-    private ChatServiceimpl service;
+    private ChatServiceImpl service;
 
     @BeforeEach
     void setUp() {
@@ -94,17 +94,13 @@ class ChatServiceimplTest {
         intentService = mock(com.aichat.Service.IntentService.class);
         when(intentService.handle(anyString(), anyString(), any())).thenReturn(com.aichat.Dto.IntentOutcome.chat());
 
-        service = new ChatServiceimpl();
-        ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
-        ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
-        ReflectionTestUtils.setField(service, "chatTitleService", chatTitleService);
-        ReflectionTestUtils.setField(service, "intentService", intentService);
-        ReflectionTestUtils.setField(service, "personaReplyService", personaReplyService);
         // PromptBuilder：mock 一个"无画像"的版本，让 system prompt 返回基础人设（不影响历史注入断言）
         memoryService = mock(MemoryService.class);
         when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(java.util.List.of());
         promptBuilder = new PromptBuilder(memoryService, new MindButlerProperties());
-        ReflectionTestUtils.setField(service, "promptBuilder", promptBuilder);
+
+        service = new ChatServiceImpl(repository, modelRouter, chatTitleService, promptBuilder, intentService,
+                personaReplyService);
 
         UserDto user = new UserDto();
         user.setId("u1");
@@ -485,6 +481,5 @@ class ChatServiceimplTest {
         // 只弹窗，不落空 assistant 消息
         verify(repository, never()).save(eq("u1"), eq("s1"), any(Message.class), anyString());
     }
-
 
 }

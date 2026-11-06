@@ -12,7 +12,7 @@ import com.aichat.utils.UserHolder;
 
 class RefreshTokenInterceptorTest {
 
-    private final RefreshTokenInterceptor interceptor = new RefreshTokenInterceptor();
+    private final RefreshTokenInterceptor interceptor = new RefreshTokenInterceptor(null);
 
     @AfterEach
     void cleanup() {

@@ -40,7 +40,7 @@ import com.aichat.utils.UserHolder;
  * TaskService 单测：纯 Mockito（不连 MySQL），反射注入 Mapper/Config/Clock，
  * UserHolder 反射模拟登录态。覆盖 CRUD / 完成/重复滚动 / 到期查询 / 跨用户 404 / 乐观锁 409。
  */
-class TaskServiceimplTest {
+class TaskServiceImplTest {
 
     private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     /** 固定一个"现在"，便于断言滚动到下一次 */
@@ -50,17 +50,14 @@ class TaskServiceimplTest {
 
     private UserTaskMapper mapper;
     private MindButlerProperties props;
-    private TaskServiceimpl service;
+    private TaskServiceImpl service;
 
     @BeforeEach
     void setUp() {
         mapper = mock(UserTaskMapper.class);
         props = new MindButlerProperties();
         props.setTaskZone("Asia/Shanghai");
-        service = new TaskServiceimpl();
-        ReflectionTestUtils.setField(service, "userTaskMapper", mapper);
-        ReflectionTestUtils.setField(service, "props", props);
-        ReflectionTestUtils.setField(service, "clock", FIXED_CLOCK);
+        service = new TaskServiceImpl(mapper, props, FIXED_CLOCK);
         login("USER_ID_1234567890");
     }
 
@@ -459,6 +456,5 @@ class TaskServiceimplTest {
         assertThat(vo.getTitle()).isEqualTo("提醒我改密码");
         verify(mapper).insert(any(UserTask.class));
     }
-
 
 }

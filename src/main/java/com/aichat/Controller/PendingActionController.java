@@ -30,10 +30,13 @@ import com.aichat.Service.support.ConfirmationReceiptWriter;
 public class PendingActionController {
     private static final Logger log = LoggerFactory.getLogger(PendingActionController.class);
 
-    @Autowired
-    private PendingActionService pendingActionService;
-    @Autowired
-    private ConfirmationReceiptWriter confirmationReceiptWriter;
+    private final PendingActionService pendingActionService;
+    private final ConfirmationReceiptWriter confirmationReceiptWriter;
+
+    public PendingActionController(PendingActionService pendingActionService, ConfirmationReceiptWriter confirmationReceiptWriter) {
+        this.pendingActionService = pendingActionService;
+        this.confirmationReceiptWriter = confirmationReceiptWriter;
+    }
 
     @Operation(summary = "查当前会话的待确认动作",
             description = "没有/已过期返回 data=null；前端据此渲染确认卡片")

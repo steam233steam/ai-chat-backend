@@ -34,8 +34,11 @@ import jakarta.validation.Valid;
 @Tag(name = "用户记忆", description = "长期记忆（结构化画像）的手动管理 + 导出")
 public class MemoryController {
 
-    @Autowired
-    private MemoryService memoryService;
+    private final MemoryService memoryService;
+
+    public MemoryController(MemoryService memoryService) {
+        this.memoryService = memoryService;
+    }
 
     @Operation(summary = "查询生效记忆",
             description = "返回当前用户 active 且未过期的记忆，按类型/更新时间倒序；limit 控制总数 1-100；"

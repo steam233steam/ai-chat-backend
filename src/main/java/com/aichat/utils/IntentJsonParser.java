@@ -92,7 +92,7 @@ public final class IntentJsonParser {
         }
     }
 
-    // ---------- 字段抽取工具 ----------
+    // 字段抽取工具
 
     private static String textOrNull(JsonNode n) {
         if (n == null || n.isNull() || n.isMissingNode()) {

@@ -36,10 +36,13 @@ import jakarta.validation.Valid;
 @Tag(name = "用户任务", description = "口语化任务/计划的手动管理 + 完成 + 到期查询")
 public class TaskController {
 
-    @Autowired
-    private TaskService taskService;
-    @Autowired
-    private MindButlerProperties props;
+    private final TaskService taskService;
+    private final MindButlerProperties props;
+
+    public TaskController(TaskService taskService, MindButlerProperties props) {
+        this.taskService = taskService;
+        this.props = props;
+    }
 
     @Operation(summary = "查询到期待办",
             description = "status=pending、有截止时间且已到期，按 due_at 升序；P1 只读不回写 last_notified_at，前端按 (id,dueAt) 去重")

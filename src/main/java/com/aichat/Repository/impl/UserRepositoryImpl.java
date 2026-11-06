@@ -16,9 +16,12 @@ import com.aichat.utils.UserHolder;
 import static com.aichat.utils.RedisConstants.*;
 
 @Repository
-public class UserRepositoryimpl implements UserRepository {
-    @Autowired
-    private StringRedisTemplate stringRedisTemplate;
+public class UserRepositoryImpl implements UserRepository {
+    private final StringRedisTemplate stringRedisTemplate;
+
+    public UserRepositoryImpl(StringRedisTemplate stringRedisTemplate) {
+        this.stringRedisTemplate = stringRedisTemplate;
+    }
 
     @Override
     public Boolean checkCode(String phone, String code) {

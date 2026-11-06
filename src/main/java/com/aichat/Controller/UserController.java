@@ -25,8 +25,11 @@ import jakarta.validation.Valid;
 @RequestMapping("/user")
 @Tag(name = "用户管理", description = "验证码登录、密码登录、用户资料与登出")
 public class UserController {
-    @Autowired
-    private UserService userService;
+    private final UserService userService;
+
+    public UserController(UserService userService) {
+        this.userService = userService;
+    }
 
     @Operation(summary = "发送短信验证码", description = "向指定手机号下发登录/注册验证码（开发模式默认输出到日志）")
     @PostMapping("/code")

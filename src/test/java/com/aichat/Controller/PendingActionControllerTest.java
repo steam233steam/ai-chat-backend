@@ -34,9 +34,7 @@ class PendingActionControllerTest {
     void setUp() {
         service = mock(PendingActionService.class);
         receiptWriter = mock(ConfirmationReceiptWriter.class);
-        controller = new PendingActionController();
-        ReflectionTestUtils.setField(controller, "pendingActionService", service);
-        ReflectionTestUtils.setField(controller, "confirmationReceiptWriter", receiptWriter);
+        controller = new PendingActionController(service, receiptWriter);
     }
 
     @Test

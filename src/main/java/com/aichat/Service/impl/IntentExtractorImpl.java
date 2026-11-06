@@ -36,18 +36,21 @@ import com.aichat.utils.IntentPrompts;
  * 启动配置校验由 {@link com.aichat.Config.MindButlerStartupValidator} 负责。
  */
 @Service
-public class IntentExtractorimpl implements IntentExtractor {
-    private static final Logger log = LoggerFactory.getLogger(IntentExtractorimpl.class);
+public class IntentExtractorImpl implements IntentExtractor {
+    private static final Logger log = LoggerFactory.getLogger(IntentExtractorImpl.class);
 
-    @Autowired
-    private ModelRouter modelRouter;
-    @Autowired
-    private MindButlerProperties props;
-    @Autowired
-    private Clock clock;
-    @Autowired
-    @Qualifier(IntentExecutorConfig.INTENT_EXECUTOR)
-    private ExecutorService intentExecutor;
+    private final ModelRouter modelRouter;
+    private final MindButlerProperties props;
+    private final Clock clock;
+    private final ExecutorService intentExecutor;
+
+    public IntentExtractorImpl(ModelRouter modelRouter, MindButlerProperties props, Clock clock,
+            @Qualifier(IntentExecutorConfig.INTENT_EXECUTOR) ExecutorService intentExecutor) {
+        this.modelRouter = modelRouter;
+        this.props = props;
+        this.clock = clock;
+        this.intentExecutor = intentExecutor;
+    }
 
     @Override
     public IntentExtractionResult extract(IntentDetector.Intent intent, String message) {

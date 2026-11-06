@@ -13,13 +13,16 @@ import com.aichat.Service.ChatTitleService;
 import com.aichat.utils.ModelOutputSanitizer;
 
 @Service
-public class ChatTitleServiceimpl implements ChatTitleService {
-    private static final Logger log = LoggerFactory.getLogger(ChatTitleServiceimpl.class);
+public class ChatTitleServiceImpl implements ChatTitleService {
+    private static final Logger log = LoggerFactory.getLogger(ChatTitleServiceImpl.class);
 
-    @Autowired
-    private ModelRouter modelRouter;
-    @Autowired
-    private ChatSessionRepository chatSessionRepository;
+    private final ModelRouter modelRouter;
+    private final ChatSessionRepository chatSessionRepository;
+
+    public ChatTitleServiceImpl(ModelRouter modelRouter, ChatSessionRepository chatSessionRepository) {
+        this.modelRouter = modelRouter;
+        this.chatSessionRepository = chatSessionRepository;
+    }
 
     private static final String TITLE_PROMPT = """
             请根据下面这段对话内容，生成一个不超过 10 个字的简短标题，

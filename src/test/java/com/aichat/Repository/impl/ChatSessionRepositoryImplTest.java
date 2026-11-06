@@ -38,7 +38,7 @@ import com.aichat.Mapper.PendingActionMapper;
 import com.aichat.Mapper.UserMemoryMapper;
 import com.aichat.Service.ChatPersistenceService;
 
-class ChatSessionRepositoryimplTest {
+class ChatSessionRepositoryImplTest {
 
     private RedisTemplate<String, Object> redisTemplate;
     private ListOperations<String, Object> listOperations;
@@ -47,7 +47,7 @@ class ChatSessionRepositoryimplTest {
     private ChatPersistenceService chatPersistenceService;
     private UserMemoryMapper userMemoryMapper;
     private PendingActionMapper pendingActionMapper;
-    private ChatSessionRepositoryimpl repository;
+    private ChatSessionRepositoryImpl repository;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -64,11 +64,7 @@ class ChatSessionRepositoryimplTest {
         when(redisTemplate.opsForZSet()).thenReturn(zSetOperations);
         when(redisTemplate.opsForHash()).thenReturn(hashOperations);
 
-        repository = new ChatSessionRepositoryimpl();
-        ReflectionTestUtils.setField(repository, "redisTemplate", redisTemplate);
-        ReflectionTestUtils.setField(repository, "chatPersistenceService", chatPersistenceService);
-        ReflectionTestUtils.setField(repository, "userMemoryMapper", userMemoryMapper);
-        ReflectionTestUtils.setField(repository, "pendingActionMapper", pendingActionMapper);
+        repository = new ChatSessionRepositoryImpl(redisTemplate, chatPersistenceService, userMemoryMapper, pendingActionMapper);
     }
 
     @Test

@@ -33,21 +33,24 @@ import com.aichat.Service.TaskService;
 import com.aichat.utils.IntentPayloadCodec;
 import com.aichat.utils.UserHolder;
 
-
 @Service
-public class PendingActionServiceimpl implements PendingActionService {
-    private static final Logger log = LoggerFactory.getLogger(PendingActionServiceimpl.class);
+public class PendingActionServiceImpl implements PendingActionService {
+    private static final Logger log = LoggerFactory.getLogger(PendingActionServiceImpl.class);
 
-    @Autowired
-    private PendingActionMapper pendingActionMapper;
-    @Autowired
-    private MemoryService memoryService;
-    @Autowired
-    private TaskService taskService;
-    @Autowired
-    private MindButlerProperties props;
-    @Autowired
-    private Clock clock;
+    private final PendingActionMapper pendingActionMapper;
+    private final MemoryService memoryService;
+    private final TaskService taskService;
+    private final MindButlerProperties props;
+    private final Clock clock;
+
+    public PendingActionServiceImpl(PendingActionMapper pendingActionMapper, MemoryService memoryService, TaskService taskService, MindButlerProperties props, Clock clock) {
+        this.pendingActionMapper = pendingActionMapper;
+        this.memoryService = memoryService;
+        this.taskService = taskService;
+        this.props = props;
+        this.clock = clock;
+    }
+
     @Override
     @Transactional
     public long create(String sessionId, String actionType, String payload, Long sourceMessageId) {
@@ -245,7 +248,7 @@ public class PendingActionServiceimpl implements PendingActionService {
         }
     }
 
-    // ---------- 落库 ----------
+    // 落库
 
     private List<Map<String, Object>> applyMemories(PendingAction action) {
         List<Map<String, Object>> results = new ArrayList<>();

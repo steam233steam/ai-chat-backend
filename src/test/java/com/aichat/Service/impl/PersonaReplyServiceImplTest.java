@@ -23,14 +23,14 @@ import com.aichat.Repository.ChatSessionRepository;
 import com.aichat.utils.PromptBuilder;
 import com.aichat.utils.UserHolder;
 
-class PersonaReplyServiceimplTest {
+class PersonaReplyServiceImplTest {
 
     private ModelRouter modelRouter;
     private PromptBuilder promptBuilder;
     private ChatSessionRepository repository;
     private ExecutorService executor;
     private CallResponseSpec callResponseSpec;
-    private PersonaReplyServiceimpl service;
+    private PersonaReplyServiceImpl service;
 
     @BeforeEach
     void setUp() {
@@ -50,11 +50,7 @@ class PersonaReplyServiceimplTest {
         when(promptBuilder.build(anyString(), eq("s1"))).thenReturn("system-persona");
         when(repository.getModel("u1", "s1")).thenReturn("qwen2.5-coder:7b");
 
-        service = new PersonaReplyServiceimpl();
-        ReflectionTestUtils.setField(service, "modelRouter", modelRouter);
-        ReflectionTestUtils.setField(service, "promptBuilder", promptBuilder);
-        ReflectionTestUtils.setField(service, "chatSessionRepository", repository);
-        ReflectionTestUtils.setField(service, "receiptExecutor", executor);
+        service = new PersonaReplyServiceImpl(modelRouter, promptBuilder, repository, executor);
 
         UserDto user = new UserDto();
         user.setId("u1");

@@ -33,8 +33,11 @@ public class ChatController {
     private static final int MAX_TITLE_LENGTH = 50;
     private static final int MAX_HISTORY_PAGE_SIZE = 100;
 
-    @Autowired
-    private ChatService chatService;
+    private final ChatService chatService;
+
+    public ChatController(ChatService chatService) {
+        this.chatService = chatService;
+    }
 
     /** 查询可用模型白名单（前端渲染下拉框用，无需登录，公开接口） */
     @Operation(summary = "查询可用模型白名单", description = "返回 app.models.available 配置的模型名，前端渲染下拉框用，公开接口无需登录")

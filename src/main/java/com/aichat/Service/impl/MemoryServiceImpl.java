@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.CreateMemoryRequest;
@@ -28,18 +29,21 @@ import com.aichat.utils.SensitiveContentFilter;
 import com.aichat.utils.UserHolder;
 
 @Service
-public class MemoryServiceimpl implements MemoryService {
-    private static final Logger log = LoggerFactory.getLogger(MemoryServiceimpl.class);
+public class MemoryServiceImpl implements MemoryService {
+    private static final Logger log = LoggerFactory.getLogger(MemoryServiceImpl.class);
 
     /** 记忆 content 应用层上限（DB 列 512，Java 侧收 256，留足余量） */
     private static final int CONTENT_MAX = 256;
 
-    @Autowired
-    private UserMemoryMapper userMemoryMapper;
-    @Autowired
-    private MindButlerProperties props;
-    @Autowired
-    private Clock clock;
+    private final UserMemoryMapper userMemoryMapper;
+    private final MindButlerProperties props;
+    private final Clock clock;
+
+    public MemoryServiceImpl(UserMemoryMapper userMemoryMapper, MindButlerProperties props, Clock clock) {
+        this.userMemoryMapper = userMemoryMapper;
+        this.props = props;
+        this.clock = clock;
+    }
 
     @Override
     public List<MemoryVO> listForInjection(int stableLimit, int dynamicLimit) {
@@ -192,7 +196,11 @@ public class MemoryServiceimpl implements MemoryService {
         if (rows == 0) {
             throw new BusinessException(409, "版本冲突，请刷新后重试");
         }
-        return toVO(userMemoryMapper.selectById(id, userId), now);
+        UserMemory updated = userMemoryMapper.selectById(id, userId);
+        if (updated == null) {
+            throw new BusinessException(404, "记忆不存在");
+        }
+        return toVO(updated, now);
     }
 
     @Override
@@ -204,6 +212,7 @@ public class MemoryServiceimpl implements MemoryService {
     }
 
     @Override
+    @Transactional
     public MemoryVO createWithReplaces(String memKey, String content, String memType,
             Double confidence, Long replacesId, Long sourceMessageId, String sessionScope) {
         String userId = currentUserId();
@@ -263,7 +272,7 @@ public class MemoryServiceimpl implements MemoryService {
         return toVO(saved, nowLocal());
     }
 
-    // ---------- 内部辅助 ----------
+    // 内部辅助
 
     private String currentUserId() {
         UserDto user = UserHolder.getUser();

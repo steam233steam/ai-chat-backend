@@ -44,7 +44,7 @@ import com.aichat.utils.UserHolder;
  * PendingActionService 单测：纯 Mockito（不连 MySQL），反射注入 Mapper/Config/Clock，
  * UserHolder 反射模拟登录态。覆盖 创建/查询/确认/拒绝/过期/幂等/跨用户/分支落库。
  */
-class PendingActionServiceimplTest {
+class PendingActionServiceImplTest {
 
     private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     /** 固定"现在"，便于断言 TTL 与懒过期 */
@@ -58,7 +58,7 @@ class PendingActionServiceimplTest {
     private MemoryService memoryService;
     private TaskService taskService;
     private MindButlerProperties props;
-    private PendingActionServiceimpl service;
+    private PendingActionServiceImpl service;
 
     @BeforeEach
     void setUp() {
@@ -70,12 +70,7 @@ class PendingActionServiceimplTest {
         // 固定 TTL=10min 便于断言
         props.setPendingTtlMinutes(10);
         props.setPendingPayloadMaxBytes(1000);
-        service = new PendingActionServiceimpl();
-        ReflectionTestUtils.setField(service, "pendingActionMapper", mapper);
-        ReflectionTestUtils.setField(service, "memoryService", memoryService);
-        ReflectionTestUtils.setField(service, "taskService", taskService);
-        ReflectionTestUtils.setField(service, "props", props);
-        ReflectionTestUtils.setField(service, "clock", FIXED_CLOCK);
+        service = new PendingActionServiceImpl(mapper, memoryService, taskService, props, FIXED_CLOCK);
         login();
     }
 

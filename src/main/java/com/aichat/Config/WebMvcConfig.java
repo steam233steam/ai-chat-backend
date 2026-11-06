@@ -21,20 +21,21 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "/error"
     };
 
-    @Autowired
-    private RefreshTokenInterceptor refreshTokenInterceptor;
+    private final RefreshTokenInterceptor refreshTokenInterceptor;
+    private final LoginInterceptor loginInterceptor;
 
-    @Autowired
-    private LoginInterceptor loginInterceptor;
+    public WebMvcConfig(RefreshTokenInterceptor refreshTokenInterceptor, LoginInterceptor loginInterceptor) {
+        this.refreshTokenInterceptor = refreshTokenInterceptor;
+        this.loginInterceptor = loginInterceptor;
+    }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // 1. 先解析 Token，把用户放进 UserHolder，并续期
+        // 顺序即执行顺序：先把 Token 解析成 UserHolder，再判断是否登录
         registry.addInterceptor(refreshTokenInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(PUBLIC_PATHS);
 
-        // 2. 再校验登录态（预检请求、公开接口不校验）
         registry.addInterceptor(loginInterceptor)
                 .addPathPatterns("/chat/**", "/user/**")
                 .excludePathPatterns(PUBLIC_PATHS);

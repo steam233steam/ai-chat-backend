@@ -25,15 +25,10 @@ public class LoginInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 1. 从 UserHolder 获取用户
-        UserDto user = UserHolder.getUser();
-
-        // 2. 用户不存在，交给全局异常处理器统一返回 401 + Result JSON
-        if (user == null) {
+        if (UserHolder.getUser() == null) {
+            // 抛给全局异常处理器，前端拿到的仍是统一 JSON 结构
             throw new BusinessException(401, "请先登录");
         }
-
-        // 3. 用户存在，放行
         return true;
     }
 }

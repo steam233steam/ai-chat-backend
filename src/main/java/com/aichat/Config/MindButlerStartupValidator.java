@@ -11,7 +11,7 @@ import jakarta.annotation.PostConstruct;
 /**
  * MindButler 启动配置检查。
  *
- * 从 IntentExtractorimpl 拆出：提取器只负责“提取”，启动日志/模型白名单检查属于配置层。
+ * 从 IntentExtractorImpl 拆出：提取器只负责“提取”，启动日志/模型白名单检查属于配置层。
  * 模型配置错误只打 ERROR 并降级（意图功能返回固定兜底），不让可选 AI 功能拖垮整个后端启动。
  */
 @Component

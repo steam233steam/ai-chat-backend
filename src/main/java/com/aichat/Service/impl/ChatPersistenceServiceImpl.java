@@ -19,12 +19,15 @@ import com.aichat.Service.ChatPersistenceService;
  * 聊天数据持久化服务：MySQL 是聊天数据的持久化主存储，Redis 只作为缓存。
  */
 @Service
-public class ChatPersistenceServiceimpl implements ChatPersistenceService {
+public class ChatPersistenceServiceImpl implements ChatPersistenceService {
 
-    @Autowired
-    private ChatMessageMapper chatMessageMapper;
-    @Autowired
-    private ChatSessionMapper chatSessionMapper;
+    private final ChatMessageMapper chatMessageMapper;
+    private final ChatSessionMapper chatSessionMapper;
+
+    public ChatPersistenceServiceImpl(ChatMessageMapper chatMessageMapper, ChatSessionMapper chatSessionMapper) {
+        this.chatMessageMapper = chatMessageMapper;
+        this.chatSessionMapper = chatSessionMapper;
+    }
 
     // 消息和会话元数据在同一事务中写入，避免只成功一半。
     // 每条消息都 upsert 会话：首条创建元数据，后续刷新 update_time，保证会话列表按最近活跃排序。

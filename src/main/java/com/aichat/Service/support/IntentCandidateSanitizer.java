@@ -17,7 +17,7 @@ import com.aichat.utils.SensitiveContentFilter;
 /**
  * 意图候选净化：把 LLM 输出的不可信候选裁剪成“可写 pending”的安全集合。
  *
- * 从 IntentServiceimpl 拆出，避免编排类同时承担字段校验、长度截断、敏感词过滤。
+ * 从 IntentServiceImpl 拆出，避免编排类同时承担字段校验、长度截断、敏感词过滤。
  */
 @Component
 public class IntentCandidateSanitizer {

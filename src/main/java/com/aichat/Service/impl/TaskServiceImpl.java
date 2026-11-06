@@ -27,15 +27,18 @@ import com.aichat.Service.TaskService;
 import com.aichat.utils.UserHolder;
 
 @Service
-public class TaskServiceimpl implements TaskService {
-    private static final Logger log = LoggerFactory.getLogger(TaskServiceimpl.class);
+public class TaskServiceImpl implements TaskService {
+    private static final Logger log = LoggerFactory.getLogger(TaskServiceImpl.class);
 
-    @Autowired
-    private UserTaskMapper userTaskMapper;
-    @Autowired
-    private MindButlerProperties props;
-    @Autowired
-    private Clock clock;
+    private final UserTaskMapper userTaskMapper;
+    private final MindButlerProperties props;
+    private final Clock clock;
+
+    public TaskServiceImpl(UserTaskMapper userTaskMapper, MindButlerProperties props, Clock clock) {
+        this.userTaskMapper = userTaskMapper;
+        this.props = props;
+        this.clock = clock;
+    }
 
     @Override
     public List<TaskVO> list(String status, Long beforeId, int limit) {
@@ -143,7 +146,11 @@ public class TaskServiceimpl implements TaskService {
         if (rows == 0) {
             throw new BusinessException(409, "版本冲突，请刷新后重试");
         }
-        return toVO(userTaskMapper.selectById(id, userId), nowLocal());
+        UserTask updated = userTaskMapper.selectById(id, userId);
+        if (updated == null) {
+            throw new BusinessException(404, "任务不存在");
+        }
+        return toVO(updated, nowLocal());
     }
 
     @Override
@@ -204,7 +211,7 @@ public class TaskServiceimpl implements TaskService {
         return create(request);
     }
 
-    // ---------- 内部辅助 ----------
+    // 内部辅助
 
     /**
      * recurring 任务的"下一次"滚动：

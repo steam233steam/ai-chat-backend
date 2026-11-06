@@ -30,9 +30,7 @@ class ConfirmationReceiptWriterTest {
     void setUp() {
         repository = mock(ChatSessionRepository.class);
         personaReplyService = mock(PersonaReplyService.class);
-        writer = new ConfirmationReceiptWriter();
-        ReflectionTestUtils.setField(writer, "chatSessionRepository", repository);
-        ReflectionTestUtils.setField(writer, "personaReplyService", personaReplyService);
+        writer = new ConfirmationReceiptWriter(repository, personaReplyService);
         UserDto user = new UserDto();
         user.setId("u1");
         UserHolder.saveUser(user);

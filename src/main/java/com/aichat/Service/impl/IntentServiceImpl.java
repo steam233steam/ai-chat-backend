@@ -45,8 +45,8 @@ import com.aichat.utils.UserHolder;
  * - PendingActionService：pending 状态机与落库事务。
  */
 @Service
-public class IntentServiceimpl implements IntentService {
-    private static final Logger log = LoggerFactory.getLogger(IntentServiceimpl.class);
+public class IntentServiceImpl implements IntentService {
+    private static final Logger log = LoggerFactory.getLogger(IntentServiceImpl.class);
 
     private static final String EXTRACT_FALLBACK =
             "我没识别出要保存的记忆或任务。可以再说具体一点，比如“记住我喜欢简洁”或“明天 9 点提醒我交作业”。";
@@ -61,20 +61,23 @@ public class IntentServiceimpl implements IntentService {
     private static final String SENSITIVE_FALLBACK =
             "这段内容包含密码/Token/证件/银行卡等敏感信息，我不会保存。请不要在聊天中发送密码或密钥。";
 
-    @Autowired
-    private PendingActionService pendingActionService;
-    @Autowired
-    private IntentExtractor intentExtractor;
-    @Autowired
-    private IntentCandidateSanitizer candidateSanitizer;
-    @Autowired
-    private IntentDailyLimiter intentDailyLimiter;
-    @Autowired
-    private MindButlerProperties props;
-    @Autowired
-    private TaskService taskService;
-    @Autowired
-    private MemoryService memoryService;
+    private final PendingActionService pendingActionService;
+    private final IntentExtractor intentExtractor;
+    private final IntentCandidateSanitizer candidateSanitizer;
+    private final IntentDailyLimiter intentDailyLimiter;
+    private final MindButlerProperties props;
+    private final TaskService taskService;
+    private final MemoryService memoryService;
+
+    public IntentServiceImpl(PendingActionService pendingActionService, IntentExtractor intentExtractor, IntentCandidateSanitizer candidateSanitizer, IntentDailyLimiter intentDailyLimiter, MindButlerProperties props, TaskService taskService, MemoryService memoryService) {
+        this.pendingActionService = pendingActionService;
+        this.intentExtractor = intentExtractor;
+        this.candidateSanitizer = candidateSanitizer;
+        this.intentDailyLimiter = intentDailyLimiter;
+        this.props = props;
+        this.taskService = taskService;
+        this.memoryService = memoryService;
+    }
 
     /** QUERY 回复里最多展示的任务/记忆条数（超出提示"列表里翻看"）。 */
     private static final int QUERY_SHOW_LIMIT = 10;
@@ -165,7 +168,7 @@ public class IntentServiceimpl implements IntentService {
         return IntentOutcome.extracted(reply, pendingId);
     }
 
-    // ---------- 查询 → 读已有数据 → 自然文案（不走 LLM，确定性回答） ----------
+    // 查询 → 读已有数据 → 自然文案（不走 LLM，确定性回答）
 
     /**
      * 查询意图：直接读当前用户的任务/记忆数据回答，不调 LLM。
@@ -195,7 +198,7 @@ public class IntentServiceimpl implements IntentService {
                 || lowered.contains("你了解") || lowered.contains("你记我");
     }
 
-    // ---------- 提取 → 校验 → 写 pending → 确认文案 ----------
+    // 提取 → 校验 → 写 pending → 确认文案
 
     private IntentOutcome extract(Intent intent, String sessionId, String message, Long sourceMessageId) {
         if (intent == Intent.TASK) {
@@ -257,7 +260,7 @@ public class IntentServiceimpl implements IntentService {
         return IntentOutcome.extracted(reply, pendingId);
     }
 
-    // ---------- 确认 / 拒绝 ----------
+    // 确认 / 拒绝
 
     private IntentOutcome confirm(PendingActionVO pending) {
         if (pending == null) {

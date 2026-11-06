@@ -36,17 +36,20 @@ import static com.aichat.utils.RedisConstants.*;
  * 读缓存未命中时回源 MySQL 并回填；写操作先落库，再更新缓存。
  */
 @Repository
-public class ChatSessionRepositoryimpl implements ChatSessionRepository {
-    private static final Logger log = LoggerFactory.getLogger(ChatSessionRepositoryimpl.class);
+public class ChatSessionRepositoryImpl implements ChatSessionRepository {
+    private static final Logger log = LoggerFactory.getLogger(ChatSessionRepositoryImpl.class);
 
-    @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
-    @Autowired
-    private ChatPersistenceService chatPersistenceService;
-    @Autowired
-    private UserMemoryMapper userMemoryMapper;
-    @Autowired
-    private PendingActionMapper pendingActionMapper;
+    private final RedisTemplate<String, Object> redisTemplate;
+    private final ChatPersistenceService chatPersistenceService;
+    private final UserMemoryMapper userMemoryMapper;
+    private final PendingActionMapper pendingActionMapper;
+
+    public ChatSessionRepositoryImpl(RedisTemplate<String, Object> redisTemplate, ChatPersistenceService chatPersistenceService, UserMemoryMapper userMemoryMapper, PendingActionMapper pendingActionMapper) {
+        this.redisTemplate = redisTemplate;
+        this.chatPersistenceService = chatPersistenceService;
+        this.userMemoryMapper = userMemoryMapper;
+        this.pendingActionMapper = pendingActionMapper;
+    }
 
     @Override
     public void save(String userId, String sessionid, Message message, String model) {

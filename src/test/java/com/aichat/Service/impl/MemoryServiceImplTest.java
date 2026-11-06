@@ -39,11 +39,11 @@ import com.aichat.utils.UserHolder;
  * MemoryService 单测：纯 Mockito（不连 MySQL），反射注入 Mapper/Config/Clock，
  * UserHolder 反射模拟登录态。覆盖 CRUD + 过期过滤 + 跨用户 404 + 乐观锁 409 + 敏感词拒绝。
  */
-class MemoryServiceimplTest {
+class MemoryServiceImplTest {
 
     private UserMemoryMapper mapper;
     private MindButlerProperties props;
-    private MemoryServiceimpl service;
+    private MemoryServiceImpl service;
 
     private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 2, 22, 0);
@@ -52,9 +52,7 @@ class MemoryServiceimplTest {
     void setUp() {
         mapper = mock(UserMemoryMapper.class);
         props = new MindButlerProperties();
-        service = new MemoryServiceimpl();
-        ReflectionTestUtils.setField(service, "userMemoryMapper", mapper);
-        ReflectionTestUtils.setField(service, "props", props);
+        service = new MemoryServiceImpl(mapper, props, null);
         ReflectionTestUtils.setField(service, "clock",
                 Clock.fixed(java.time.Instant.now(), SHANGHAI));
         login("USER_ID_1234567890");

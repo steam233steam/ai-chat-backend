@@ -41,12 +41,17 @@ public class PromptBuilder {
     private final MindButlerProperties props;
 
     /** 测试直接 new 时允许为空，回退到任务时区的系统时钟。 */
-    @Autowired(required = false)
-    private Clock clock;
+    private final Clock clock;
 
+    @Autowired
     public PromptBuilder(MemoryService memoryService, MindButlerProperties props) {
+        this(memoryService, props, null);
+    }
+
+    public PromptBuilder(MemoryService memoryService, MindButlerProperties props, Clock clock) {
         this.memoryService = memoryService;
         this.props = props;
+        this.clock = clock;
     }
 
     /**

@@ -27,14 +27,17 @@ public class IntentDailyLimiter {
     private static final Logger log = LoggerFactory.getLogger(IntentDailyLimiter.class);
     private static final String PREFIX = "mindbutler:intent:daily:";
 
-    @Autowired
-    private MindButlerProperties props;
-    @Autowired
-    private Clock clock;
+    private final MindButlerProperties props;
+    private final Clock clock;
+    private final StringRedisTemplate redis;
+
+    public IntentDailyLimiter(MindButlerProperties props, Clock clock, StringRedisTemplate redis) {
+        this.props = props;
+        this.clock = clock;
+        this.redis = redis;
+    }
 
     /** Redis 不可用时兜底；不引入新依赖。 */
-    @Autowired(required = false)
-    private StringRedisTemplate redis;
 
     private final ConcurrentHashMap<String, AtomicInteger> localCounts = new ConcurrentHashMap<>();
 

@@ -17,19 +17,17 @@ import com.aichat.Entity.ChatMessage;
 import com.aichat.Mapper.ChatMessageMapper;
 import com.aichat.Mapper.ChatSessionMapper;
 
-class ChatPersistenceServiceimplTest {
+class ChatPersistenceServiceImplTest {
 
     private ChatMessageMapper chatMessageMapper;
     private ChatSessionMapper chatSessionMapper;
-    private ChatPersistenceServiceimpl service;
+    private ChatPersistenceServiceImpl service;
 
     @BeforeEach
     void setUp() {
         chatMessageMapper = mock(ChatMessageMapper.class);
         chatSessionMapper = mock(ChatSessionMapper.class);
-        service = new ChatPersistenceServiceimpl();
-        ReflectionTestUtils.setField(service, "chatMessageMapper", chatMessageMapper);
-        ReflectionTestUtils.setField(service, "chatSessionMapper", chatSessionMapper);
+        service = new ChatPersistenceServiceImpl(chatMessageMapper, chatSessionMapper);
     }
 
     @Test

@@ -13,16 +13,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 只测超时外壳：不依赖真实 LLM，验证慢调用会被截断、快调用正常返回。
  */
-class IntentExtractorimplTest {
+class IntentExtractorImplTest {
 
     private ExecutorService executor;
-    private IntentExtractorimpl extractor;
+    private IntentExtractorImpl extractor;
 
     @BeforeEach
     void setUp() {
         executor = Executors.newSingleThreadExecutor();
-        extractor = new IntentExtractorimpl();
-        ReflectionTestUtils.setField(extractor, "intentExecutor", executor);
+        extractor = new IntentExtractorImpl(null, null, null, executor);
     }
 
     @AfterEach

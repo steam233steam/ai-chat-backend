@@ -29,20 +29,22 @@ import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
 
 @Service
-public class UserServiceimpl implements UserService {
-    private static final Logger log = LoggerFactory.getLogger(UserServiceimpl.class);
+public class UserServiceImpl implements UserService {
+    private static final Logger log = LoggerFactory.getLogger(UserServiceImpl.class);
 
-    @Autowired
-    private UserMapper userMapper;
-    @Autowired
-    private UserRepository userRepository;
+    private final UserMapper userMapper;
+    private final UserRepository userRepository;
+    private final SmsSender smsSender;
 
     /** 无 SmsSender Bean 时的单测兜底：true 用日志发送器，false 用 503 发送器。 */
     @Value("${app.sms.dev-mode:false}")
     private boolean smsDevMode;
 
-    @Autowired(required = false)
-    private SmsSender smsSender;
+    public UserServiceImpl(UserMapper userMapper, UserRepository userRepository, SmsSender smsSender) {
+        this.userMapper = userMapper;
+        this.userRepository = userRepository;
+        this.smsSender = smsSender;
+    }
 
     @Override
     public Result<String> sendCode(String phone) {
@@ -88,7 +90,7 @@ public class UserServiceimpl implements UserService {
         if (smsSender != null) {
             return smsSender;
         }
-        // 单测直接 new UserServiceimpl() 时没有 Spring 注入，按配置兜底。
+        // 单测直接 new UserServiceImpl() 时没有 Spring 注入，按配置兜底。
         return smsDevMode ? new LogSmsSender() : new DisabledSmsSender();
     }
 

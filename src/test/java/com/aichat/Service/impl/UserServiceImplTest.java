@@ -24,22 +24,19 @@ import com.aichat.Mapper.UserMapper;
 import com.aichat.Repository.UserRepository;
 import com.aichat.Service.SmsSender;
 
-class UserServiceimplTest {
+class UserServiceImplTest {
 
     private UserMapper userMapper;
     private UserRepository userRepository;
     private SmsSender smsSender;
-    private UserServiceimpl service;
+    private UserServiceImpl service;
 
     @BeforeEach
     void setUp() {
         userMapper = mock(UserMapper.class);
         userRepository = mock(UserRepository.class);
         smsSender = mock(SmsSender.class);
-        service = new UserServiceimpl();
-        ReflectionTestUtils.setField(service, "userMapper", userMapper);
-        ReflectionTestUtils.setField(service, "userRepository", userRepository);
-        ReflectionTestUtils.setField(service, "smsSender", smsSender);
+        service = new UserServiceImpl(userMapper, userRepository, smsSender);
     }
 
     @Test
@@ -134,6 +131,5 @@ class UserServiceimplTest {
         verify(userRepository).deleteCode("13800000000");
         verify(userRepository).deleteSendCodeCooldown("13800000000");
     }
-
 
 }

@@ -42,7 +42,7 @@ import com.aichat.utils.UserHolder;
  * IntentService 单测：纯 Mockito，mock PendingActionService + IntentExtractor，
  * 覆盖 提取→写pending→确认文案 / 确认 / 拒绝 / 空候选降级 / 敏感词过滤 / 总开关。
  */
-class IntentServiceimplTest {
+class IntentServiceImplTest {
 
     private PendingActionService pendingActionService;
     private IntentExtractor intentExtractor;
@@ -50,7 +50,7 @@ class IntentServiceimplTest {
     private MemoryService memoryService;
     private IntentCandidateSanitizer candidateSanitizer;
     private MindButlerProperties props;
-    private IntentServiceimpl service;
+    private IntentServiceImpl service;
 
     @BeforeEach
     void setUp() {
@@ -61,14 +61,9 @@ class IntentServiceimplTest {
         memoryService = mock(MemoryService.class);
         props = new MindButlerProperties();
         props.setEnabled(true);
-        service = new IntentServiceimpl();
-        ReflectionTestUtils.setField(service, "pendingActionService", pendingActionService);
-        ReflectionTestUtils.setField(service, "intentExtractor", intentExtractor);
-        ReflectionTestUtils.setField(service, "intentDailyLimiter", intentDailyLimiter);
-        ReflectionTestUtils.setField(service, "memoryService", memoryService);
         candidateSanitizer = new IntentCandidateSanitizer(props);
-        ReflectionTestUtils.setField(service, "candidateSanitizer", candidateSanitizer);
-        ReflectionTestUtils.setField(service, "props", props);
+        service = new IntentServiceImpl(pendingActionService, intentExtractor, candidateSanitizer,
+                intentDailyLimiter, props, null, memoryService);
         UserDto user = new UserDto();
         user.setId("USER_ID_TEST");
         UserHolder.saveUser(user);

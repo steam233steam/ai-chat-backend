@@ -37,8 +37,8 @@ import com.aichat.utils.UserHolder;
 import reactor.core.publisher.Flux;
 
 @Service
-public class ChatServiceimpl implements ChatService {
-    private static final Logger log = LoggerFactory.getLogger(ChatServiceimpl.class);
+public class ChatServiceImpl implements ChatService {
+    private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
 
     /** 会话标题最大长度（按 Unicode 字符计） */
     private static final int TITLE_MAX_LENGTH = 20;
@@ -58,18 +58,21 @@ public class ChatServiceimpl implements ChatService {
     @Value("${app.chat.context-max-chars:24000}")
     private int contextMaxChars = 24000;
 
-    @Autowired
-    private ChatSessionRepository chatSessionRepository;
-    @Autowired
-    private ModelRouter modelRouter;
-    @Autowired
-    private ChatTitleService chatTitleService;
-    @Autowired
-    private PromptBuilder promptBuilder;
-    @Autowired
-    private IntentService intentService;
-    @Autowired
-    private PersonaReplyService personaReplyService;
+    private final ChatSessionRepository chatSessionRepository;
+    private final ModelRouter modelRouter;
+    private final ChatTitleService chatTitleService;
+    private final PromptBuilder promptBuilder;
+    private final IntentService intentService;
+    private final PersonaReplyService personaReplyService;
+
+    public ChatServiceImpl(ChatSessionRepository chatSessionRepository, ModelRouter modelRouter, ChatTitleService chatTitleService, PromptBuilder promptBuilder, IntentService intentService, PersonaReplyService personaReplyService) {
+        this.chatSessionRepository = chatSessionRepository;
+        this.modelRouter = modelRouter;
+        this.chatTitleService = chatTitleService;
+        this.promptBuilder = promptBuilder;
+        this.intentService = intentService;
+        this.personaReplyService = personaReplyService;
+    }
 
     @Override
     public String sendSession(String sessionid, UserMessage userMessage, String modelName) {
