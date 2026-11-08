@@ -33,6 +33,14 @@ public class CreateTaskRequest {
     @Size(max = 64)
     private String createdFromSession;
 
+    /** 到点做什么：notify（站内提醒，默认）/ webhook（回调一个地址） */
+    @Size(max = 16)
+    private String actionType;
+
+    /** 动作参数，webhook 用 {"url":"https://..."}；notify 可为空 */
+    @Size(max = 1024)
+    private String actionConfig;
+
     public String getTitle() {
         return title;
     }
@@ -79,5 +87,21 @@ public class CreateTaskRequest {
 
     public void setCreatedFromSession(String createdFromSession) {
         this.createdFromSession = createdFromSession;
+    }
+
+    public String getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(String actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getActionConfig() {
+        return actionConfig;
+    }
+
+    public void setActionConfig(String actionConfig) {
+        this.actionConfig = actionConfig;
     }
 }

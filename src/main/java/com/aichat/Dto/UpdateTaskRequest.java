@@ -21,6 +21,12 @@ public class UpdateTaskRequest {
     /** P1 只允许 pending / cancelled；null 表示不改 status */
     private String status;
 
+    /** notify / webhook；null 表示不改 */
+    private String actionType;
+
+    /** webhook 用 {"url":"https://..."}；null 表示不改 */
+    private String actionConfig;
+
     @NotNull
     private Integer version;
 
@@ -62,6 +68,22 @@ public class UpdateTaskRequest {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(String actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getActionConfig() {
+        return actionConfig;
+    }
+
+    public void setActionConfig(String actionConfig) {
+        this.actionConfig = actionConfig;
     }
 
     public Integer getVersion() {

@@ -494,4 +494,71 @@ class TaskServiceImplTest {
         verify(taskRunMapper, never()).selectByTask(any(Long.class), any(), any(Integer.class));
     }
 
+    // ---------- 到点动作（notify / webhook） ----------
+
+    private UserTask captureCreated(CreateTaskRequest req) {
+        AtomicReference<UserTask> saved = new AtomicReference<>();
+        when(mapper.insert(any(UserTask.class))).thenAnswer(inv -> {
+            UserTask t = inv.getArgument(0);
+            t.setId(1L);
+            saved.set(t);
+            return 1;
+        });
+        when(mapper.selectById(1L, "USER_ID_1234567890"))
+                .thenReturn(task(1L, "买牛奶", "once", null, null, "pending"));
+        service.create(req);
+        return saved.get();
+    }
+
+    @Test
+    void shouldDefaultActionToNotify() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("买牛奶");
+        req.setRecurrence("once");
+
+        UserTask saved = captureCreated(req);
+
+        assertThat(saved.getActionType()).isEqualTo("notify");
+        assertThat(saved.getActionConfig()).isNull();
+    }
+
+    @Test
+    void shouldStoreWebhookAction() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("每天九点跑测试");
+        req.setRecurrence("daily");
+        req.setDueAt(NOW.plusDays(1));
+        req.setActionType("webhook");
+        req.setActionConfig("{\"url\":\"https://example.com/hook\"}");
+
+        UserTask saved = captureCreated(req);
+
+        assertThat(saved.getActionType()).isEqualTo("webhook");
+        assertThat(saved.getActionConfig()).contains("example.com/hook");
+    }
+
+    @Test
+    void shouldRejectWebhookWithoutUrl() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("跑测试");
+        req.setActionType("webhook");
+        req.setActionConfig("{\"target\":\"https://example.com\"}");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("缺少 url");
+        verify(mapper, never()).insert(any(UserTask.class));
+    }
+
+    @Test
+    void shouldRejectUnknownActionType() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("跑测试");
+        req.setActionType("shell");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("动作类型只支持");
+    }
+
 }

@@ -97,6 +97,7 @@ public class TaskServiceImpl implements TaskService {
         task.setRecurrenceRule(rule);
         task.setRawInput(trimTo(request.getRawInput(), 512));
         task.setCreatedFromSession(request.getCreatedFromSession());
+        applyAction(task, request.getActionType(), request.getActionConfig(), null);
         // status='pending'、version=0 由 Mapper insert 语句写死
 
         userTaskMapper.insert(task);
@@ -146,6 +147,7 @@ public class TaskServiceImpl implements TaskService {
         upd.setRecurrence(newRecurrence);
         upd.setRecurrenceRule(newRule);
         upd.setStatus(normalizeStatus(request.getStatus(), current.getStatus()));
+        applyAction(upd, request.getActionType(), request.getActionConfig(), current);
         upd.setVersion(request.getVersion());
 
         int rows = userTaskMapper.updateByIdAndVersion(upd);
@@ -384,6 +386,43 @@ public class TaskServiceImpl implements TaskService {
         return s.substring(0, end);
     }
 
+    private static final java.util.regex.Pattern WEBHOOK_URL =
+            java.util.regex.Pattern.compile("\"url\"\\s*:\\s*\"([^\"]+)\"");
+
+    /**
+     * 到点做什么：notify（站内提醒）/ webhook（回调地址）。
+     * create 时 current 为 null；update 时未传 actionType 就沿用旧值（partial update 语义）。
+     */
+    private void applyAction(UserTask task, String actionType, String actionConfig, UserTask current) {
+        String type = actionType != null ? actionType.trim().toLowerCase()
+                : (current != null ? current.getActionType() : null);
+        if (type == null || type.isEmpty()) {
+            type = "notify";
+        }
+        if (!"notify".equals(type) && !"webhook".equals(type)) {
+            throw new BusinessException("动作类型只支持 notify / webhook");
+        }
+        String config = actionConfig != null ? actionConfig.trim()
+                : (actionType == null && current != null ? current.getActionConfig() : null);
+        if ("webhook".equals(type)) {
+            if (config == null || config.isEmpty()) {
+                throw new BusinessException("webhook 动作需要填写 {\"url\":\"https://...\"}");
+            }
+            java.util.regex.Matcher m = WEBHOOK_URL.matcher(config);
+            if (!m.find()) {
+                throw new BusinessException("webhook 参数里缺少 url");
+            }
+            String url = m.group(1).trim();
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                throw new BusinessException("webhook 地址必须以 http:// 或 https:// 开头");
+            }
+        } else {
+            config = null;
+        }
+        task.setActionType(type);
+        task.setActionConfig(config == null || config.isEmpty() ? null : trimTo(config, 1024));
+    }
+
     private String currentUserId() {
         UserDto user = UserHolder.getUser();
         if (user == null || user.getId() == null) {
@@ -410,6 +449,8 @@ public class TaskServiceImpl implements TaskService {
         vo.setRawInput(t.getRawInput());
         vo.setVersion(t.getVersion());
         vo.setCreatedFromSession(t.getCreatedFromSession());
+        vo.setActionType(t.getActionType() == null ? "notify" : t.getActionType());
+        vo.setActionConfig(t.getActionConfig());
         vo.setCreateTime(t.getCreateTime());
         vo.setUpdateTime(t.getUpdateTime());
         vo.setOverdue(t.getDueAt() != null && !t.getDueAt().isAfter(now)

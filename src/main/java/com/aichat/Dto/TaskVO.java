@@ -22,6 +22,10 @@ public class TaskVO {
     private LocalDateTime updateTime;
     /** P1.5：任务从哪个会话发起（溯源用，不影响可见性） */
     private String createdFromSession;
+    /** 到点做什么：notify / webhook */
+    private String actionType;
+    /** 动作参数（webhook 为 {"url":"..."}） */
+    private String actionConfig;
     /** 计算字段：due_at 非空且 < now（仅 pending 有意义） */
     private Boolean overdue;
 
@@ -135,6 +139,22 @@ public class TaskVO {
 
     public void setCreatedFromSession(String createdFromSession) {
         this.createdFromSession = createdFromSession;
+    }
+
+    public String getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(String actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getActionConfig() {
+        return actionConfig;
+    }
+
+    public void setActionConfig(String actionConfig) {
+        this.actionConfig = actionConfig;
     }
 
     public Boolean getOverdue() {

@@ -16,8 +16,10 @@ public interface UserTaskMapper {
 
     // 插入一条任务，自增 id 回填
     @Insert("INSERT INTO tb_user_task(user_id, title, due_at, timezone, recurrence, recurrence_rule, " +
+            "action_type, action_config, " +
             "status, raw_input, source_message_id, created_from_session, version) " +
             "VALUES(#{userId}, #{title}, #{dueAt}, #{timezone}, #{recurrence}, #{recurrenceRule}, " +
+            "IFNULL(#{actionType}, 'notify'), #{actionConfig}, " +
             "'pending', #{rawInput}, #{sourceMessageId}, #{createdFromSession}, 0)")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(UserTask task);
@@ -67,7 +69,8 @@ public interface UserTaskMapper {
 
     // 乐观锁更新（改 pending 任务）：version 不匹配则 0 行（上层 409）
     @Update("UPDATE tb_user_task SET title = #{title}, due_at = #{dueAt}, timezone = #{timezone}, " +
-            "recurrence = #{recurrence}, recurrence_rule = #{recurrenceRule}, status = #{status}, " +
+            "recurrence = #{recurrence}, recurrence_rule = #{recurrenceRule}, " +
+            "action_type = #{actionType}, action_config = #{actionConfig}, status = #{status}, " +
             "version = version + 1, update_time = NOW() " +
             "WHERE id = #{id} AND user_id = #{userId} AND status = 'pending' AND version = #{version}")
     int updateByIdAndVersion(UserTask task);
