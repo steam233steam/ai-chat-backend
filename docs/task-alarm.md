@@ -72,6 +72,9 @@ public class SmsTaskAction implements TaskAction {
 |---|---|---|
 | GET | `/user/tasks/due` | 到期待办（原有） |
 | GET | `/user/tasks/{id}/runs?limit=20` | 这条任务响过几次、成没成 |
+| PUT | `/user/tasks/{id}` | 改标题/时间/动作（`actionType` + `actionConfig`，带 `version`）；只支持 notify / webhook |
+
+前端在 `/tasks` 页：列表按状态筛选、展开看执行记录、点「设置」改动作（选 webhook 时填地址）。
 
 ## 配置
 

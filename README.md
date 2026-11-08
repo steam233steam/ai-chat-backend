@@ -81,6 +81,7 @@ P1 把"省用户惦记时间"做进聊天：固定 4 维度结构化画像（`st
 | 任务闹钟 | /user/tasks/{id}/runs | 到点由服务端触发任务配置的动作（站内提醒 / webhook），每次执行写记录；时间规则与动作解耦，新增动作不用改调度（[task-alarm.md](docs/task-alarm.md)） |
 | 记忆变更 | `/user/pending-actions` | 聊天里说"把目标改成明年考公""把作息的记忆删掉"→ 规则解析出待改条目 + before/after 预览 → 确认才写；宁可追问不猜（[memory-change.md](docs/memory-change.md)） |
 | 口语化任务 | `/user/tasks` | CRUD + 完成/重复滚动 + 到期查询（`once/daily/weekly`，weekly 带 `BYDAY=XX`） |
+| 任务页 | `/tasks` | 按状态看任务、展开看每次执行记录、给任务选到点动作（站内提醒 / 调你的 webhook） |
 | 待确认动作 | `/user/pending-actions` | pending→confirmed/rejected/expired 状态机；确认按 payload 实际内容分 memory/task/mixed 落库 |
 | 意图拦截 | `/chat/ask` 内置 | 说"明天 9 点交作业 / 记住我喜欢简洁"→ LLM 提取候选 → 写 pending → 二次确认；普通聊天不受影响 |
 | 到期提醒 | `/user/tasks/due` + 前端轮询 | 页面可见时每 30 秒检查一次，只弹 10 分钟内到期任务，按 `taskId + dueAt` 去重；页面关闭/后台不保证提醒 |
