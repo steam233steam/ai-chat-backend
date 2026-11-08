@@ -61,3 +61,22 @@ cd D:\maven-project\aichat
 | 消息不逐字出现 | nginx 里 `proxy_buffering off` 是否被别的 include 覆盖 |
 | 启动即退出 | 看日志里的 `app.mindbutler.task.zone 只允许 Asia/Shanghai` 这类 fail-fast 提示 |
 | 数据库连不上 | `mysql -h127.0.0.1 -uaichat -p`；确认 `app.env` 已被 `EnvironmentFile` 读到 |
+
+## 现有线上环境的实际情况（2026-11-08 核对）
+
+上面是"新建一台机器"的模板；已经在跑的这台（`124.220.107.165`，Ubuntu 24.04）用的是另一套路径，别按模板改：
+
+| 项 | 实际值 |
+|---|---|
+| 用户 / 地址 | `ubuntu@124.220.107.165`，`http://124.220.107.165` |
+| jar | `/home/ubuntu/aichat.jar` |
+| 前端 | `/home/ubuntu/frontend/dist` |
+| 服务 | `aichat.service`（`WorkingDirectory=/home/ubuntu`，JVM `-Xms256m -Xmx384m`） |
+| 环境变量 | `/etc/aichat.env`（600，含 DeepSeek key；**不要覆盖**） |
+| nginx | `/etc/nginx/sites-available/aichat`，`/api/` 反代到 `127.0.0.1:8080` |
+| 迁移脚本 | 上传到 `/home/ubuntu/database/` 再 `sudo mysql aichat < xxx.sql` |
+| 备份 | `/home/ubuntu/backups/<时间戳>/`（jar + dist + 库 + nginx + unit） |
+
+**MCP 工具有额外依赖**（jar 里不含）：服务器要装 `nodejs`，并把仓库里的 `mcp-servers/info-server.mjs` 放到 `/home/ubuntu/mcp-servers/info-server.mjs`（相对路径来自 `WorkingDirectory`）。没装 node 时 MCP 起不来但**不影响聊天**，只在第一次对话的日志里打一条 `MCP 服务 info 启动失败`。
+
+本次发布用的客户端脚本（不在此仓库，个人工具）：`D:\桌面\ai专用开发地\aichat-deploy\deploy.py`，参数 `--check / --all / --backend-only / --frontend-only / --migration`。
