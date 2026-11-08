@@ -23,7 +23,7 @@ public interface UserTaskMapper {
     int insert(UserTask task);
 
     // 查当前用户某条任务（带归属校验，跨用户查不到 → 上层 404）
-    @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, status, " +
+    @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, action_type, action_config, status, " +
             "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, " +
             "created_from_session, version, " +
             "create_time, update_time " +
@@ -32,7 +32,7 @@ public interface UserTaskMapper {
 
     // 任务列表：默认 pending，排除软删；游标分页 beforeId（id < beforeId，倒序取 limit，调用方反转）
     // P1.5：任务栏挂聊天界面侧边，溯源 created_from_session，但可见性仍全账号（不按 session 过滤）
-    @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, status, " +
+    @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, action_type, action_config, status, " +
             "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, " +
             "created_from_session, version, " +
             "create_time, update_time " +
@@ -45,7 +45,7 @@ public interface UserTaskMapper {
             @Param("limit") int limit);
 
     // 到期待办：status=pending、未软删、有截止时间且已到期；P1 只读不回写 last_notified_at
-    @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, status, " +
+    @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, action_type, action_config, status, " +
             "deleted_at, last_notified_at, completed_at, raw_input, source_message_id, " +
             "created_from_session, version, " +
             "create_time, update_time " +
@@ -86,6 +86,21 @@ public interface UserTaskMapper {
     @Update("UPDATE tb_user_task SET deleted_at = NOW(), version = version + 1, update_time = NOW() " +
             "WHERE id = #{id} AND user_id = #{userId} AND deleted_at IS NULL")
     int softDelete(@Param("id") long id, @Param("userId") String userId);
+
+// 全库到期待提醒：status=pending、未软删、已到期，且本轮还没响过（last_notified_at 为空或早于 due_at）
+    @Select("SELECT id, user_id, title, due_at, timezone, recurrence, recurrence_rule, action_type, "
+            + "action_config, status, deleted_at, last_notified_at, completed_at, raw_input, "
+            + "source_message_id, created_from_session, version, create_time, update_time "
+            + "FROM tb_user_task "
+            + "WHERE status = 'pending' AND deleted_at IS NULL AND due_at IS NOT NULL AND due_at <= #{now} "
+            + "AND (last_notified_at IS NULL OR last_notified_at < due_at) "
+            + "ORDER BY due_at ASC LIMIT #{limit}")
+    List<UserTask> selectDueAll(@Param("now") java.time.LocalDateTime now, @Param("limit") int limit);
+
+    // 记一次"响过了"；条件里再判一次，避免并发/重复触发把时间重复刷
+    @Update("UPDATE tb_user_task SET last_notified_at = #{now}, update_time = NOW() "
+            + "WHERE id = #{id} AND (last_notified_at IS NULL OR last_notified_at < due_at)")
+    int markNotified(@Param("id") long id, @Param("now") java.time.LocalDateTime now);
 
     @org.apache.ibatis.annotations.Delete("DELETE FROM tb_user_task WHERE user_id = #{userId}")
     int deleteByUser(@Param("userId") String userId);

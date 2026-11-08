@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS tb_user_task (
   timezone          VARCHAR(40)  NOT NULL DEFAULT 'Asia/Shanghai' COMMENT 'P1 只允许 Asia/Shanghai',
   recurrence        ENUM('once','daily','weekly','monthly') NOT NULL DEFAULT 'once' COMMENT 'P1 只开放 once/daily/weekly；monthly 预留 P1.5',
   recurrence_rule   VARCHAR(128) NULL COMMENT 'weekly: BYDAY=MO；monthly P1.5: BYMONTHDAY=31',
+  action_type       VARCHAR(16)  NOT NULL DEFAULT 'notify' COMMENT '到点触发什么动作：notify|webhook',
+  action_config     VARCHAR(1024) NULL COMMENT '动作参数 JSON，如 {"url":"https://..."}',
   status            ENUM('pending','done','cancelled') NOT NULL DEFAULT 'pending',
   deleted_at        DATETIME     NULL COMMENT '软删；非 NULL 表示已删除',
   last_notified_at  DATETIME     NULL COMMENT 'P3 推送用；P1 GET /due 不回写',
@@ -116,3 +118,19 @@ CREATE TABLE IF NOT EXISTS tb_pending_action (
   KEY idx_pending_current (user_id, session_id, status, expires_at),
   KEY idx_pending_expire (status, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='待用户确认的记忆/任务提案';
+-- 任务执行记录（闹钟响过几次、成没成）
+CREATE TABLE IF NOT EXISTS tb_task_run (
+  id           BIGINT       NOT NULL AUTO_INCREMENT,
+  task_id      BIGINT       NOT NULL,
+  user_id      VARCHAR(32)  NOT NULL,
+  action_type  VARCHAR(16)  NOT NULL,
+  trigger_type VARCHAR(16)  NOT NULL DEFAULT 'scheduled' COMMENT 'scheduled|manual',
+  status       VARCHAR(16)  NOT NULL COMMENT 'success|failed',
+  detail       VARCHAR(512) NULL,
+  started_at   DATETIME     NOT NULL,
+  finished_at  DATETIME     NULL,
+  create_time  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_task_run_task (task_id, started_at),
+  KEY idx_task_run_user (user_id, started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务执行记录';

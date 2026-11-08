@@ -19,6 +19,7 @@ import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.CompleteTaskRequest;
 import com.aichat.Dto.CreateTaskRequest;
 import com.aichat.Dto.Result;
+import com.aichat.Dto.TaskRunVO;
 import com.aichat.Dto.TaskVO;
 import com.aichat.Dto.UpdateTaskRequest;
 import com.aichat.Exception.BusinessException;
@@ -100,6 +101,14 @@ public class TaskController {
             throw new BusinessException(404, "任务不存在或已删除");
         }
         return Result.success(vo);
+    }
+
+    @Operation(summary = "任务执行记录",
+            description = "闹钟每次响都会写一条：动作、状态、摘要；新的在前，最多 100 条")
+    @GetMapping("/{id}/runs")
+    public Result<List<TaskRunVO>> runs(@PathVariable long id,
+            @RequestParam(defaultValue = "20") int limit) {
+        return Result.success(taskService.runs(id, limit));
     }
 
     @Operation(summary = "删除任务（软删）",

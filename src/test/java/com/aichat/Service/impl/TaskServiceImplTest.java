@@ -28,11 +28,14 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.CompleteTaskRequest;
 import com.aichat.Dto.CreateTaskRequest;
+import com.aichat.Dto.TaskRunVO;
 import com.aichat.Dto.TaskVO;
 import com.aichat.Dto.UpdateTaskRequest;
 import com.aichat.Dto.UserDto;
+import com.aichat.Entity.TaskRun;
 import com.aichat.Entity.UserTask;
 import com.aichat.Exception.BusinessException;
+import com.aichat.Mapper.TaskRunMapper;
 import com.aichat.Mapper.UserTaskMapper;
 import com.aichat.utils.UserHolder;
 
@@ -49,15 +52,17 @@ class TaskServiceImplTest {
             NOW.toInstant(ZoneOffset.ofHours(8)), SHANGHAI);
 
     private UserTaskMapper mapper;
+    private TaskRunMapper taskRunMapper;
     private MindButlerProperties props;
     private TaskServiceImpl service;
 
     @BeforeEach
     void setUp() {
         mapper = mock(UserTaskMapper.class);
+        taskRunMapper = mock(TaskRunMapper.class);
         props = new MindButlerProperties();
         props.setTaskZone("Asia/Shanghai");
-        service = new TaskServiceImpl(mapper, props, FIXED_CLOCK);
+        service = new TaskServiceImpl(mapper, taskRunMapper, props, FIXED_CLOCK);
         login("USER_ID_1234567890");
     }
 
@@ -455,6 +460,38 @@ class TaskServiceImplTest {
 
         assertThat(vo.getTitle()).isEqualTo("提醒我改密码");
         verify(mapper).insert(any(UserTask.class));
+    }
+
+    @Test
+    void shouldReturnRunsOfOwnTask() {
+        when(mapper.selectById(5L, "USER_ID_1234567890"))
+                .thenReturn(task(5L, "交作业", "once", null, NOW, "pending"));
+        TaskRun run = new TaskRun();
+        run.setId(11L);
+        run.setTaskId(5L);
+        run.setUserId("USER_ID_1234567890");
+        run.setActionType("notify");
+        run.setTriggerType("scheduled");
+        run.setStatus("success");
+        run.setDetail("站内提醒：交作业");
+        run.setStartedAt(NOW);
+        when(taskRunMapper.selectByTask(5L, "USER_ID_1234567890", 20)).thenReturn(List.of(run));
+
+        List<TaskRunVO> runs = service.runs(5L, 20);
+
+        assertThat(runs).hasSize(1);
+        assertThat(runs.get(0).status()).isEqualTo("success");
+        assertThat(runs.get(0).actionType()).isEqualTo("notify");
+    }
+
+    @Test
+    void should404WhenRunsOfOthersTask() {
+        when(mapper.selectById(9L, "USER_ID_1234567890")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.runs(9L, 20))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("任务不存在");
+        verify(taskRunMapper, never()).selectByTask(any(Long.class), any(), any(Integer.class));
     }
 
 }

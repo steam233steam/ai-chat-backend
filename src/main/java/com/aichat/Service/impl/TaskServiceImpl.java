@@ -17,11 +17,14 @@ import org.springframework.stereotype.Service;
 import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.CompleteTaskRequest;
 import com.aichat.Dto.CreateTaskRequest;
+import com.aichat.Dto.TaskRunVO;
 import com.aichat.Dto.TaskVO;
 import com.aichat.Dto.UpdateTaskRequest;
 import com.aichat.Dto.UserDto;
 import com.aichat.Entity.UserTask;
 import com.aichat.Exception.BusinessException;
+import com.aichat.Entity.TaskRun;
+import com.aichat.Mapper.TaskRunMapper;
 import com.aichat.Mapper.UserTaskMapper;
 import com.aichat.Service.TaskService;
 import com.aichat.utils.UserHolder;
@@ -31,11 +34,14 @@ public class TaskServiceImpl implements TaskService {
     private static final Logger log = LoggerFactory.getLogger(TaskServiceImpl.class);
 
     private final UserTaskMapper userTaskMapper;
+    private final TaskRunMapper taskRunMapper;
     private final MindButlerProperties props;
     private final Clock clock;
 
-    public TaskServiceImpl(UserTaskMapper userTaskMapper, MindButlerProperties props, Clock clock) {
+    public TaskServiceImpl(UserTaskMapper userTaskMapper, TaskRunMapper taskRunMapper,
+            MindButlerProperties props, Clock clock) {
         this.userTaskMapper = userTaskMapper;
+        this.taskRunMapper = taskRunMapper;
         this.props = props;
         this.clock = clock;
     }
@@ -209,6 +215,21 @@ public class TaskServiceImpl implements TaskService {
     public TaskVO createFromPending(CreateTaskRequest request, String sourceSessionId) {
         request.setCreatedFromSession(sourceSessionId);
         return create(request);
+    }
+
+    @Override
+    public List<TaskRunVO> runs(long id, int limit) {
+        String userId = currentUserId();
+        if (userTaskMapper.selectById(id, userId) == null) {
+            throw new BusinessException(404, "任务不存在或已删除");
+        }
+        int cap = Math.max(1, Math.min(limit, 100));
+        return taskRunMapper.selectByTask(id, userId, cap).stream().map(TaskServiceImpl::toRunVO).toList();
+    }
+
+    private static TaskRunVO toRunVO(TaskRun run) {
+        return new TaskRunVO(run.getId(), run.getTaskId(), run.getActionType(), run.getTriggerType(),
+                run.getStatus(), run.getDetail(), run.getStartedAt(), run.getFinishedAt());
     }
 
     // 内部辅助

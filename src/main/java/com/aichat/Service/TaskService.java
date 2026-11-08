@@ -4,6 +4,7 @@ import java.util.List;
 
 import com.aichat.Dto.CompleteTaskRequest;
 import com.aichat.Dto.CreateTaskRequest;
+import com.aichat.Dto.TaskRunVO;
 import com.aichat.Dto.TaskVO;
 import com.aichat.Dto.UpdateTaskRequest;
 
@@ -45,4 +46,7 @@ public interface TaskService {
      * @param sourceSessionId 发起该任务的会话 id（可为 null）
      */
     TaskVO createFromPending(CreateTaskRequest request, String sourceSessionId);
+
+    /** 某条任务的执行记录（闹钟响过几次、成没成），新的在前；不存在或非本人 404。 */
+    List<TaskRunVO> runs(long id, int limit);
 }

@@ -52,3 +52,5 @@
 |---|---|
 | [`migration/`](migration/) | 7 个增量 SQL，按日期命名，每个都可重复执行 |
 | [`eval/`](eval/) | 意图提取的 40 条评测集（JSON），改意图逻辑时用来回归 |
+
+| 任务闹钟 | [task-alarm.md](task-alarm.md) | 触发器+动作+执行记录 |

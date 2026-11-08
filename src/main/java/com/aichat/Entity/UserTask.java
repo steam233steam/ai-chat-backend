@@ -16,6 +16,10 @@ public class UserTask {
     private String timezone;
     private String recurrence;
     private String recurrenceRule;
+    /** 到点触发什么动作：notify（默认，站内提醒）| webhook（POST 到外部地址）。 */
+    private String actionType;
+    /** 动作参数 JSON，如 {"url":"https://..."}。 */
+    private String actionConfig;
     private String status;
     private LocalDateTime deletedAt;
     private LocalDateTime lastNotifiedAt;
@@ -81,6 +85,21 @@ public class UserTask {
 
     public String getRecurrenceRule() {
         return recurrenceRule;
+    }
+    public String getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(String actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getActionConfig() {
+        return actionConfig;
+    }
+
+    public void setActionConfig(String actionConfig) {
+        this.actionConfig = actionConfig;
     }
 
     public void setRecurrenceRule(String recurrenceRule) {
