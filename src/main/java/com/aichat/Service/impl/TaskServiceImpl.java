@@ -402,8 +402,8 @@ public class TaskServiceImpl implements TaskService {
         if (type == null || type.isEmpty()) {
             type = "notify";
         }
-        if (!"notify".equals(type) && !"webhook".equals(type) && !"mcp".equals(type)) {
-            throw new BusinessException("动作类型只支持 notify / webhook / mcp");
+        if (!"notify".equals(type) && !"webhook".equals(type) && !"mcp".equals(type) && !"push".equals(type)) {
+            throw new BusinessException("动作类型只支持 notify / webhook / mcp / push");
         }
         String config = actionConfig != null ? actionConfig.trim()
                 : (actionType == null && current != null ? current.getActionConfig() : null);
@@ -432,6 +432,38 @@ public class TaskServiceImpl implements TaskService {
             }
             if (!tool.startsWith("mcp_")) {
                 throw new BusinessException("MCP 工具名应以 mcp_ 开头，例如 mcp_info_weather");
+            }
+        } else if ("push".equals(type)) {
+            if (config == null || config.isEmpty()) {
+                throw new BusinessException("推送动作需要填写 {\"channel\":\"ntfy\",\"topic\":\"你的主题\"}");
+            }
+            com.fasterxml.jackson.databind.JsonNode node;
+            try {
+                node = MAPPER.readTree(config);
+            } catch (Exception e) {
+                throw new BusinessException("推送动作的参数不是合法 JSON");
+            }
+            String channel = node.path("channel").asText("").trim().toLowerCase();
+            if (!"ntfy".equals(channel) && !"bark".equals(channel) && !"wecom".equals(channel)) {
+                throw new BusinessException("推送通道只支持 ntfy（安卓）/ bark（iOS）/ wecom（企业微信）");
+            }
+            if ("ntfy".equals(channel)) {
+                String topic = node.path("topic").asText("").trim();
+                if (topic.isEmpty()) {
+                    throw new BusinessException("ntfy 通道需要填写 topic，例如 mindbutler-你的名字");
+                }
+                if (!topic.matches("[A-Za-z0-9_-]{1,64}")) {
+                    throw new BusinessException("ntfy 的 topic 只能用字母、数字、下划线或短横线，最长 64 位");
+                }
+                String server = node.path("server").asText("https://ntfy.sh").trim();
+                if (!server.startsWith("http://") && !server.startsWith("https://")) {
+                    throw new BusinessException("ntfy 服务器地址必须以 http:// 或 https:// 开头");
+                }
+            } else {
+                String target = node.path("target").asText("").trim();
+                if (!target.startsWith("http://") && !target.startsWith("https://")) {
+                    throw new BusinessException("bark / 企业微信 需要填写以 http:// 或 https:// 开头的推送地址");
+                }
             }
         } else {
             config = null;

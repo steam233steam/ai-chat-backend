@@ -63,8 +63,33 @@
 | `action_type` | 行为 | `action_config` |
 |---|---|---|
 | `notify`（默认） | 只记一条执行记录，前端轮询 `/user/tasks/due` 就能看到 | 不需要 |
+| `push` | 往手机推一条**横幅通知**（锁屏上弹出来那种） | `{"channel":"ntfy","server":"https://ntfy.sh","topic":"mindbutler-233"}` |
 | `webhook` | POST JSON 到指定地址，2xx 算成功 | `{"url":"https://..."}` |
 | `mcp` | 到点调一次 MCP 工具，把结果写进执行记录（查天气/搜索/时间/抓网页） | `{"tool":"mcp_info_weather","args":{"city":"北京"}}` |
+
+### push 动作（手机横幅）
+
+项目自己不发推送（那要 APNs / FCM 和上架 App），而是借**手机上已经装好的 App** 的通知通道：
+
+| 通道 | 适用 | 怎么办 |
+|---|---|---|
+| `ntfy`（安卓，推荐） | 免费、不用注册、5 分钟配好 | 装 ntfy App → 订阅一个主题（如 `mindbutler-233`）→ 任务里填同一个主题 |
+| `bark`（iOS） | App Store 免费 | 装 Bark → 复制 App 给的地址 → 填进 `target` |
+| `wecom` | 企业微信群 | 群里加「群机器人」→ 复制 webhook → 填进 `target` |
+
+`action_config` 三种写法：
+
+```json
+{"channel":"ntfy","server":"https://ntfy.sh","topic":"mindbutler-233"}
+{"channel":"bark","target":"https://api.day.app/你的KEY"}
+{"channel":"wecom","target":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."}
+```
+
+实现要点：ntfy 走 JSON 发布接口，`priority: 4` 才会以**横幅**弹出（3 只进通知栏）；
+三个通道的报文格式不同（ntfy `{topic,title,message}` / Bark `{title,body}` / 企微 `{msgtype,text}`），
+所以由 `PushTaskAction` 统一适配，任务表只存一种抽象配置。
+
+**已验证**：线上建一条 `push` 任务，10 秒内执行，`tb_task_run.detail` 记 `已推送到手机（ntfy，200）`。
 
 ### mcp 动作
 
@@ -109,9 +134,9 @@ public class SmsTaskAction implements TaskAction {
 |---|---|---|
 | GET | `/user/tasks/due` | 到期待办（原有） |
 | GET | `/user/tasks/{id}/runs?limit=20` | 这条任务响过几次、成没成 |
-| PUT | `/user/tasks/{id}` | 改标题/时间/动作（`actionType` + `actionConfig`，带 `version`）；只支持 notify / webhook |
+| PUT | `/user/tasks/{id}` | 改标题/时间/动作（`actionType` + `actionConfig`，带 `version`）；只支持 notify / push / webhook / mcp |
 
-前端在 `/tasks` 页：列表按状态筛选、展开看执行记录、点「设置」改动作（选 webhook 时填地址）。
+前端在 `/tasks` 页：列表按状态筛选、展开看执行记录、点「设置」改动作（notify / push / webhook / mcp，按所选动作填对应参数）。
 
 ## 配置
 

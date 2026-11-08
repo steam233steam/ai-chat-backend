@@ -601,4 +601,56 @@ class TaskServiceImplTest {
                 .hasMessageContaining("合法 JSON");
     }
 
+    @Test
+    void shouldStoreNtfyPushAction() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("每天九点交作业");
+        req.setRecurrence("daily");
+        req.setDueAt(NOW.plusDays(1));
+        req.setActionType("push");
+        req.setActionConfig("{\"channel\":\"ntfy\",\"topic\":\"mindbutler-233\"}");
+
+        UserTask saved = captureCreated(req);
+
+        assertThat(saved.getActionType()).isEqualTo("push");
+        assertThat(saved.getActionConfig()).contains("mindbutler-233");
+    }
+
+    @Test
+    void shouldRejectNtfyPushWithoutTopic() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("交作业");
+        req.setActionType("push");
+        req.setActionConfig("{\"channel\":\"ntfy\"}");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("topic");
+        verify(mapper, never()).insert(any(UserTask.class));
+    }
+
+    @Test
+    void shouldRejectUnsupportedPushChannel() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("交作业");
+        req.setActionType("push");
+        req.setActionConfig("{\"channel\":\"telegram\",\"target\":\"https://x\"}");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("推送通道只支持");
+    }
+
+    @Test
+    void shouldRejectBarkPushWithoutTarget() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("交作业");
+        req.setActionType("push");
+        req.setActionConfig("{\"channel\":\"bark\"}");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("推送地址");
+    }
+
 }
