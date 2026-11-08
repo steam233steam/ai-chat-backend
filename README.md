@@ -1,10 +1,56 @@
 [![Backend CI](https://github.com/steam233steam/ai-chat-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/steam233steam/ai-chat-backend/actions/workflows/ci.yml)
 
-# AI Chat 后端
+# MindButler：会记事、能派活的个人 AI 助手（后端）
 
-基于 Spring Boot 3 + Spring AI 的智能对话后端，支持 Ollama 本地模型与 DeepSeek 云端模型切换，提供同步/流式两种响应模式。
+一个 Spring Boot 3 + Spring AI 的对话后端。**它不是聊天套壳**：除了多轮对话，它会把你说过的偏好记下来、
+把"下周三交作业"变成任务、需要外部信息时自己去查，并且在写库之前让你确认一次。
 
-> 前端仓库：[ai-chat-frontend](https://github.com/steam233steam/ai-chat-frontend)
+> 前端仓库：[ai-chat-frontend](https://github.com/steam233steam/ai-chat-frontend)  
+> 文档索引：[docs/README.md](docs/README.md) · 排期表：[docs/路线图.md](docs/路线图.md) · 读代码入口：[docs/啃代码路线.md](docs/啃代码路线.md)
+
+## 它和"套壳 ChatGPT"的区别
+
+| 能力 | 普通套壳 | 这个项目 |
+|---|---|---|
+| 记住用户 | 靠上下文窗口，关掉就没了 | 结构化记忆（4 个维度 + confidence + 有效期），按 `confidence × 0.5^(闲置天数/半衰期)` 决定注入顺序 |
+| 处理"下周三" | 说一句"我记住了"，其实什么都没有 | 意图层解析成任务（固定 schema + confidence），确认后落库、到点可查 |
+| 改/删记忆 | 做不到，或模型直接删 | 解析出待改条目 + before/after 预览，确认才写；解析不出来就追问 |
+| 查外部信息 | 没有 | MCP 工具：时间、天气、必应搜索、网页正文、沙箱内读写笔记 |
+| 用户信任 | —— | 敏感信息（密码/证件/卡号）不进库；所有写操作先给预览 |
+
+## 一次对话的路径
+
+```text
+POST /chat/ask-stream  (Flux<String> → SSE)
+   │
+   ├─ RefreshTokenInterceptor    Authorization → Redis → UserHolder(ThreadLocal)
+   ├─ LoginInterceptor           未登录 401
+   ├─ ChatDailyLimiter           按用户按天限流（Redis，异常降级进程内）
+   │
+   ├─ IntentService              有"记住/提醒/改成/删掉"意图？
+   │    ├─ 敏感信息过滤 → 直接拒绝
+   │    ├─ IntentExtractor（固定 schema + confidence + 超时兜底）
+   │    └─ 写入 pending（memory / task / memory_change），只回一行标记
+   │         └─ 前端弹窗确认 → POST /user/pending-actions/{id}/confirm → 落库
+   │
+   ├─ PromptBuilder              人设 + 注入记忆（按衰减排序，最多 5 条）+ 最近 N 条历史
+   ├─ ModelRouter                Ollama 本地 / DeepSeek 云端（会话首条消息锁模型）
+   ├─ MCP 工具                   按模型白名单挂载，模型自己决定调不调
+   └─ ChatPersistenceService     事务内双写：MySQL 持久化 + Redis 7 天热缓存
+```
+
+## 三个取舍（面试会问）
+
+| 取舍 | 选了什么 | 为什么 | 代价 |
+|---|---|---|---|
+| 认证 | **不用 Spring Security**，自己写两个拦截器 + Redis Token | 演示项目要能讲清"登录态到底是什么"；Security 的过滤器链对初学者是黑盒 | 越权、CSRF、密码哈希这些得自己补齐（BCrypt、userId 校验、401/403 分支都手写过） |
+| 记忆衰减 | **查询时现算**，不落库、不定时任务 | 定时任务要处理"没跑""跑重了""时区"；现算没有一致性问题，改半衰期只改配置 | 每次注入多几次浮点运算；没法按权重建索引 |
+| MCP | **自实现客户端**，不用官方 starter | `spring-ai` 1.0.0-M5 的 BOM 里没有 MCP 模块，升 1.0.0 要连带升 Boot 3.4，不划算 | 协议（stdio + 换行 JSON-RPC）、超时、错误码、进程管理都得自己写 |
+
+## 两个数字
+
+- **309** 个自动化测试全绿（含 8 个真实连 MySQL/Redis 的集成测试），CI 每次提交跑
+- **12** 条人工验收用例（[`docs/P1-上线验收清单.md`](docs/P1-上线验收清单.md)）已逐条执行并留了记录，含弹窗、倒计时、跨用户隔离
 
 ## 技术栈
 
