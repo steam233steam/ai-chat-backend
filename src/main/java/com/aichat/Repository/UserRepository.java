@@ -7,6 +7,9 @@ public interface UserRepository {
     // 校验 redis 里的验证码
     Boolean checkCode(String phone, String code);
 
+    // 校验并消费验证码：比对成功才删除，比对与删除在 Redis 里一次完成（防重放、防并发双花）
+    boolean consumeCode(String phone, String code);
+
     // 保存验证码到 redis
     void saveCode(String phone, String code);
 

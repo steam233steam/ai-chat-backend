@@ -1,6 +1,6 @@
 package com.aichat.Config;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -23,10 +23,14 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final RefreshTokenInterceptor refreshTokenInterceptor;
     private final LoginInterceptor loginInterceptor;
+    private final String[] allowedOrigins;
 
-    public WebMvcConfig(RefreshTokenInterceptor refreshTokenInterceptor, LoginInterceptor loginInterceptor) {
+    public WebMvcConfig(RefreshTokenInterceptor refreshTokenInterceptor,
+            LoginInterceptor loginInterceptor,
+            @Value("${app.cors.allowed-origins:http://localhost:*,http://127.0.0.1:*}") String[] allowedOrigins) {
         this.refreshTokenInterceptor = refreshTokenInterceptor;
         this.loginInterceptor = loginInterceptor;
+        this.allowedOrigins = allowedOrigins;
     }
 
     @Override
@@ -43,9 +47,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        // 本地开发时允许常见前端端口跨域；生产环境请改成具体域名
+        // 白名单来自 app.cors.allowed-origins，默认只放本机端口；上线时改成真实域名
         registry.addMapping("/**")
-                .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
+                .allowedOriginPatterns(allowedOrigins)
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true)

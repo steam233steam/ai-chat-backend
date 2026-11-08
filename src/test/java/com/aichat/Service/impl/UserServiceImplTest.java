@@ -44,7 +44,7 @@ class UserServiceImplTest {
         LoginFormDTO form = new LoginFormDTO();
         form.setPhone("13800000000");
         form.setCode("123456");
-        when(userRepository.checkCode("13800000000", "123456")).thenReturn(true);
+        when(userRepository.consumeCode("13800000000", "123456")).thenReturn(true);
         when(userMapper.getUserByPhone("13800000000")).thenReturn(null);
 
         Result<String> result = service.login(form);
@@ -52,7 +52,7 @@ class UserServiceImplTest {
         assertThat(result.getCode()).isEqualTo(200);
         assertThat(result.getData()).isNotBlank();
         // 关键回归点：新用户也必须消费掉验证码，避免 5 分钟内重放
-        verify(userRepository).deleteCode("13800000000");
+        verify(userRepository).consumeCode("13800000000", "123456");
         verify(userRepository).markNewUser(anyString());
         verify(userRepository).saveUser(anyString(), any(User.class));
     }
@@ -62,12 +62,12 @@ class UserServiceImplTest {
         LoginFormDTO form = new LoginFormDTO();
         form.setPhone("13800000000");
         form.setCode("123456");
-        when(userRepository.checkCode("13800000000", "123456")).thenReturn(true);
+        when(userRepository.consumeCode("13800000000", "123456")).thenReturn(true);
         when(userMapper.getUserByPhone("13800000000")).thenReturn(existingUser());
 
         service.login(form);
 
-        verify(userRepository).deleteCode("13800000000");
+        verify(userRepository).consumeCode("13800000000", "123456");
         verify(userRepository, never()).markNewUser(anyString());
     }
 

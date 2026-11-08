@@ -1,11 +1,13 @@
 package com.aichat.Repository.impl;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Repository;
 
 import com.aichat.Dto.User;
@@ -30,6 +32,26 @@ public class UserRepositoryImpl implements UserRepository {
             return false;
         }
         return cachecode.equals(code);
+    }
+
+    /**
+     * 比对 + 删除用一段 Lua 做：分开写会留下「校验通过但进程挂掉、验证码没删」的窗口，
+     * 并发下同一个验证码还能被两条请求同时通过。
+     */
+    private static final DefaultRedisScript<Long> CONSUME_CODE_SCRIPT = new DefaultRedisScript<>(
+            "local v = redis.call('GET', KEYS[1]) "
+                    + "if v == ARGV[1] then redis.call('DEL', KEYS[1]) return 1 end "
+                    + "return 0",
+            Long.class);
+
+    @Override
+    public boolean consumeCode(String phone, String code) {
+        if (code == null) {
+            return false;
+        }
+        Long matched = stringRedisTemplate.execute(CONSUME_CODE_SCRIPT,
+                Collections.singletonList(LOGIN_CODE_KEY_PREFIX + phone), code);
+        return matched != null && matched == 1L;
     }
 
     @Override

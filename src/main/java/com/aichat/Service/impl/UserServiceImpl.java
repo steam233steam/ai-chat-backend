@@ -21,6 +21,7 @@ import com.aichat.Service.SmsSender;
 import com.aichat.Service.UserService;
 import com.aichat.Service.support.DisabledSmsSender;
 import com.aichat.Service.support.LogSmsSender;
+import com.aichat.utils.MaskUtils;
 import com.aichat.utils.PasswordUtils;
 import com.aichat.utils.RegexUtils;
 import com.aichat.utils.UserHolder;
@@ -69,20 +70,20 @@ public class UserServiceImpl implements UserService {
             try {
                 userRepository.deleteCode(phone);
             } catch (Exception cleanup) {
-                log.warn("发送失败后清理验证码失败: phone={}", phone, cleanup);
+                log.warn("发送失败后清理验证码失败: phone={}", MaskUtils.phone(phone), cleanup);
             }
             try {
                 userRepository.deleteSendCodeCooldown(phone);
             } catch (Exception cleanup) {
-                log.warn("发送失败后释放冷却失败: phone={}", phone, cleanup);
+                log.warn("发送失败后释放冷却失败: phone={}", MaskUtils.phone(phone), cleanup);
             }
             if (e instanceof BusinessException be) {
                 throw be;
             }
-            log.error("验证码发送失败: phone={}", phone, e);
+            log.error("验证码发送失败: phone={}", MaskUtils.phone(phone), e);
             throw new BusinessException(503, "验证码发送失败，请稍后重试");
         }
-        log.info("验证码已发送: phone={}", phone);
+        log.info("验证码已发送: phone={}", MaskUtils.phone(phone));
         return Result.success("验证码已发送");
     }
 
@@ -106,11 +107,10 @@ public class UserServiceImpl implements UserService {
         if (RegexUtils.isCodeInvalid(loginForm.getCode())) {
             throw new BusinessException("验证码格式错误");
         }
-        if (!userRepository.checkCode(phone, loginForm.getCode())) {
+        // 校验通过即消费：比对与删除在 Redis 脚本里一次完成，避免重放和并发双花（新用户同样要消费）
+        if (!userRepository.consumeCode(phone, loginForm.getCode())) {
             throw new BusinessException("验证码错误或已过期");
         }
-        // 验证码一次性使用：校验通过后立即删除，避免重放（新用户同样要删）
-        userRepository.deleteCode(phone);
 
         User user = userMapper.getUserByPhone(phone);
         if (user == null) {
@@ -199,11 +199,11 @@ public class UserServiceImpl implements UserService {
         if (RegexUtils.isPasswordInvalid(loginForm.getPassword())) {
             throw new BusinessException("密码需为 4-32 位字母、数字或下划线");
         }
-        if (!userRepository.checkCode(phone, loginForm.getCode())) {
+        // 与登录同样的原子消费；失败即验证码作废，重试需要重新发送
+        if (!userRepository.consumeCode(phone, loginForm.getCode())) {
             throw new BusinessException("验证码错误或已过期");
         }
 
-        userRepository.deleteCode(phone);
         String encoded = PasswordUtils.encode(loginForm.getPassword());
         userMapper.updatePassword(current.getId(), encoded, LocalDateTime.now());
         // 取消新用户标记
