@@ -1,7 +1,9 @@
 package com.aichat.mcp;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -11,10 +13,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <pre>
  * app.mcp.enabled=true
  * app.mcp.tool-models=deepseek-chat          # 哪些模型能用这些工具；留空=所有模型
- * app.mcp.servers[0].name=info
- * app.mcp.servers[0].command=node
- * app.mcp.servers[0].args[0]=mcp-servers/info-server.mjs
+ * app.mcp.servers.info.command=node
+ * app.mcp.servers.info.args[0]=mcp-servers/info-server.mjs
+ * app.mcp.servers.info.enabled=true
  * </pre>
+ *
+ * <p>servers 用 Map（key 就是服务名）而不是 List：多个配置文件里的条目能合并，
+ * 不会像 <code>servers[1].*</code> 那样因为索引不连续而整段绑定失败。
  */
 @ConfigurationProperties(prefix = "app.mcp")
 public class McpProperties {
@@ -32,7 +37,8 @@ public class McpProperties {
      */
     private List<String> toolModels = new ArrayList<>(List.of("deepseek-chat"));
 
-    private List<Server> servers = new ArrayList<>();
+    /** key = 服务名，可跨配置文件追加。 */
+    private Map<String, Server> servers = new LinkedHashMap<>();
 
     public boolean isEnabled() {
         return enabled;
@@ -58,11 +64,11 @@ public class McpProperties {
         this.toolModels = toolModels;
     }
 
-    public List<Server> getServers() {
+    public Map<String, Server> getServers() {
         return servers;
     }
 
-    public void setServers(List<Server> servers) {
+    public void setServers(Map<String, Server> servers) {
         this.servers = servers;
     }
 

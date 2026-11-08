@@ -69,9 +69,14 @@ public class McpToolCatalog implements DisposableBean {
             return;
         }
         List<FunctionCallback> assembled = new ArrayList<>();
-        for (McpProperties.Server cfg : props.getServers()) {
-            if (cfg == null || !cfg.isEnabled() || isBlank(cfg.getName()) || isBlank(cfg.getCommand())) {
+        for (Map.Entry<String, McpProperties.Server> entry : props.getServers().entrySet()) {
+            McpProperties.Server cfg = entry.getValue();
+            if (cfg == null || !cfg.isEnabled() || isBlank(cfg.getCommand())) {
                 continue;
+            }
+            if (isBlank(cfg.getName())) {
+                // 没写 name 就用配置里的 key，省得两处重复
+                cfg.setName(entry.getKey());
             }
             try {
                 registerServer(cfg, assembled);

@@ -46,3 +46,7 @@ applog.txt
 alllog2.txt
 compile3.txt
 $null
+
+### MCP notes sandbox (user data, keep the placeholder only) ###
+notes/*
+!notes/README.md

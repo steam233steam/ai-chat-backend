@@ -34,27 +34,50 @@
 app.mcp.enabled=${APP_MCP_ENABLED:true}          # 总开关，关掉不启动任何子进程
 app.mcp.timeout-ms=${APP_MCP_TIMEOUT_MS:15000}   # 单次调用的超时
 app.mcp.tool-models=${APP_MCP_TOOL_MODELS:deepseek-chat}   # 留空=所有模型都挂
-app.mcp.servers[0].name=info
-app.mcp.servers[0].command=${APP_MCP_COMMAND:node}
-app.mcp.servers[0].args[0]=mcp-servers/info-server.mjs
-app.mcp.servers[0].enabled=true
+app.mcp.servers.info.command=${APP_MCP_COMMAND:node}
+app.mcp.servers.info.args[0]=mcp-servers/info-server.mjs
+app.mcp.servers.info.enabled=true
 ```
 
-`servers` 是数组，可以挂多个：`servers[1].name`、`servers[1].command`… 相对路径会按进程工作目录解析成绝对路径。
+`servers` 是 **Map，key 就是服务名**，可以挂多个、也可以分散在多个配置文件里追加（`servers.notes.*` 写在 `application-local.properties` 里就行）。
+一开始用的是 `servers[0]` 这种列表写法，但 Spring 的列表绑定在「主配置给 `[0]`、本地配置只给 `[1]`」时会整段报 `were left unbound` —— 索引不连续就绑不上，换成 Map 才稳。
 
-## 加一个新服务端
+## 加一个新服务端（已接：官方 filesystem）
 
-任何支持 stdio 的 MCP 服务端都能挂，比如官方 `@modelcontextprotocol/server-filesystem`：
+任何支持 stdio 的 MCP 服务端都能挂。仓库现在接了两个：
+
+| 服务名 | 实现 | 工具 | 说明 |
+|---|---|---|---|
+| `info` | 仓库内 `mcp-servers/info-server.mjs` | `now` / `weather` / `fetch_url` | 时间、天气、网页正文 |
+| `notes` | 官方 `@modelcontextprotocol/server-filesystem@2.2.0` | `read_text_file` / `write_file` / `list_directory` / `search_files` | 根目录锁在仓库 `notes/`，只暴露 4 个工具 |
+
+第三方服务端的接法（`application-local.properties`，因为路径是本机绝对路径，不进仓库）：
 
 ```properties
-app.mcp.servers[1].name=fs
-app.mcp.servers[1].command=npx
-app.mcp.servers[1].args[0]=-y
-app.mcp.servers[1].args[1]=@modelcontextprotocol/server-filesystem
-app.mcp.servers[1].args[2]=D:/tmp/sandbox
+app.mcp.servers.notes.command=D:/nodejs/node.exe
+app.mcp.servers.notes.args[0]=D:/tools/mcp-node/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js
+app.mcp.servers.notes.args[1]=D:/maven-project/aichat/notes
+app.mcp.servers.notes.expose[0]=read_text_file
+app.mcp.servers.notes.expose[1]=write_file
+app.mcp.servers.notes.expose[2]=list_directory
+app.mcp.servers.notes.expose[3]=search_files
+app.mcp.servers.notes.enabled=true
 ```
 
+装依赖（一次性）：`npm i --prefix D:/tools/mcp-node @modelcontextprotocol/server-filesystem`
+
+Windows 上的两个坑：
+1. **不要在 `command` 里写 `npx`**：`ProcessBuilder` 在 Windows 上起不了 `.cmd`/`.bat`，只会报找不到文件；本地 `npm i` 之后直接用 `node <dist/index.js>` 最稳，也顺带省掉每次冷启动下载包的时间。
+2. **`expose` 一定要写**：filesystem 服务端会暴露 16 个工具，全挂上去每个都占提示词预算，只留真正要用的 4 个。
+
 工具名会被统一成 `mcp_<服务名>_<工具名>`（只保留 `[A-Za-z0-9_-]`，最长 64 字符），避免不同服务端重名。
+
+## 实测记录（2026-11-08）
+
+- 握手：官方 filesystem 2.2.0 与 memory 2.1.0 都能跟我们客户端声明的 `protocolVersion=2024-11-05` 谈成，返回自己的 `serverInfo`，`tools/list` 正常。
+- 端到端：`帮我看看 notes 目录里 plan.md 写了什么` → 模型调 `mcp_notes_read_text_file` → 2.94s 正确总结；REST `POST /mcp/tools/mcp_notes_write_file` 也能写盘。
+- 意图层会先拦截：带时间/「记住」字样的句子会走 pending 确认，轮不到工具。想测工具就用不含意图关键词的句子。
+- 搜索类服务端（`duckduckgo-mcp-server`，Python）在本机**跑不通**：它对 DuckDuckGo 的请求全部超时（`html.duckduckgo.com` 12s 无响应），而 Bing 可直连。要做联网搜索得换别的后端。
 
 ## 调试：不经过模型直接调
 
