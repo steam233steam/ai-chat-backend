@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -27,6 +28,7 @@ import com.aichat.Service.ChatService;
 import com.aichat.Service.ChatTitleService;
 import com.aichat.Service.IntentService;
 import com.aichat.Service.PersonaReplyService;
+import com.aichat.mcp.McpToolCatalog;
 import com.aichat.utils.ChatHistoryBuilder;
 import com.aichat.utils.ModelOutputSanitizer;
 import com.aichat.utils.MbMarkers;
@@ -64,14 +66,16 @@ public class ChatServiceImpl implements ChatService {
     private final PromptBuilder promptBuilder;
     private final IntentService intentService;
     private final PersonaReplyService personaReplyService;
+    private final McpToolCatalog mcpToolCatalog;
 
-    public ChatServiceImpl(ChatSessionRepository chatSessionRepository, ModelRouter modelRouter, ChatTitleService chatTitleService, PromptBuilder promptBuilder, IntentService intentService, PersonaReplyService personaReplyService) {
+    public ChatServiceImpl(ChatSessionRepository chatSessionRepository, ModelRouter modelRouter, ChatTitleService chatTitleService, PromptBuilder promptBuilder, IntentService intentService, PersonaReplyService personaReplyService, McpToolCatalog mcpToolCatalog) {
         this.chatSessionRepository = chatSessionRepository;
         this.modelRouter = modelRouter;
         this.chatTitleService = chatTitleService;
         this.promptBuilder = promptBuilder;
         this.intentService = intentService;
         this.personaReplyService = personaReplyService;
+        this.mcpToolCatalog = mcpToolCatalog;
     }
 
     @Override
@@ -108,7 +112,7 @@ public class ChatServiceImpl implements ChatService {
 
         String rawResponse;
         try {
-            rawResponse = withHistory(chatClient, historyMessages, question, sessionid)
+            rawResponse = withHistory(chatClient, historyMessages, question, sessionid, model)
                     .call()
                     .content();
         } catch (Exception e) {
@@ -225,7 +229,7 @@ public class ChatServiceImpl implements ChatService {
             }
         };
 
-        return withHistory(chatClient, historyMessages, question, sessionid)
+        return withHistory(chatClient, historyMessages, question, sessionid, model)
                 .stream()
                 .content()
                 .map(safetyFilter::accept)
@@ -339,15 +343,22 @@ public class ChatServiceImpl implements ChatService {
      * 基础人设 ModelRouter.SYSTEM_PROMPT 是可信数据；画像查询失败时 fail-open 只返回基础人设。
      */
     private ChatClient.ChatClientRequestSpec withHistory(
-            ChatClient chatClient, List<Message> historyMessages, String question, String sessionid) {
+            ChatClient chatClient, List<Message> historyMessages, String question, String sessionid,
+            String model) {
         List<Message> messages = new ArrayList<>(historyMessages.size() + 1);
         messages.addAll(historyMessages);
         messages.add(new UserMessage(question));
         // P1.1 会话隔离：画像注入只取"全局 + 本会话"的记忆，别的会话的人设不会带进来
         String systemPrompt = promptBuilder.build(ModelRouter.SYSTEM_PROMPT, sessionid);
-        return chatClient.prompt()
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .system(systemPrompt)
                 .messages(messages);
+        // 工具只在白名单模型上挂：本地 7B 模型没有工具模板，挂上去只会把调用打成文本
+        List<FunctionCallback> functions = mcpToolCatalog.callbacksFor(model);
+        if (functions.isEmpty()) {
+            return spec;
+        }
+        return spec.functions(functions.toArray(new FunctionCallback[0]));
     }
 
     /**

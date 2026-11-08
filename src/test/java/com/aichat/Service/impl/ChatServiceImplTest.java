@@ -99,8 +99,12 @@ class ChatServiceImplTest {
         when(memoryService.listForInjection(anyInt(), anyInt())).thenReturn(java.util.List.of());
         promptBuilder = new PromptBuilder(memoryService, new MindButlerProperties());
 
+        // MCP 工具在单测里不挂（callbacksFor 返回空表），避免真去拉子进程
+        com.aichat.mcp.McpToolCatalog mcpToolCatalog = mock(com.aichat.mcp.McpToolCatalog.class);
+        when(mcpToolCatalog.callbacksFor(anyString())).thenReturn(java.util.List.of());
+
         service = new ChatServiceImpl(repository, modelRouter, chatTitleService, promptBuilder, intentService,
-                personaReplyService);
+                personaReplyService, mcpToolCatalog);
 
         UserDto user = new UserDto();
         user.setId("u1");

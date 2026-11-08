@@ -41,7 +41,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .excludePathPatterns(PUBLIC_PATHS);
 
         registry.addInterceptor(loginInterceptor)
-                .addPathPatterns("/chat/**", "/user/**")
+                .addPathPatterns("/chat/**", "/user/**", "/mcp/**")
                 .excludePathPatterns(PUBLIC_PATHS);
     }
 
