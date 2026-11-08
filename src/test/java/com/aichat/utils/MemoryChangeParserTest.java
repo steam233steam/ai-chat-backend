@@ -128,4 +128,46 @@ class MemoryChangeParserTest {
 
         assertThat(r.resolved()).isFalse();
     }
+
+    @Test
+    void shouldExposeCandidatesWhenAmbiguous() {
+        List<MemoryVO> memories = List.of(
+                memory(101L, "goal", "明年考公"),
+                memory(102L, "goal", "今年12月考英语四级"));
+
+        MemoryChangeParser.Resolution r = MemoryChangeParser.parse("把目标删掉", memories);
+
+        assertThat(r.resolved()).isFalse();
+        assertThat(r.candidates()).hasSize(2);
+    }
+
+    @Test
+    void shouldPickCandidateByKeyword() {
+        List<String> contents = List.of("明年考公", "今年12月考英语四级");
+
+        assertThat(MemoryChangeParser.pickCandidateIndexes("考公的那个", contents)).containsExactly(0);
+    }
+
+    @Test
+    void shouldPickCandidateByOrdinal() {
+        List<String> contents = List.of("明年考公", "今年12月考英语四级");
+
+        assertThat(MemoryChangeParser.pickCandidateIndexes("第 2 条", contents)).containsExactly(1);
+        assertThat(MemoryChangeParser.pickCandidateIndexes("第二个", contents)).containsExactly(1);
+    }
+
+    @Test
+    void shouldNotPickWhenKeywordTooWeak() {
+        List<String> contents = List.of("明年考公", "今年12月考英语四级");
+
+        // 只有一个「考」字重合，够不上阈值，宁可继续追问
+        assertThat(MemoryChangeParser.pickCandidateIndexes("考", contents)).isEmpty();
+        assertThat(MemoryChangeParser.pickCandidateIndexes("嗯我再想想", contents)).isEmpty();
+    }
+
+    @Test
+    void shouldExtractNewValueAroundTrigger() {
+        assertThat(MemoryChangeParser.extractAfterByTrigger("考公那个改成明年上岸")).isEqualTo("明年上岸");
+        assertThat(MemoryChangeParser.extractAfterLoose("明年上岸")).isEqualTo("明年上岸");
+    }
 }

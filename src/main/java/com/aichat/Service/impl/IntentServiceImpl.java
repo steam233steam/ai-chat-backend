@@ -26,6 +26,7 @@ import com.aichat.Service.MemoryService;
 import com.aichat.Service.TaskService;
 import com.aichat.Service.support.IntentCandidateSanitizer;
 import com.aichat.Service.support.IntentDailyLimiter;
+import com.aichat.Service.support.MemoryChangeClarifyStore;
 import com.aichat.utils.IntentDetector;
 import com.aichat.utils.IntentDetector.Intent;
 import com.aichat.utils.IntentPayloadCodec;
@@ -73,8 +74,9 @@ public class IntentServiceImpl implements IntentService {
     private final MindButlerProperties props;
     private final TaskService taskService;
     private final MemoryService memoryService;
+    private final MemoryChangeClarifyStore clarifyStore;
 
-    public IntentServiceImpl(PendingActionService pendingActionService, IntentExtractor intentExtractor, IntentCandidateSanitizer candidateSanitizer, IntentDailyLimiter intentDailyLimiter, MindButlerProperties props, TaskService taskService, MemoryService memoryService) {
+    public IntentServiceImpl(PendingActionService pendingActionService, IntentExtractor intentExtractor, IntentCandidateSanitizer candidateSanitizer, IntentDailyLimiter intentDailyLimiter, MindButlerProperties props, TaskService taskService, MemoryService memoryService, MemoryChangeClarifyStore clarifyStore) {
         this.pendingActionService = pendingActionService;
         this.intentExtractor = intentExtractor;
         this.candidateSanitizer = candidateSanitizer;
@@ -82,6 +84,7 @@ public class IntentServiceImpl implements IntentService {
         this.props = props;
         this.taskService = taskService;
         this.memoryService = memoryService;
+        this.clarifyStore = clarifyStore;
     }
 
     /** 记忆变更时扫描的候选条数上限；只读生效记忆，100 是 mapper 的硬上限。 */
@@ -95,6 +98,13 @@ public class IntentServiceImpl implements IntentService {
         // 总开关/意图开关关闭：只保留手动 CRUD，不做意图提取/确认
         if (!props.isEnabled() || !props.isIntentEnabled()) {
             return IntentOutcome.chat();
+        }
+
+        // 上一轮在追问「改/删哪一条」：先看这句是不是在回答那个问题，
+        // 否则「考公的那个」这种没有触发词的回答会被判成闲聊
+        IntentOutcome clarifyOutcome = tryResolveClarify(sessionId, message, sourceMessageId);
+        if (clarifyOutcome != null) {
+            return clarifyOutcome;
         }
 
         PendingActionVO pending = pendingActionService.current(sessionId);
@@ -320,6 +330,16 @@ public class IntentServiceImpl implements IntentService {
         MemoryChangeParser.Resolution resolution =
                 MemoryChangeParser.parse(message, memoryService.list(MEMORY_CHANGE_SCAN_LIMIT));
         if (!resolution.resolved()) {
+            // 候选不止一条：把候选存起来，用户下一句「考公的那个」才接得上
+            if (resolution.candidates().size() > 1) {
+                MemoryChangeParser.Action action = MemoryChangeParser.actionOf(message);
+                clarifyStore.savePick(currentUserId(), sessionId,
+                        action == null ? MemoryChangeClarifyStore.ACTION_UPDATE
+                                : (action == MemoryChangeParser.Action.DELETE
+                                        ? MemoryChangeClarifyStore.ACTION_DELETE
+                                        : MemoryChangeClarifyStore.ACTION_UPDATE),
+                        resolution.candidates());
+            }
             return IntentOutcome.replyOnly(resolution.clarify());
         }
 
@@ -343,8 +363,135 @@ public class IntentServiceImpl implements IntentService {
         return IntentOutcome.extracted(MbMarkers.pendingOnly(pendingId), pendingId);
     }
 
-    private IntentOutcome reject(PendingActionVO pending) {
-        if (pending == null) {
+    /**
+     * 承接上一轮的追问（「我找到 2 条…你想改哪一条？」）。
+     *
+     * 返回 null 表示这句不是在回答追问，交回正常流程处理。
+     */
+    private IntentOutcome tryResolveClarify(String sessionId, String message, Long sourceMessageId) {
+        String userId = currentUserId();
+        MemoryChangeClarifyStore.State state = clarifyStore.load(userId, sessionId);
+        if (state == null) {
+            return null;
+        }
+        String text = message == null ? "" : message.trim();
+        if (text.isEmpty()) {
+            clarifyStore.clear(userId, sessionId);
+            return null;
+        }
+        boolean changeRequest = MemoryChangeParser.looksLikeChangeRequest(text);
+
+        // 已选好目标、只差新值：整句当新内容；带了"改成"就按触发词切
+        if (MemoryChangeClarifyStore.STAGE_VALUE.equals(MemoryChangeClarifyStore.stageOf(state))) {
+            clarifyStore.clear(userId, sessionId);
+            String after = MemoryChangeParser.extractAfterByTrigger(text);
+            if (after.isBlank()) {
+                after = MemoryChangeParser.extractAfterLoose(text);
+            }
+            return createChangeOutcome(sessionId, MemoryChangeClarifyStore.ACTION_UPDATE, state.targetId(),
+                    state.targetContent(), after, sourceMessageId);
+        }
+
+        List<String> contents = new ArrayList<>();
+        for (MemoryChangeClarifyStore.Candidate c : state.candidates()) {
+            contents.add(c.content());
+        }
+        List<Integer> hits = MemoryChangeParser.pickCandidateIndexes(text, contents);
+        MemoryChangeClarifyStore.Candidate chosen = hits.size() == 1 ? state.candidates().get(hits.get(0)) : null;
+        if (chosen == null && hits.isEmpty() && state.candidates().size() == 1) {
+            chosen = state.candidates().get(0);
+        }
+
+        if (chosen == null) {
+            if (changeRequest) {
+                // 用户换了个新诉求（「那我删掉风格那条」）：清掉旧追问，交回正常解析
+                clarifyStore.clear(userId, sessionId);
+                return null;
+            }
+            // 还是没听懂：再问一次，TTL 顺延
+            clarifyStore.savePick(userId, sessionId, state.action(), toMemoryVOs(state.candidates()));
+            return IntentOutcome.replyOnly(stillAmbiguous(state.candidates()));
+        }
+
+        clarifyStore.clear(userId, sessionId);
+        if (MemoryChangeClarifyStore.ACTION_DELETE.equals(state.action())) {
+            return createChangeOutcome(sessionId, MemoryChangeClarifyStore.ACTION_DELETE, chosen.id(),
+                    chosen.content(), null, sourceMessageId);
+        }
+        String after = MemoryChangeParser.extractAfterByTrigger(text);
+        if (after.isBlank() || after.equals(chosen.content())) {
+            // 只说了"哪一条"、没给新内容：存目标，下一句整句当新值
+            clarifyStore.saveValue(userId, sessionId, chosen.id(), chosen.content());
+            return IntentOutcome.replyOnly("你想把「" + chosen.content() + "」改成什么？直接说新的内容就行。");
+        }
+        return createChangeOutcome(sessionId, MemoryChangeClarifyStore.ACTION_UPDATE, chosen.id(),
+                chosen.content(), after, sourceMessageId);
+    }
+
+    /** 澄清后命中目标：建 memory_change 提案（和 update() 走同一套 payload）。 */
+    private IntentOutcome createChangeOutcome(String sessionId, String action, Long targetId,
+            String targetContent, String after, Long sourceMessageId) {
+        boolean delete = MemoryChangeClarifyStore.ACTION_DELETE.equals(action);
+        if (!delete) {
+            if (after == null || after.isBlank()) {
+                return IntentOutcome.replyOnly("改成什么？直接说新的内容就行。");
+            }
+            if (SensitiveContentFilter.detectSensitiveData(after) != null) {
+                return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
+            }
+        }
+        PendingActionVO pending = pendingActionService.current(sessionId);
+        if (pending != null) {
+            try {
+                pendingActionService.reject(pending.getId());
+            } catch (BusinessException e) {
+                log.info("澄清后清理 pending 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
+            }
+        }
+        List<MemoryChange> changes = new ArrayList<>();
+        changes.add(new MemoryChange(targetId, delete ? "DELETE" : "UPDATE", targetContent,
+                delete ? null : after));
+        String preview = delete
+                ? "要删掉这条记忆：" + targetContent + "。删掉后我不会再拿它回答你。"
+                : "要把这条记忆改成：「" + after + "」。原来是：" + targetContent + "。";
+        try {
+            long pendingId = pendingActionService.create(sessionId, "memory_change",
+                    IntentPayloadCodec.buildChangePayload(changes, preview, delete ? targetContent : after),
+                    sourceMessageId);
+            log.info("澄清后记忆变更提案: session={}, pendingId={}, action={}", sessionId, pendingId, action);
+            return IntentOutcome.extracted(MbMarkers.pendingOnly(pendingId), pendingId);
+        } catch (BusinessException e) {
+            log.warn("澄清后写 pending 失败（{}）: session={}", e.getMessage(), sessionId);
+            return IntentOutcome.replyOnly("刚才的提案发生冲突，请再试一次。");
+        }
+    }
+
+    private String stillAmbiguous(List<MemoryChangeClarifyStore.Candidate> candidates) {
+        StringBuilder sb = new StringBuilder("还是没确定是哪一条：");
+        int limit = Math.min(candidates.size(), 4);
+        for (int i = 0; i < limit; i++) {
+            sb.append("第").append(i + 1).append("条「").append(candidates.get(i).content()).append("」");
+            if (i < limit - 1) {
+                sb.append("、");
+            }
+        }
+        sb.append("。可以说「第 1 条」，或者带上关键词，比如「考公的那个」。");
+        return sb.toString();
+    }
+
+    private static List<MemoryVO> toMemoryVOs(List<MemoryChangeClarifyStore.Candidate> candidates) {
+        List<MemoryVO> list = new ArrayList<>();
+        for (MemoryChangeClarifyStore.Candidate c : candidates) {
+            MemoryVO m = new MemoryVO();
+            m.setId(c.id());
+            m.setMemKey(c.memKey());
+            m.setContent(c.content());
+            list.add(m);
+        }
+        return list;
+    }
+
+    private IntentOutcome reject(PendingActionVO pending) {        if (pending == null) {
             return IntentOutcome.chat();
         }
         try {

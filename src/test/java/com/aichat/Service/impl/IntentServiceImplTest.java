@@ -3,6 +3,7 @@ package com.aichat.Service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -30,6 +31,7 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Service.support.IntentCandidateSanitizer;
 import com.aichat.Service.support.IntentDailyLimiter;
+import com.aichat.Service.support.MemoryChangeClarifyStore;
 import com.aichat.Service.IntentExtractor;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.PendingActionService;
@@ -50,6 +52,7 @@ class IntentServiceImplTest {
     private MemoryService memoryService;
     private IntentCandidateSanitizer candidateSanitizer;
     private MindButlerProperties props;
+    private MemoryChangeClarifyStore clarifyStore;
     private IntentServiceImpl service;
 
     @BeforeEach
@@ -62,8 +65,9 @@ class IntentServiceImplTest {
         props = new MindButlerProperties();
         props.setEnabled(true);
         candidateSanitizer = new IntentCandidateSanitizer(props);
+        clarifyStore = mock(MemoryChangeClarifyStore.class);
         service = new IntentServiceImpl(pendingActionService, intentExtractor, candidateSanitizer,
-                intentDailyLimiter, props, null, memoryService);
+                intentDailyLimiter, props, null, memoryService, clarifyStore);
         UserDto user = new UserDto();
         user.setId("USER_ID_TEST");
         UserHolder.saveUser(user);
@@ -555,6 +559,45 @@ class IntentServiceImplTest {
         assertThat(o.shouldContinueChat()).isFalse();
         assertThat(o.getReply()).contains("没找到");
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
+    }
+
+    @Test
+    void shouldCarryClarifyAnswerToDeletePending() {
+        // 上一轮追问「我找到 2 条…改哪一条」，用户这轮只回了「考公的那个」
+        when(clarifyStore.load("USER_ID_TEST", "s-1")).thenReturn(new MemoryChangeClarifyStore.State(
+                MemoryChangeClarifyStore.ACTION_DELETE,
+                List.of(new MemoryChangeClarifyStore.Candidate(101L, "goal", "明年考公"),
+                        new MemoryChangeClarifyStore.Candidate(102L, "goal", "今年12月考英语四级")),
+                null, null));
+        when(pendingActionService.current("s-1")).thenReturn(null);
+        when(pendingActionService.create(eq("s-1"), eq("memory_change"), anyString(), anyLong())).thenReturn(88L);
+
+        IntentOutcome o = service.handle("s-1", "考公的那个", 41L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("[[MB:pending=88]]");
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(pendingActionService).create(eq("s-1"), eq("memory_change"), payload.capture(), eq(41L));
+        assertThat(payload.getValue()).contains("\"id\":101").contains("\"DELETE\"");
+        verify(clarifyStore).clear("USER_ID_TEST", "s-1");
+    }
+
+    @Test
+    void shouldAskAgainWhenClarifyAnswerStillUnclear() {
+        when(clarifyStore.load("USER_ID_TEST", "s-1")).thenReturn(new MemoryChangeClarifyStore.State(
+                MemoryChangeClarifyStore.ACTION_DELETE,
+                List.of(new MemoryChangeClarifyStore.Candidate(101L, "goal", "明年考公"),
+                        new MemoryChangeClarifyStore.Candidate(102L, "goal", "今年12月考英语四级")),
+                null, null));
+
+        IntentOutcome o = service.handle("s-1", "嗯……我再想想", 42L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("还是没确定").contains("第 1 条");
+        verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
+        // 追问的 TTL 要顺延，否则用户想久了就接不上
+        verify(clarifyStore).savePick(eq("USER_ID_TEST"), eq("s-1"),
+                eq(MemoryChangeClarifyStore.ACTION_DELETE), anyList());
     }
 
 }

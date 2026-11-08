@@ -36,15 +36,24 @@ public final class MemoryChangeParser {
     private MemoryChangeParser() {
     }
 
-    /** 解析结果：要么给出提案，要么给出一句要追问用户的话。 */
-    public record Resolution(Plan plan, String clarify) {
+    /**
+     * 解析结果：要么给出提案，要么给出一句要追问用户的话。
+     *
+     * candidates 只在“候选不止一条、需要用户挑”时有值：上层把它存进 Redis，
+     * 用户下一句「考公的那个」「第二条」才能接得上，不然那句会被当成闲聊。
+     */
+    public record Resolution(Plan plan, String clarify, List<MemoryVO> candidates) {
 
         static Resolution of(Plan plan) {
-            return new Resolution(plan, null);
+            return new Resolution(plan, null, List.of());
         }
 
         static Resolution ask(String clarify) {
-            return new Resolution(null, clarify);
+            return new Resolution(null, clarify, List.of());
+        }
+
+        static Resolution ask(String clarify, List<MemoryVO> candidates) {
+            return new Resolution(null, clarify, candidates == null ? List.of() : List.copyOf(candidates));
         }
 
         public boolean resolved() {
@@ -98,7 +107,7 @@ public final class MemoryChangeParser {
             return Resolution.ask(NO_TARGET);
         }
         if (matched.size() > 1) {
-            return Resolution.ask(ambiguous(matched));
+            return Resolution.ask(ambiguous(matched), matched);
         }
 
         MemoryVO target = matched.get(0);
@@ -154,6 +163,95 @@ public final class MemoryChangeParser {
             }
         }
         return false;
+    }
+
+    /** 这句话带没带“改/删记忆”的触发词（用来判断是不是换了个新诉求）。 */
+    public static boolean looksLikeChangeRequest(String message) {
+        return actionOf(message) != null;
+    }
+
+    /** 从话里判定意图动作：删除优先（「删掉改成…」这种以删为准），都没有返回 null。 */
+    public static Action actionOf(String message) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        if (containsAny(message, DELETE_WORDS)) {
+            return Action.DELETE;
+        }
+        return firstContaining(message, UPDATE_WORDS) == null ? null : Action.UPDATE;
+    }
+
+    /**
+     * 从一串候选里挑出用户指的是哪几条，返回下标。
+     *
+     * 支持两种说法：「第二条」这种序数，以及「考公的那个」这种带内容关键词的。
+     * 关键词走和选条同一个 overlap（按字符集合、>=2 才算），并列最高分就都返回，
+     * 由上层决定是继续追问还是命中。
+     */
+    public static List<Integer> pickCandidateIndexes(String message, List<String> contents) {
+        if (message == null || message.isBlank() || contents == null || contents.isEmpty()) {
+            return List.of();
+        }
+        int ordinal = ordinalIndex(message);
+        if (ordinal >= 0) {
+            return ordinal < contents.size() ? List.of(ordinal) : List.of();
+        }
+        int best = 0;
+        List<Integer> top = new ArrayList<>();
+        for (int i = 0; i < contents.size(); i++) {
+            int score = overlap(message, contents.get(i));
+            if (score > best) {
+                best = score;
+                top.clear();
+                top.add(i);
+            } else if (score == best && score > 0) {
+                top.add(i);
+            }
+        }
+        return best >= 2 ? top : List.of();
+    }
+
+    /** 「第一条」「第 2 个」「第三项」→ 0 基下标；没有序数返回 -1。 */
+    private static int ordinalIndex(String message) {
+        java.util.regex.Matcher m = ORDINAL.matcher(message);
+        if (!m.find()) {
+            return -1;
+        }
+        String token = m.group(1);
+        int chinese = "一二三四五六七八九十".indexOf(token);
+        if (chinese >= 0) {
+            return chinese;
+        }
+        try {
+            return Integer.parseInt(token) - 1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static final java.util.regex.Pattern ORDINAL =
+            java.util.regex.Pattern.compile("第\\s*([0-9一二三四五六七八九十])\\s*(条|个|项)?");
+
+    /**
+     * 澄清阶段拿到的新值：整句就是用户想改成的内容，只做口语尾巴清理。
+     * 和 extractAfter 的区别是不依赖"改成"这类触发词——用户可能只回一句「明年考公」。
+     */
+    public static String extractAfterLoose(String message) {
+        if (message == null) {
+            return "";
+        }
+        String rest = message.trim().replaceFirst("^[：:，,。\\s]+", "");
+        rest = rest.replaceFirst("[。！!？?吧呀啊哈\\s]+$", "");
+        return rest.length() > 200 ? rest.substring(0, 200) : rest;
+    }
+
+    /**
+     * 澄清阶段带触发词的写法（「考公那个改成明年」）：按触发词切出真正的新值，
+     * 否则会把「考公那个改成」一起当成新内容。
+     */
+    public static String extractAfterByTrigger(String message) {
+        String trigger = firstContaining(message, UPDATE_WORDS);
+        return trigger == null ? "" : extractAfter(message, trigger);
     }
 
     private static final String NO_TARGET =
