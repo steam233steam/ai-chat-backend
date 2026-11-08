@@ -1,0 +1,19 @@
+[Unit]
+Description=MindButler backend (Spring Boot)
+After=network.target mysql.service redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mindbutler
+# 生产参数集中在 /opt/mindbutler/app.env（不进 git）
+EnvironmentFile=-/opt/mindbutler/app.env
+ExecStart=/usr/bin/java -Xms256m -Xmx512m -jar /opt/mindbutler/app.jar --spring.profiles.active=prod
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/opt/mindbutler/logs/app.log
+StandardError=append:/opt/mindbutler/logs/app.log
+
+[Install]
+WantedBy=multi-user.target
