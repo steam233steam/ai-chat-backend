@@ -113,6 +113,7 @@ mvn spring-boot:run
 | POST | `/user/code` | 发送验证码（60s 冷却） |
 | POST | `/user/login` | 验证码登录 |
 | POST | `/user/login/password` | 密码登录 |
+| POST | `/user/register` | 手机号 + 密码注册（无需短信；按 IP 每日限流 + 同号 60s 冷却） |
 | PUT | `/user/set-password` | 设置密码 |
 | PUT | `/user/profile` | 修改昵称 |
 | GET | `/user/me` | 获取当前用户 |

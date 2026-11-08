@@ -72,6 +72,13 @@ public class UserRepositoryImpl implements UserRepository {
     }
 
     @Override
+    public boolean tryAcquireRegisterCooldown(String phone) {
+        String key = REGISTER_COOLDOWN_KEY_PREFIX + phone;
+        return Boolean.TRUE.equals(stringRedisTemplate.opsForValue()
+                .setIfAbsent(key, "1", REGISTER_COOLDOWN_SECONDS, TimeUnit.SECONDS));
+    }
+
+    @Override
     public void saveUser(String token, User user) {
         // 将 User 对象转为 HashMap 存储（只存必要字段）
         Map<String, Object> userMap = new HashMap<>();

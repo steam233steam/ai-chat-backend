@@ -19,6 +19,7 @@ import com.aichat.Exception.BusinessException;
 import com.aichat.Service.UserService;
 import com.aichat.utils.UserHolder;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 @RestController
@@ -49,7 +50,25 @@ public class UserController {
         return userService.loginByPassword(loginForm);
     }
 
-    // 设置密码（新用户首次设置，或登录后重置）
+    @Operation(summary = "手机号 + 密码注册", description = "不需要短信验证码；成功后直接返回 token。按 IP 每日限流、同号 60 秒冷却")
+    @PostMapping("/register")
+    public Result<String> register(@Valid @RequestBody LoginFormDTO loginForm, HttpServletRequest request) {
+        return userService.register(loginForm, clientIp(request));
+    }
+
+    /**
+     * 取调用方 IP。nginx 在本机反代，取 X-Forwarded-For 第一段（真实客户端），
+     * 没有就走 remoteAddr，避免把所有注册都算到 127.0.0.1 头上。
+     */
+    private static String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            int comma = forwarded.indexOf(',');
+            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
+        }
+        return request.getRemoteAddr();
+    }
+
     @Operation(summary = "设置 / 重置密码", description = "新用户首次设置密码或已注册用户重置密码")
     @PutMapping("/set-password")
     public Result<String> setPassword(@Valid @RequestBody LoginFormDTO loginForm) {

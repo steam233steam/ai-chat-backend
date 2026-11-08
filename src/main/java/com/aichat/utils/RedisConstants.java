@@ -10,6 +10,9 @@ public class RedisConstants {
     // 验证码发送冷却 Key（防刷）
     public static final String LOGIN_CODE_COOLDOWN_KEY_PREFIX = PREFIX + "login:code:cooldown:";
 
+    // 注册冷却 Key（同一手机号 60 秒内只允许注册一次）
+    public static final String REGISTER_COOLDOWN_KEY_PREFIX = PREFIX + "register:cooldown:";
+
     // 登录Token Key
     public static final String LOGIN_TOKEN_KEY_PREFIX = PREFIX + "login:token:";
 
@@ -28,6 +31,7 @@ public class RedisConstants {
     // TTL
     public static final long CODE_TTL_MINUTES = 5;
     public static final long CODE_SEND_COOLDOWN_SECONDS = 60;
+    public static final long REGISTER_COOLDOWN_SECONDS = 60;
     public static final long TOKEN_TTL_DAYS = 7;
     public static final long SESSION_TTL_DAYS = 7;
 

@@ -23,12 +23,14 @@ import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.UserMapper;
 import com.aichat.Repository.UserRepository;
 import com.aichat.Service.SmsSender;
+import com.aichat.Service.support.RegisterDailyLimiter;
 
 class UserServiceImplTest {
 
     private UserMapper userMapper;
     private UserRepository userRepository;
     private SmsSender smsSender;
+    private RegisterDailyLimiter registerDailyLimiter;
     private UserServiceImpl service;
 
     @BeforeEach
@@ -36,7 +38,9 @@ class UserServiceImplTest {
         userMapper = mock(UserMapper.class);
         userRepository = mock(UserRepository.class);
         smsSender = mock(SmsSender.class);
-        service = new UserServiceImpl(userMapper, userRepository, smsSender);
+        registerDailyLimiter = mock(RegisterDailyLimiter.class);
+        when(registerDailyLimiter.tryAcquire(anyString())).thenReturn(true);
+        service = new UserServiceImpl(userMapper, userRepository, smsSender, registerDailyLimiter);
     }
 
     @Test
@@ -130,6 +134,81 @@ class UserServiceImplTest {
 
         verify(userRepository).deleteCode("13800000000");
         verify(userRepository).deleteSendCodeCooldown("13800000000");
+    }
+
+    // ---------- 手机号 + 密码注册 ----------
+
+    private LoginFormDTO registerForm(String phone, String password) {
+        LoginFormDTO form = new LoginFormDTO();
+        form.setPhone(phone);
+        form.setPassword(password);
+        return form;
+    }
+
+    @Test
+    void registerShouldCreateUserWithEncodedPasswordAndToken() {
+        when(userRepository.tryAcquireRegisterCooldown("13900000000")).thenReturn(true);
+        when(userMapper.getUserByPhone("13900000000")).thenReturn(null);
+
+        Result<String> result = service.register(registerForm("13900000000", "abc123"), "1.2.3.4");
+
+        assertThat(result.getCode()).isEqualTo(200);
+        assertThat(result.getData()).isNotBlank();
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userMapper).insert(userCaptor.capture());
+        User saved = userCaptor.getValue();
+        // 落库的是 BCrypt 哈希，不是明文
+        assertThat(saved.getPassword()).isNotEqualTo("abc123").startsWith("$2");
+        assertThat(saved.getPhone()).isEqualTo("13900000000");
+        verify(userRepository).saveUser(anyString(), any(User.class));
+        // 自己设过密码，不算"新用户"，不该弹设置密码引导
+        verify(userRepository, never()).markNewUser(anyString());
+    }
+
+    @Test
+    void registerShouldRejectExistingPhone() {
+        when(userRepository.tryAcquireRegisterCooldown("13800000000")).thenReturn(true);
+        when(userMapper.getUserByPhone("13800000000")).thenReturn(existingUser());
+
+        assertThatThrownBy(() -> service.register(registerForm("13800000000", "abc123"), "1.2.3.4"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("已注册");
+
+        verify(userMapper, never()).insert(any(User.class));
+    }
+
+    @Test
+    void registerShouldRejectWeakPasswordBeforeTakingQuota() {
+        assertThatThrownBy(() -> service.register(registerForm("13900000000", "a"), "1.2.3.4"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("4-32");
+
+        verify(registerDailyLimiter, never()).tryAcquire(anyString());
+        verify(userRepository, never()).tryAcquireRegisterCooldown(anyString());
+        verify(userMapper, never()).insert(any(User.class));
+    }
+
+    @Test
+    void registerShouldStopWhenDailyLimitReached() {
+        when(registerDailyLimiter.tryAcquire("1.2.3.4")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.register(registerForm("13900000000", "abc123"), "1.2.3.4"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("注册次数");
+
+        verify(userRepository, never()).tryAcquireRegisterCooldown(anyString());
+        verify(userMapper, never()).insert(any(User.class));
+    }
+
+    @Test
+    void registerShouldStopWhenSamePhoneRegistersTwiceWithinCooldown() {
+        when(userRepository.tryAcquireRegisterCooldown("13900000000")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.register(registerForm("13900000000", "abc123"), "1.2.3.4"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("频繁");
+
+        verify(userMapper, never()).insert(any(User.class));
     }
 
 }

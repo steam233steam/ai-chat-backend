@@ -19,6 +19,9 @@ public interface UserRepository {
     // 发送失败时释放冷却，允许用户立即重试
     void deleteSendCodeCooldown(String phone);
 
+    /** 注册冷却：同一个手机号 60 秒内只能注册一次，防止脚本连点。 */
+    boolean tryAcquireRegisterCooldown(String phone);
+
     // 保存用户信息到 redis
     void saveUser(String token, User user);
 

@@ -21,6 +21,7 @@ import com.aichat.Service.SmsSender;
 import com.aichat.Service.UserService;
 import com.aichat.Service.support.DisabledSmsSender;
 import com.aichat.Service.support.LogSmsSender;
+import com.aichat.Service.support.RegisterDailyLimiter;
 import com.aichat.utils.MaskUtils;
 import com.aichat.utils.PasswordUtils;
 import com.aichat.utils.RegexUtils;
@@ -36,15 +37,18 @@ public class UserServiceImpl implements UserService {
     private final UserMapper userMapper;
     private final UserRepository userRepository;
     private final SmsSender smsSender;
+    private final RegisterDailyLimiter registerDailyLimiter;
 
     /** 无 SmsSender Bean 时的单测兜底：true 用日志发送器，false 用 503 发送器。 */
     @Value("${app.sms.dev-mode:false}")
     private boolean smsDevMode;
 
-    public UserServiceImpl(UserMapper userMapper, UserRepository userRepository, SmsSender smsSender) {
+    public UserServiceImpl(UserMapper userMapper, UserRepository userRepository, SmsSender smsSender,
+            RegisterDailyLimiter registerDailyLimiter) {
         this.userMapper = userMapper;
         this.userRepository = userRepository;
         this.smsSender = smsSender;
+        this.registerDailyLimiter = registerDailyLimiter;
     }
 
     @Override
@@ -126,6 +130,11 @@ public class UserServiceImpl implements UserService {
     }
 
     private User createUserByPhone(String phone) {
+        // 验证码登录进来的新用户还没有密码，必须登录后再走 setPassword
+        return createUserByPhone(phone, null);
+    }
+
+    private User createUserByPhone(String phone, String encodedPassword) {
         LocalDateTime now = LocalDateTime.now();
         String uid = USER_ID_PREFIX + RandomUtil.randomString(10);
 
@@ -133,8 +142,7 @@ public class UserServiceImpl implements UserService {
         user.setUid(uid);
         user.setName("用户" + phone.substring(phone.length() - 4));
         user.setPhone(phone);
-        // 首次注册不设置密码，必须走验证码登录后由用户自己设置
-        user.setPassword(null);
+        user.setPassword(encodedPassword);
         user.setCreateTime(now);
         user.setUpdateTime(now);
         userMapper.insert(user);
@@ -171,6 +179,38 @@ public class UserServiceImpl implements UserService {
 
         String token = UUID.randomUUID().toString(true);
         userRepository.saveUser(token, user);
+        return Result.success(token);
+    }
+
+    @Override
+    public Result<String> register(LoginFormDTO loginForm, String clientIp) {
+        if (loginForm == null) {
+            throw new BusinessException("请求参数不能为空");
+        }
+        String phone = loginForm.getPhone();
+        if (RegexUtils.isPhoneInvalid(phone)) {
+            throw new BusinessException("手机号码格式错误");
+        }
+        String password = loginForm.getPassword();
+        // 先校验密码强度，不合格时不要白占一次注册额度
+        if (RegexUtils.isPasswordInvalid(password)) {
+            throw new BusinessException("密码需为 4-32 位字母、数字或下划线");
+        }
+        if (!registerDailyLimiter.tryAcquire(clientIp)) {
+            throw new BusinessException(429, "今天的注册次数已用完，请明天再试");
+        }
+        if (!userRepository.tryAcquireRegisterCooldown(phone)) {
+            throw new BusinessException(429, "操作太频繁，请 1 分钟后再试");
+        }
+        if (userMapper.getUserByPhone(phone) != null) {
+            throw new BusinessException("该手机号已注册，请直接用密码登录");
+        }
+
+        User user = createUserByPhone(phone, PasswordUtils.encode(password));
+
+        String token = UUID.randomUUID().toString(true);
+        userRepository.saveUser(token, user);
+        log.info("新用户注册成功（手机号+密码），uid={}，phone={}", user.getUid(), MaskUtils.phone(phone));
         return Result.success(token);
     }
 
