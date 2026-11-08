@@ -1,5 +1,7 @@
 package com.aichat.mcp;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.model.function.FunctionCallback;
 
 /**
@@ -10,6 +12,8 @@ import org.springframework.ai.model.function.FunctionCallback;
  * 否则一次网络抖动就会把整轮对话变成 500。
  */
 class McpFunctionCallback implements FunctionCallback {
+
+    private static final Logger log = LoggerFactory.getLogger(McpFunctionCallback.class);
 
     private final String publicName;
     private final String description;
@@ -43,11 +47,24 @@ class McpFunctionCallback implements FunctionCallback {
 
     @Override
     public String call(String toolInput) {
+        // 打日志是为了排「模型到底调没调工具」——调用方看不到模型内部决策，只能从这行确认
+        log.info("模型调用 MCP 工具 {}，参数 {}", publicName, abbreviate(toolInput));
+        long start = System.currentTimeMillis();
         try {
             McpToolResult result = client.callTool(rawToolName, toolInput);
+            log.info("MCP 工具 {} 返回 {} 字符、{}ms", publicName, result.text().length(),
+                    System.currentTimeMillis() - start);
             return result.error() ? "工具执行失败：" + result.text() : result.text();
         } catch (RuntimeException e) {
+            log.warn("MCP 工具 {} 调用失败：{}", publicName, e.getMessage());
             return "工具调用失败：" + e.getMessage();
         }
+    }
+
+    private static String abbreviate(String text) {
+        if (text == null) {
+            return "null";
+        }
+        return text.length() <= 300 ? text : text.substring(0, 300) + "…";
     }
 }

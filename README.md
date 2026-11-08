@@ -20,7 +20,7 @@ Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama / OpenAI 兼容) · DeepSeek · 
 - **长对话友好**：历史消息游标分页（`beforeId` + `limit`），只把最近 N 条历史送入模型
 - **多用户隔离**：会话数据按 userId 隔离，含越权校验
 - **数据可恢复**：Redis 7 天 TTL 到期后，历史消息、会话列表和标题可从 MySQL 回源
-- **能用工具**：MCP 工具按模型白名单自动挂载，模型自己决定何时调用 —— 自带时间/天气/网页正文，另接官方 `server-filesystem`（根目录锁在 `notes/`）读写笔记，见 [`docs/mcp.md`](docs/mcp.md)
+- **能用工具**：MCP 工具按模型白名单自动挂载，模型自己决定何时调用 —— 自带时间/天气/必应搜索/网页正文，另接官方 `server-filesystem`（根目录锁在 `notes/`）读写笔记，见 [`docs/mcp.md`](docs/mcp.md)
 - **工程化**：三层架构 + 全局异常处理 + 拦截器链 + 参数校验
 - **一体化集成测试**：`FullFlowIntegrationTest` 13 步全链路端到端验收测试（真实连 MySQL/Redis/Ollama，不 Mock）
 

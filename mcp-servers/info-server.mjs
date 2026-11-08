@@ -50,6 +50,18 @@ const TOOLS = [
       required: ['url'],
     },
   },
+  {
+    name: 'search',
+    description: '用必应搜索网页，返回标题、链接和摘要。用于查实时信息（新闻、价格、赛事、政策等），需要网址时再配合 fetch_url 读正文。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q: { type: 'string', description: '搜索词，中文可直接用' },
+        count: { type: 'integer', description: '返回条数，默认 5，最多 10' },
+      },
+      required: ['q'],
+    },
+  },
 ]
 
 function send(message) {
@@ -114,6 +126,39 @@ async function withTimeout(promise, ms, label) {
   }
 }
 
+function decodeEntities(text) {
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&nbsp;|&ensp;|&emsp;|&thinsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+// 必应会把结果链接包成 /ck/a?u=a1<base64url>，解出来才是真实地址
+function decodeBingLink(href) {
+  try {
+    const u = new URL(href, 'https://cn.bing.com')
+    if (!/(^|\.)bing\.com$/i.test(u.hostname) || !u.pathname.startsWith('/ck/a')) return href
+    const raw = u.searchParams.get('u')
+    if (!raw || !raw.startsWith('a1')) return href
+    const b64 = raw.slice(2).replace(/-/g, '+').replace(/_/g, '/')
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+    const decoded = Buffer.from(padded, 'base64').toString('utf8')
+    return /^https?:\/\//i.test(decoded) ? decoded : href
+  } catch {
+    return href
+  }
+}
+
+// 搜索结果里 <strong> 会把词切开，去标签时不能补空格，否则中文变成「北京天气 预报」
+function inlineText(html) {
+  return decodeEntities(String(html).replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
+}
+
 const handlers = {
   async now(args) {
     const tz = args.tz || 'Asia/Shanghai'
@@ -150,6 +195,39 @@ const handlers = {
     const text = stripHtml(raw)
     const clipped = text.length > maxChars ? `${text.slice(0, maxChars)}…（已截断，共 ${text.length} 字）` : text
     return textResult(clipped || '（页面没有可读正文）')
+  },
+
+  async search(args) {
+    const q = (args.q || '').trim()
+    if (!q) throw new Error('缺少 q')
+    const count = Math.min(Math.max(Number.isInteger(args.count) ? args.count : 5, 1), 10)
+    const url = `https://cn.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-hans`
+    const res = await withTimeout(
+      (signal) => fetch(url, {
+        signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        },
+      }), 10000, '搜索')
+    if (!res.ok) throw new Error(`必应返回 ${res.status}`)
+    const html = await res.text()
+    const blocks = html.match(/<li class="b_algo"[\s\S]*?<\/li>/g) || []
+    const items = []
+    for (const block of blocks) {
+      const hit = block.match(/<h2[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/)
+      if (!hit) continue
+      items.push({
+        title: inlineText(hit[2]),
+        link: decodeBingLink(hit[1]),
+        snippet: inlineText(block.match(/<p[^>]*>([\s\S]*?)<\/p>/)?.[1] || ''),
+      })
+      if (items.length >= count) break
+    }
+    if (!items.length) throw new Error('必应没有返回可解析的结果（页面结构可能变了）')
+    const lines = items.map((it, i) => `${i + 1}. ${it.title}\n   ${it.link}${it.snippet ? `\n   ${it.snippet}` : ''}`)
+    return textResult(`搜索「${q}」共 ${items.length} 条：\n\n${lines.join('\n\n')}`)
   },
 }
 
