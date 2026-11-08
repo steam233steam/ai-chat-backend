@@ -20,6 +20,7 @@ Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama / OpenAI 兼容) · DeepSeek · 
 - **长对话友好**：历史消息游标分页（`beforeId` + `limit`），只把最近 N 条历史送入模型
 - **多用户隔离**：会话数据按 userId 隔离，含越权校验
 - **数据可恢复**：Redis 7 天 TTL 到期后，历史消息、会话列表和标题可从 MySQL 回源
+- **能查外部信息**：MCP 工具（时间 / 天气 / 网页正文）按模型白名单自动挂载，模型自己决定何时调用，见 [`docs/mcp.md`](docs/mcp.md)
 - **工程化**：三层架构 + 全局异常处理 + 拦截器链 + 参数校验
 - **一体化集成测试**：`FullFlowIntegrationTest` 13 步全链路端到端验收测试（真实连 MySQL/Redis/Ollama，不 Mock）
 
@@ -101,6 +102,14 @@ mvn spring-boot:run
 | GET | `/user/pending-actions/current?sessionId=` | 查当前待确认动作（懒过期） |
 | POST | `/user/pending-actions/{id}/confirm` | 确认（原子 + 幂等；按 payload 内容分 memory/task/mixed 落库） |
 | POST | `/user/pending-actions/{id}/reject` | 拒绝（幂等） |
+
+### MCP 工具接口 `/mcp`（需登录）
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/mcp/tools` | 列出当前已连接的工具（名 / 所属服务 / 描述） |
+| POST | `/mcp/tools/{name}` | 直接调用某个工具，请求体是它的参数 JSON；用于不经过模型复现问题 |
+
+工具实现见 `mcp-servers/info-server.mjs`，配置与扩展方式见 [`docs/mcp.md`](docs/mcp.md)。
 
 完整接口文档见 `docs/API.md` §13。
 

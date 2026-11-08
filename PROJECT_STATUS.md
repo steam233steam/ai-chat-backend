@@ -3,6 +3,15 @@
 > 这是**开发日志**（按时间倒序），用来查「某天改了什么」。
 > 当前状态与排期看 [`docs/路线图.md`](docs/路线图.md)，文档地图看 [`docs/README.md`](docs/README.md)。
 
+## 2026-11-08 变更
+
+- **对话流改 POST**：新增 `POST /chat/ask-stream`（JSON body），旧 GET 保留并标 `@Deprecated`；前端同步改
+- **验证码原子消费**：`consumeCode` 用 Lua 完成「比对 + 删除」，替掉 `checkCode` + `deleteCode` 两步
+- **限流统一**：`DailyRateLimiter`（Redis INCR + 2 天过期，异常降级进程内计数），`IntentDailyLimiter` 改薄壳，新增 `ChatDailyLimiter`
+- **CORS 可配置**：`app.cors.allowed-origins`，默认仍只放行 localhost
+- **日志脱敏**：`MaskUtils.phone()` / `token()`
+- **接入 MCP 信息查询工具**：自研 stdio 客户端，模型可查时间 / 天气 / 网页，白名单只挂 `deepseek-chat`；测试 `282` 全绿
+
 ## 项目概览
 - **项目名称**: aichat
 - **技术栈**: Spring Boot 3.2.5 + Spring AI (1.0.0-M5) + Redis + Ollama + DeepSeek (OpenAI 兼容) + MySQL + MyBatis + Springdoc
