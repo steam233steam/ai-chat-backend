@@ -43,6 +43,22 @@
 |---|---|---|
 | `notify`（默认） | 只记一条执行记录，前端轮询 `/user/tasks/due` 就能看到 | 不需要 |
 | `webhook` | POST JSON 到指定地址，2xx 算成功 | `{"url":"https://..."}` |
+| `mcp` | 到点调一次 MCP 工具，把结果写进执行记录（查天气/搜索/时间/抓网页） | `{"tool":"mcp_info_weather","args":{"city":"北京"}}` |
+
+### mcp 动作
+
+任务不只可以「提醒你」，还可以「到点替你查一次」。`action_type=mcp` 时，调度器会调用
+`GET /mcp/tools` 里列出的工具，把返回压成一行写进 `tb_task_run.detail`，前端在任务页的
+「执行记录」里就能看到结果。
+
+只放行信息查询类工具（`weather` / `search` / `now` / `fetch_url`）——文件读写这类有副作用的工具
+不适合放进无人值守的定时任务；意图层若识别出不认识的工具，会降级成 `notify` 而不是报错。
+
+三种创建方式都支持 mcp 动作：
+
+1. 聊天里说「明天早上九点帮我查一下北京天气」→ 意图层填 `tool=weather` + `toolArgs.city=北京` → 确认后落库；
+2. 任务页「设置」里选「让 AI 查点东西（MCP 工具）」→ 选工具 + 填参数；
+3. `POST /user/tasks` 直接传 `actionType` / `actionConfig`。
 
 想加新动作：
 
