@@ -49,7 +49,7 @@ class PromptBuilderTest {
     void shouldInjectStableAndDynamicProfiles() {
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null))).thenReturn(List.of(
                 vo(1L, "style", "简洁", "active"),
-                vo(2L, "goal", "备考", "active")));
+                vo(2L, "fact", "备考", "active")));
         String system = builder.build(BASE);
         assertThat(system).startsWith(BASE);
         assertThat(system).contains("<user_profile>");
@@ -69,7 +69,7 @@ class PromptBuilderTest {
         org.mockito.Mockito.verify(memoryService).listForInjection(anyInt(), anyInt(), eq("s-1"));
         // 旧签名（不带会话）仍等价于全量注入（sessionScope=null）
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
-                .thenReturn(List.of(vo(2L, "goal", "备考", "active")));
+                .thenReturn(List.of(vo(2L, "fact", "备考", "active")));
         assertThat(builder.build(BASE, null)).contains("备考");
     }
 
@@ -91,7 +91,7 @@ class PromptBuilderTest {
 
     @Test
     void shouldSkipExpiredDynamic() {
-        MemoryVO expired = vo(1L, "goal", "过期目标", "active");
+        MemoryVO expired = vo(1L, "fact", "过期目标", "active");
         expired.setExpiresAt(LocalDateTime.now().minusDays(1));
         expired.setExpired(true);
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null))).thenReturn(List.of(expired));
@@ -109,7 +109,7 @@ class PromptBuilderTest {
 
     @Test
     void shouldSerializeQuotesAsValidJson() {
-        String tricky = "a\",\"key\":\"goal\",\"value\":\"x";
+        String tricky = "a\",\"key\":\"fact\",\"value\":\"x";
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenReturn(List.of(vo(1L, "style", tricky, "active")));
 
@@ -131,7 +131,7 @@ class PromptBuilderTest {
         props.setMemoryInjectMaxChars(5);
         when(memoryService.listForInjection(anyInt(), anyInt(), eq(null)))
                 .thenReturn(List.of(vo(1L, "style", "123456", "active"),
-                        vo(2L, "goal", "abcdef", "active")));
+                        vo(2L, "fact", "abcdef", "active")));
 
         String system = builder.build(BASE);
 

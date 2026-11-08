@@ -225,7 +225,7 @@ class IntentServiceImplTest {
         when(pendingActionService.current("s-1")).thenReturn(null);
         // 记忆值含密码特征 → 被 SensitiveContentFilter 拦下，候选全空 → 降级聊天
         IntentExtractionResult withSensitive = new IntentExtractionResult(
-                List.of(new MemoryCandidate("goal", "我的密码是 abc123", "dynamic", 0.5, null)),
+                List.of(new MemoryCandidate("fact", "我的密码是 abc123", "dynamic", 0.5, null)),
                 List.of());
         when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(withSensitive);
         assertThat(SensitiveContentFilter.detectSensitive("我的密码是 abc123")).isNotNull();
@@ -372,7 +372,7 @@ class IntentServiceImplTest {
         when(pendingActionService.current("s-1")).thenReturn(null);
         when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(new IntentExtractionResult(
                 List.of(new MemoryCandidate("style", "第一条", "stable", 0.9, null),
-                        new MemoryCandidate("goal", "第二条", "stable", 0.9, null)),
+                        new MemoryCandidate("fact", "第二条", "stable", 0.9, null)),
                 List.of()));
         when(pendingActionService.create(eq("s-1"), eq("memory"), anyString(), eq(7L))).thenReturn(11L);
 
@@ -533,7 +533,7 @@ class IntentServiceImplTest {
         when(pendingActionService.current("s-1")).thenReturn(null);
         com.aichat.Dto.MemoryVO memory = new com.aichat.Dto.MemoryVO();
         memory.setId(7L);
-        memory.setMemKey("goal");
+        memory.setMemKey("fact");
         memory.setContent("今年考研");
         memory.setStatus("active");
         when(memoryService.list(anyInt())).thenReturn(List.of(memory));
@@ -566,8 +566,8 @@ class IntentServiceImplTest {
         // 上一轮追问「我找到 2 条…改哪一条」，用户这轮只回了「考公的那个」
         when(clarifyStore.load("USER_ID_TEST", "s-1")).thenReturn(new MemoryChangeClarifyStore.State(
                 MemoryChangeClarifyStore.ACTION_DELETE,
-                List.of(new MemoryChangeClarifyStore.Candidate(101L, "goal", "明年考公"),
-                        new MemoryChangeClarifyStore.Candidate(102L, "goal", "今年12月考英语四级")),
+                List.of(new MemoryChangeClarifyStore.Candidate(101L, "fact", "明年考公"),
+                        new MemoryChangeClarifyStore.Candidate(102L, "fact", "今年12月考英语四级")),
                 null, null));
         when(pendingActionService.current("s-1")).thenReturn(null);
         when(pendingActionService.create(eq("s-1"), eq("memory_change"), anyString(), anyLong())).thenReturn(88L);
@@ -586,8 +586,8 @@ class IntentServiceImplTest {
     void shouldAskAgainWhenClarifyAnswerStillUnclear() {
         when(clarifyStore.load("USER_ID_TEST", "s-1")).thenReturn(new MemoryChangeClarifyStore.State(
                 MemoryChangeClarifyStore.ACTION_DELETE,
-                List.of(new MemoryChangeClarifyStore.Candidate(101L, "goal", "明年考公"),
-                        new MemoryChangeClarifyStore.Candidate(102L, "goal", "今年12月考英语四级")),
+                List.of(new MemoryChangeClarifyStore.Candidate(101L, "fact", "明年考公"),
+                        new MemoryChangeClarifyStore.Candidate(102L, "fact", "今年12月考英语四级")),
                 null, null));
 
         IntentOutcome o = service.handle("s-1", "嗯……我再想想", 42L);

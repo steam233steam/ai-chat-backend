@@ -257,9 +257,9 @@ class MindButlerFlowIntegrationTest {
     void shouldRejectIdempotently() {
         when(intentExtractor.extract(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(new IntentExtractionResult(
-                        List.of(mem("goal", "上线 P1", "dynamic", 0.7, null)), List.of()));
+                        List.of(mem("fact", "上线 P1", "dynamic", 0.7, null)), List.of()));
         long pid = pendingActionService.create(sessionId, "memory",
-                buildPayload(List.of(mem("goal", "上线 P1", "dynamic", 0.7, null)), List.of()), null);
+                buildPayload(List.of(mem("fact", "上线 P1", "dynamic", 0.7, null)), List.of()), null);
 
         pendingActionService.reject(pid);
         // 幂等：重复 reject 不抛

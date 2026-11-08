@@ -10,8 +10,8 @@ import java.util.Optional;
 public enum MemoryKey {
     /** 回答/说话风格（stable） */
     STYLE("style"),
-    /** 近期目标 / 在做什么（dynamic） */
-    GOAL("goal"),
+    /** 关于用户的陈述性事实：目标、打算、正在准备的事（dynamic） */
+    FACT("fact"),
     /** 作息 / 习惯（多为 stable，近期安排可为 dynamic） */
     SCHEDULE("schedule"),
     /** 称呼 / 关系偏好（stable） */

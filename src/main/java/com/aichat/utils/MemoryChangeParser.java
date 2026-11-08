@@ -29,7 +29,7 @@ public final class MemoryChangeParser {
     /** mem_key 的口语别名：先按 key 缩小范围，命中不了再按内容匹配。 */
     private static final List<String[]> KEY_ALIASES = List.of(
             new String[] {"style", "风格", "偏好", "喜好", "语气", "回答方式"},
-            new String[] {"goal", "目标", "计划", "打算"},
+            new String[] {"fact", "目标", "计划", "打算", "准备", "事实"},
             new String[] {"schedule", "作息", "日程", "时间安排", "提醒时间"},
             new String[] {"relation", "关系", "称呼", "昵称"});
 
@@ -381,7 +381,7 @@ public final class MemoryChangeParser {
         }
         return switch (memKey) {
             case "style" -> "风格偏好";
-            case "goal" -> "目标";
+            case "fact" -> "事实";
             case "schedule" -> "作息";
             case "relation" -> "关系称呼";
             default -> memKey;

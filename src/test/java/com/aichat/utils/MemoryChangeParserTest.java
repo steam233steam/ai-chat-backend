@@ -40,7 +40,7 @@ class MemoryChangeParserTest {
 
     @Test
     void shouldExtractNewContentAfterTrigger() {
-        List<MemoryVO> memories = List.of(memory(3L, "goal", "今年考研"));
+        List<MemoryVO> memories = List.of(memory(3L, "fact", "今年考研"));
 
         MemoryChangeParser.Resolution r = MemoryChangeParser.parse("把目标改成明年考公", memories);
 
@@ -61,8 +61,8 @@ class MemoryChangeParserTest {
     @Test
     void shouldAskWhenMultipleMemoriesShareTheKey() {
         List<MemoryVO> memories = List.of(
-                memory(5L, "goal", "今年考研"),
-                memory(6L, "goal", "攒钱买车"));
+                memory(5L, "fact", "今年考研"),
+                memory(6L, "fact", "攒钱买车"));
 
         MemoryChangeParser.Resolution r = MemoryChangeParser.parse("把目标删掉", memories);
 
@@ -74,7 +74,7 @@ class MemoryChangeParserTest {
     void shouldMatchByContentWhenNoKeyWord() {
         List<MemoryVO> memories = List.of(
                 memory(7L, "style", "早上喝黑咖啡"),
-                memory(8L, "goal", "学日语"));
+                memory(8L, "fact", "学日语"));
 
         MemoryChangeParser.Resolution r = MemoryChangeParser.parse("把黑咖啡那条删了", memories);
 
@@ -102,7 +102,7 @@ class MemoryChangeParserTest {
 
     @Test
     void shouldAskWhenUpdatedContentSameAsBefore() {
-        List<MemoryVO> memories = List.of(memory(10L, "goal", "明年考公"));
+        List<MemoryVO> memories = List.of(memory(10L, "fact", "明年考公"));
 
         MemoryChangeParser.Resolution r = MemoryChangeParser.parse("把目标改成明年考公", memories);
 
@@ -132,8 +132,8 @@ class MemoryChangeParserTest {
     @Test
     void shouldExposeCandidatesWhenAmbiguous() {
         List<MemoryVO> memories = List.of(
-                memory(101L, "goal", "明年考公"),
-                memory(102L, "goal", "今年12月考英语四级"));
+                memory(101L, "fact", "明年考公"),
+                memory(102L, "fact", "今年12月考英语四级"));
 
         MemoryChangeParser.Resolution r = MemoryChangeParser.parse("把目标删掉", memories);
 

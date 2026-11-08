@@ -194,9 +194,9 @@ class MemoryServiceImplTest {
             return 1;
         });
         when(mapper.selectById(42L, "USER_ID_1234567890"))
-                .thenReturn(mem(42L, "goal", "新目标", "stable", "active", null, NOW));
+                .thenReturn(mem(42L, "fact", "新目标", "stable", "active", null, NOW));
 
-        service.createWithReplaces("goal", "新目标", "stable", 0.9, 99L, 7L, null);
+        service.createWithReplaces("fact", "新目标", "stable", 0.9, 99L, 7L, null);
 
         // key 不一致 → 不替换旧条，按新增处理且 replacesId 为空
         verify(mapper, never()).markSuperseded(anyLong(), anyString());
@@ -256,13 +256,13 @@ class MemoryServiceImplTest {
         when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), eq(null), anyInt()))
                 .thenReturn(List.of(mem(1L, "style", "简洁", "stable", "active", null, NOW)));
         when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), eq(null), anyInt()))
-                .thenReturn(List.of(mem(2L, "goal", "备考", "dynamic", "active", NOW.plusDays(10), NOW)));
+                .thenReturn(List.of(mem(2L, "fact", "备考", "dynamic", "active", NOW.plusDays(10), NOW)));
 
         List<MemoryVO> vos = service.listForInjection(5, 5);
 
         assertThat(vos).hasSize(2);
         assertThat(vos.get(0).getMemKey()).isEqualTo("style");
-        assertThat(vos.get(1).getMemKey()).isEqualTo("goal");
+        assertThat(vos.get(1).getMemKey()).isEqualTo("fact");
         // 过期过滤：stable 无 expires → 不过期
         assertThat(vos.get(0).getExpired()).isFalse();
     }
@@ -272,7 +272,7 @@ class MemoryServiceImplTest {
         when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), eq(null), anyInt()))
                 .thenReturn(List.of());
         when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), eq(null), anyInt()))
-                .thenReturn(List.of(mem(3L, "goal", "过期了", "dynamic", "active", NOW.minusDays(1), NOW)));
+                .thenReturn(List.of(mem(3L, "fact", "过期了", "dynamic", "active", NOW.minusDays(1), NOW)));
 
         List<MemoryVO> vos = service.listForInjection(5, 5);
 
@@ -310,7 +310,7 @@ class MemoryServiceImplTest {
         fresh.setConfidence(new BigDecimal("0.60"));
         fresh.setLastUsedAt(NOW.minusDays(1));   // 0.60 * 0.5^(1/180) ≈ 0.598
 
-        UserMemory stale = mem(2L, "goal", "一年多没碰的目标", "stable", "active", null,
+        UserMemory stale = mem(2L, "fact", "一年多没碰的目标", "stable", "active", null,
                 NOW.minusDays(400));
         stale.setConfidence(new BigDecimal("0.95"));
         stale.setLastUsedAt(NOW.minusDays(400)); // 0.95 * 0.5^(400/180) ≈ 0.204
@@ -326,7 +326,7 @@ class MemoryServiceImplTest {
 
         assertThat(vos).hasSize(2);
         assertThat(vos.get(0).getMemKey()).isEqualTo("style"); // 衰减后新鲜的赢了
-        assertThat(vos.get(1).getMemKey()).isEqualTo("goal");
+        assertThat(vos.get(1).getMemKey()).isEqualTo("fact");
     }
 
     @Test
@@ -335,7 +335,7 @@ class MemoryServiceImplTest {
         ReflectionTestUtils.setField(service, "clock",
                 Clock.fixed(NOW.atZone(SHANGHAI).toInstant(), SHANGHAI));
 
-        UserMemory oldButHigh = mem(3L, "goal", "旧的高置信度", "stable", "active", null,
+        UserMemory oldButHigh = mem(3L, "fact", "旧的高置信度", "stable", "active", null,
                 NOW.minusDays(400));
         oldButHigh.setConfidence(new BigDecimal("0.90"));
         UserMemory newAndHigh = mem(4L, "style", "新的高置信度", "stable", "active", null, NOW);
@@ -361,7 +361,7 @@ class MemoryServiceImplTest {
                 .thenReturn(List.of(mem(11L, "style", "简洁", "stable", "active", null, NOW)));
         when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
                 any(LocalDateTime.class), eq(null), anyInt()))
-                .thenReturn(List.of(mem(12L, "goal", "备考", "dynamic", "active", null, NOW)));
+                .thenReturn(List.of(mem(12L, "fact", "备考", "dynamic", "active", null, NOW)));
 
         service.listForInjection(5, 5);
 

@@ -72,7 +72,7 @@ Spring Boot 3.2.5 · Spring AI 1.0.0-M5 (Ollama / OpenAI 兼容) · DeepSeek · 
 
 ## MindButler P1（长期记忆 + 口语化任务）⭐
 
-P1 把"省用户惦记时间"做进聊天：固定 4 维度结构化画像（`style/goal/schedule/relation`）+ 口语化任务，
+P1 把"省用户惦记时间"做进聊天：固定 4 维度结构化画像（`style/fact/schedule/relation`）+ 口语化任务，
 候选先走 pending 状态机（10 分钟 TTL），用户"确认/拒绝"后才落库——不连向量库、可解释可审计。
 
 | 能力 | 接口 | 说明 |

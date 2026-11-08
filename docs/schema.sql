@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS tb_user_memory (
   id                BIGINT       NOT NULL AUTO_INCREMENT,
   user_id           VARCHAR(32)  NOT NULL COMMENT '用户 uid，与 tb_user.uid 对齐',
   session_id        VARCHAR(64)  NULL COMMENT '会话隔离：NULL=全局画像；有值=仅该会话生效（P1.1）',
-  mem_key           VARCHAR(32)  NOT NULL COMMENT 'P1: style|goal|schedule|relation；应用层枚举校验',
+  mem_key           VARCHAR(32)  NOT NULL COMMENT 'P1: style|fact|schedule|relation；应用层枚举校验',
   content           VARCHAR(512) NOT NULL COMMENT '记忆内容，应用层限制 256 字符',
   mem_type          ENUM('stable','dynamic') NOT NULL DEFAULT 'stable' COMMENT 'stable 长存；dynamic 会过期',
   status            ENUM('active','superseded','deleted') NOT NULL DEFAULT 'active',

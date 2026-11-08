@@ -86,7 +86,7 @@
     "type": "object",
     "properties": {
       "query":  {"type": "string", "description": "检索关键词，2-30 字", "minLength": 1, "maxLength": 30},
-      "type":   {"type": "string", "enum": ["style", "goal", "schedule", "relation"], "description": "可选，按维度过滤"},
+      "type":   {"type": "string", "enum": ["style", "fact", "schedule", "relation"], "description": "可选，按维度过滤"},
       "limit":  {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}
     },
     "required": ["query"],

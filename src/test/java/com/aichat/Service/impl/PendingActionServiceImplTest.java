@@ -454,7 +454,7 @@ class PendingActionServiceImplTest {
 
         MemoryVO current = new MemoryVO();
         current.setId(5L);
-        current.setMemKey("goal");
+        current.setMemKey("fact");
         current.setContent("今年考研");
         current.setVersion(3);
         when(memoryService.get(5L)).thenReturn(current);

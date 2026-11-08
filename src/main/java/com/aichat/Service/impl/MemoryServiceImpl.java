@@ -366,7 +366,7 @@ public class MemoryServiceImpl implements MemoryService {
     private String normalizeMemKey(String raw) {
         String key = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
         if (!MemoryKey.isValid(key)) {
-            throw new BusinessException("memKey 只能是 style/goal/schedule/relation");
+            throw new BusinessException("memKey 只能是 style/fact/schedule/relation");
         }
         return key;
     }

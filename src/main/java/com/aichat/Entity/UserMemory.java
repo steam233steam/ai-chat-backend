@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 /**
  * 用户长期记忆表实体，对应 tb_user_memory。
  *
- * 结构化画像（不用向量库）：memKey 是有限枚举标签（P1: style/goal/schedule/relation），
+ * 结构化画像（不用向量库）：memKey 是有限枚举标签（P1: style/fact/schedule/relation），
  * content 是值。status 管生命周期（active/superseded/deleted）；confidence 仅用于排序/审计，
  * 不决定生效——生效只由用户确认决定。expires_at 对 dynamic 记忆做过期，stable 为 null。
  */
