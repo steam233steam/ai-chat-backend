@@ -25,6 +25,9 @@ public class UserMemory {
     private Long replacesId;
     private LocalDateTime expiresAt;
     private Integer version;
+    /** 上次被注入进提示词的时间；NULL 表示从没被用过（新记忆），衰减以 update_time 起算。 */
+    private LocalDateTime lastUsedAt;
+    private Integer useCount;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
@@ -133,6 +136,22 @@ public class UserMemory {
 
     public void setVersion(Integer version) {
         this.version = version;
+    }
+
+    public LocalDateTime getLastUsedAt() {
+        return lastUsedAt;
+    }
+
+    public void setLastUsedAt(LocalDateTime lastUsedAt) {
+        this.lastUsedAt = lastUsedAt;
+    }
+
+    public Integer getUseCount() {
+        return useCount;
+    }
+
+    public void setUseCount(Integer useCount) {
+        this.useCount = useCount;
     }
 
     public LocalDateTime getCreateTime() {

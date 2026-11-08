@@ -27,8 +27,11 @@ import static com.aichat.utils.RedisConstants.*;
 @Component
 public class RefreshTokenInterceptor implements HandlerInterceptor {
 
-    @Autowired
-    private StringRedisTemplate stringRedisTemplate;
+    private final StringRedisTemplate stringRedisTemplate;
+
+    public RefreshTokenInterceptor(StringRedisTemplate stringRedisTemplate) {
+        this.stringRedisTemplate = stringRedisTemplate;
+    }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
@@ -37,39 +40,28 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
         // 若不在入口处清理，后续无 Token 请求可能复用到上一个请求的用户。
         UserHolder.removeUser();
 
-        // 1. 从请求头获取Token
         String token = request.getHeader("Authorization");
-        
-        // 2. Token为空，放行（让LoginInterceptor拦截）
         if (token == null || token.isEmpty()) {
-            return true;
+            return true; // 没带 Token 不在这里报错，交给 LoginInterceptor 统一返回 401
         }
-        
-        // 3. 从Redis获取用户信息
+
         String key = LOGIN_TOKEN_KEY_PREFIX + token;
         Map<Object, Object> userMap = stringRedisTemplate.opsForHash().entries(key);
-        
-        // 4. 用户不存在，放行（让LoginInterceptor拦截）
         if (userMap.isEmpty()) {
-            return true;
+            return true; // Token 过期或伪造，同上
         }
-        
-        // 5. 构建UserDto
+
         UserDto userDto = new UserDto();
         userDto.setId((String) userMap.get("id"));
         userDto.setName((String) userMap.get("name"));
         userDto.setPhone((String) userMap.get("phone"));
-        
-        // 6. 存入UserHolder
         UserHolder.saveUser(userDto);
-        
-        // 7. 刷新Token过期时间（续期）
+
+        // 滑动续期：每次访问重置 TTL，活跃用户不会被踢下线
         stringRedisTemplate.expire(key, TOKEN_TTL_DAYS, TimeUnit.DAYS);
-        
-        // 8. 放行
         return true;
     }
-    
+
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
         // 请求结束后清除UserHolder，防止内存泄漏

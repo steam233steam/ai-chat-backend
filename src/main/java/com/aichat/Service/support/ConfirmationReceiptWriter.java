@@ -24,10 +24,13 @@ public class ConfirmationReceiptWriter {
 
     private static final Logger log = LoggerFactory.getLogger(ConfirmationReceiptWriter.class);
 
-    @Autowired
-    private ChatSessionRepository chatSessionRepository;
-    @Autowired
-    private PersonaReplyService personaReplyService;
+    private final ChatSessionRepository chatSessionRepository;
+    private final PersonaReplyService personaReplyService;
+
+    public ConfirmationReceiptWriter(ChatSessionRepository chatSessionRepository, PersonaReplyService personaReplyService) {
+        this.chatSessionRepository = chatSessionRepository;
+        this.personaReplyService = personaReplyService;
+    }
 
     /**
      * 弹窗确认后写一条人设化短回执，并把实际写入的内容返回给调用方。
@@ -36,10 +39,23 @@ public class ConfirmationReceiptWriter {
      * @return 实际写入的短回执；session 为空或写入失败时返回 null
      */
     public String writeConfirmed(String sessionId) {
+        return writeConfirmed(sessionId, null);
+    }
+
+    /**
+     * 确认回执；override 非空时用它代替人设文案。
+     *
+     * <p>记忆变更（改/删）需要告诉用户"改了哪一条、改成什么"，
+     * 这种情况由业务层给出一句话，这里只负责落库，不再另写一句泛化的人设回执。
+     */
+    public String writeConfirmed(String sessionId, String override) {
         if (sessionId == null || sessionId.isBlank()) {
             return null;
         }
-        return write(sessionId, personaReplyService.confirmed(sessionId));
+        String content = override == null || override.isBlank()
+                ? personaReplyService.confirmed(sessionId)
+                : override;
+        return write(sessionId, content);
     }
 
     /** 弹窗取消后写一条人设化短回执，并返回实际写入的内容。 */

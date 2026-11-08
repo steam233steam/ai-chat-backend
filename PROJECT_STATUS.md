@@ -1,5 +1,17 @@
 ﻿# AI Chat 项目开发状态
 
+> 这是**开发日志**（按时间倒序），用来查「某天改了什么」。
+> 当前状态与排期看 [`docs/路线图.md`](docs/路线图.md)，文档地图看 [`docs/README.md`](docs/README.md)。
+
+## 2026-11-08 变更
+
+- **对话流改 POST**：新增 `POST /chat/ask-stream`（JSON body），旧 GET 保留并标 `@Deprecated`；前端同步改
+- **验证码原子消费**：`consumeCode` 用 Lua 完成「比对 + 删除」，替掉 `checkCode` + `deleteCode` 两步
+- **限流统一**：`DailyRateLimiter`（Redis INCR + 2 天过期，异常降级进程内计数），`IntentDailyLimiter` 改薄壳，新增 `ChatDailyLimiter`
+- **CORS 可配置**：`app.cors.allowed-origins`，默认仍只放行 localhost
+- **日志脱敏**：`MaskUtils.phone()` / `token()`
+- **接入 MCP 信息查询工具**：自研 stdio 客户端，模型可查时间 / 天气 / 网页，白名单只挂 `deepseek-chat`；测试 `282` 全绿
+
 ## 项目概览
 - **项目名称**: aichat
 - **技术栈**: Spring Boot 3.2.5 + Spring AI (1.0.0-M5) + Redis + Ollama + DeepSeek (OpenAI 兼容) + MySQL + MyBatis + Springdoc
@@ -629,17 +641,13 @@ springdoc.swagger-ui.path=/swagger-ui.html
 | `APP_MINDBUTLER_INTENT_EXTRACT_MODEL` | `deepseek-chat` | 意图提取器模型 |
 
 ## 文档
-- `README.md` - 项目说明 + API 总览 + 配置项
-- `docs/API.md` - 后端接口文档（供前端使用）
-- `docs/DEVELOPMENT_PLAN.md` - 后续开发计划
-- `docs/INTERVIEW_ROADMAP.md` - 面试路线图
-- `docs/MindButler-P1设计.md` - MindButler P1 设计（v2）
-- `docs/P1-代码结构.md` - P1 代码结构说明（包职责 + 意图链路类图）
-- `docs/Task-Capability.md` - 任务能力边界 / 外部通道接入设计（P1.5b）
-- `docs/P1-上线验收清单.md` - P1 上线验收清单
-- `docs/聊天记录持久化设计.md` - 持久化设计
-- `docs/踩坑记录.md` - 开发踩坑记录
-- `docs/schema.sql` - 数据库初始化脚本
+**文档索引见 [`docs/README.md`](docs/README.md)**（哪份有效、哪份已归档、按什么顺序读）。常用入口：
+
+- [`docs/路线图.md`](docs/路线图.md) - 当前排期与取舍（唯一）
+- [`docs/MindButler-P1设计.md`](docs/MindButler-P1设计.md) - MindButler P1 施工版设计（v3）
+- [`docs/P1-上线验收清单.md`](docs/P1-上线验收清单.md) - P1 上线验收用例与执行记录
+- [`docs/聊天持久化设计.md`](docs/聊天持久化设计.md) - 持久化与缓存一致性
+- [`docs/踩坑记录.md`](docs/踩坑记录.md) - 开发踩坑记录
 - `docs/本地启动.md` - 本地启动指南
 - `docs/migration/` - 数据库迁移脚本
 - `docs/eval/mindbutler-intent-eval.json` - 意图提取评测集
@@ -657,7 +665,7 @@ springdoc.swagger-ui.path=/swagger-ui.html
 - Swagger UI：`http://localhost:8080/swagger-ui.html`
 - 敏感配置放 `application-local.properties`（.gitignore 中不提交）
 
-## 下一步计划（见 DEVELOPMENT_PLAN.md / MindButler-P1设计.md）
+## 下一步计划（见 docs/路线图.md）
 - [x] 聊天数据持久化（MySQL 主存储 + Redis 缓存）✅ 2026-10-22
 - [x] 多模型路由（Ollama + DeepSeek）✅ 2026-10-25
 - [x] 历史消息分页 ✅ 2026-10-25

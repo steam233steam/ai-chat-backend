@@ -20,8 +20,7 @@ class IntentDailyLimiterTest {
     void setUp() {
         MindButlerProperties props = new MindButlerProperties();
         props.setIntentDailyLimit(2);
-        limiter = new IntentDailyLimiter();
-        ReflectionTestUtils.setField(limiter, "props", props);
+        limiter = new IntentDailyLimiter(props, null, null);
         ReflectionTestUtils.setField(limiter, "clock",
                 Clock.fixed(Instant.parse("2026-11-03T00:00:00Z"), ZoneId.of("Asia/Shanghai")));
     }

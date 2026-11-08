@@ -61,7 +61,7 @@ public final class IntentPrompts {
             sb.append("- 带时间表达（明天/下周三/每天 9 点）→ 填 tasks，dueAt 必须换算成绝对时间。\n");
             sb.append("- 不确定是否要提取时，宁可留空 []，不要硬凑候选。\n");
         }
-        // 用户原话由 IntentExtractorimpl 以 UserMessage 传入，不能拼进 system prompt。
+        // 用户原话由 IntentExtractorImpl 以 UserMessage 传入，不能拼进 system prompt。
         return sb.toString();
     }
 }

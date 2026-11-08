@@ -34,9 +34,7 @@ class PendingActionControllerTest {
     void setUp() {
         service = mock(PendingActionService.class);
         receiptWriter = mock(ConfirmationReceiptWriter.class);
-        controller = new PendingActionController();
-        ReflectionTestUtils.setField(controller, "pendingActionService", service);
-        ReflectionTestUtils.setField(controller, "confirmationReceiptWriter", receiptWriter);
+        controller = new PendingActionController(service, receiptWriter);
     }
 
     @Test
@@ -44,13 +42,28 @@ class PendingActionControllerTest {
         ConfirmResult result = new ConfirmResult(false, List.of(), List.of());
         result.setSessionId("s1");
         when(service.confirm(9L)).thenReturn(result);
-        when(receiptWriter.writeConfirmed("s1")).thenReturn("已经定好了喵");
+        when(receiptWriter.writeConfirmed("s1", null)).thenReturn("已经定好了喵");
 
         Result<ConfirmResult> response = controller.confirm(9L);
 
         assertThat(response.getCode()).isEqualTo(200);
         assertThat(response.getData().getReceipt()).isEqualTo("已经定好了喵");
-        verify(receiptWriter).writeConfirmed("s1");
+        verify(receiptWriter).writeConfirmed("s1", null);
+    }
+
+    @Test
+    void confirmShouldKeepBusinessReceiptWhenServiceGivesOne() {
+        ConfirmResult result = new ConfirmResult(false, List.of(), List.of());
+        result.setSessionId("s1");
+        result.setReceipt("已经改好：「今年考研」改成了「明年考公」");
+        when(service.confirm(9L)).thenReturn(result);
+        when(receiptWriter.writeConfirmed("s1", result.getReceipt()))
+                .thenReturn("已经改好：「今年考研」改成了「明年考公」");
+
+        Result<ConfirmResult> response = controller.confirm(9L);
+
+        // 记忆变更的"改成了什么"比人设化短回执更有信息量，不能被覆盖掉
+        assertThat(response.getData().getReceipt()).contains("明年考公");
     }
 
     @Test

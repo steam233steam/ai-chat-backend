@@ -14,14 +14,21 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.aichat.Dto.ChatStreamRequest;
 import com.aichat.Dto.Result;
+import com.aichat.Dto.UserDto;
+import com.aichat.Exception.BusinessException;
 import com.aichat.Service.ChatService;
+import com.aichat.Service.support.ChatDailyLimiter;
 
 import reactor.core.publisher.Flux;
+
+import com.aichat.utils.UserHolder;
 
 @RestController
 @RequestMapping("/chat")
@@ -33,8 +40,22 @@ public class ChatController {
     private static final int MAX_TITLE_LENGTH = 50;
     private static final int MAX_HISTORY_PAGE_SIZE = 100;
 
-    @Autowired
-    private ChatService chatService;
+    private final ChatService chatService;
+    private final ChatDailyLimiter chatDailyLimiter;
+
+    public ChatController(ChatService chatService, ChatDailyLimiter chatDailyLimiter) {
+        this.chatService = chatService;
+        this.chatDailyLimiter = chatDailyLimiter;
+    }
+
+    /** 每日对话次数上限，默认不启用（app.chat.daily-limit <= 0）。 */
+    private void checkDailyLimit() {
+        UserDto user = UserHolder.getUser();
+        String uid = user == null ? null : user.getId();
+        if (!chatDailyLimiter.tryAcquire(uid)) {
+            throw new BusinessException(429, "今天的对话次数已用完，明天再来");
+        }
+    }
 
     /** 查询可用模型白名单（前端渲染下拉框用，无需登录，公开接口） */
     @Operation(summary = "查询可用模型白名单", description = "返回 app.models.available 配置的模型名，前端渲染下拉框用，公开接口无需登录")
@@ -50,17 +71,33 @@ public class ChatController {
             @RequestParam(required = false) String modelName) {
         validateSessionId(sessionid);
         validateQuestion(question);
+        checkDailyLimit();
         return Result.success(chatService.sendSession(sessionid, new UserMessage(question), modelName));
     }
 
     // 流式输出（SSE）
-    @Operation(summary = "流式对话（SSE）", description = "按会话发送消息并以 Server-Sent Events 流式返回；客户端断开时已生成内容仍会落库")
+    @Operation(summary = "流式对话（SSE，推荐用 POST）", description = "请求体传 sessionid/question/modelName，以 Server-Sent Events 流式返回；客户端断开时已生成内容仍会落库")
+    @PostMapping(value = "/ask-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> chatStream(@RequestBody ChatStreamRequest request) {
+        if (request == null) {
+            throw new BusinessException("请求体不能为空");
+        }
+        validateSessionId(request.getSessionid());
+        validateQuestion(request.getQuestion());
+        checkDailyLimit();
+        return chatService.sendSessionStream(request.getSessionid(), request.getQuestion(), request.getModelName());
+    }
+
+    /** 兼容老前端：问题走 query string，会进访问日志，新代码请用上面的 POST。 */
+    @Deprecated
+    @Operation(summary = "流式对话（SSE，GET 兼容接口）", description = "已废弃，仅为兼容旧前端保留；问题放在 query 里会进访问日志，请改用 POST")
     @GetMapping(value = "/ask-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chatStream(@RequestParam String sessionid,
+    public Flux<String> chatStreamByGet(@RequestParam String sessionid,
             @RequestParam String question,
             @RequestParam(required = false) String modelName) {
         validateSessionId(sessionid);
         validateQuestion(question);
+        checkDailyLimit();
         return chatService.sendSessionStream(sessionid, question, modelName);
     }
 

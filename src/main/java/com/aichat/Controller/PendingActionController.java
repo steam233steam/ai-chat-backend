@@ -30,10 +30,13 @@ import com.aichat.Service.support.ConfirmationReceiptWriter;
 public class PendingActionController {
     private static final Logger log = LoggerFactory.getLogger(PendingActionController.class);
 
-    @Autowired
-    private PendingActionService pendingActionService;
-    @Autowired
-    private ConfirmationReceiptWriter confirmationReceiptWriter;
+    private final PendingActionService pendingActionService;
+    private final ConfirmationReceiptWriter confirmationReceiptWriter;
+
+    public PendingActionController(PendingActionService pendingActionService, ConfirmationReceiptWriter confirmationReceiptWriter) {
+        this.pendingActionService = pendingActionService;
+        this.confirmationReceiptWriter = confirmationReceiptWriter;
+    }
 
     @Operation(summary = "查当前会话的待确认动作",
             description = "没有/已过期返回 data=null；前端据此渲染确认卡片")
@@ -58,7 +61,8 @@ public class PendingActionController {
         // 弹窗路径由后端补一条人设化短回执；文本确认走 ChatService，不会重复。
         if (!result.isAlreadyConfirmed()) {
             // 把真正写入历史的那句话回给前端，避免前端再硬编码一句固定成功文案。
-            result.setReceipt(confirmationReceiptWriter.writeConfirmed(result.getSessionId()));
+            result.setReceipt(confirmationReceiptWriter.writeConfirmed(
+                    result.getSessionId(), result.getReceipt()));
         }
         return Result.success(result);
     }

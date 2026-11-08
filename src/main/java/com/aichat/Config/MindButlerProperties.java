@@ -43,6 +43,15 @@ public class MindButlerProperties {
     /** 注入记忆总字符预算。 */
     private int memoryInjectMaxChars = 1200;
 
+    /** 时间衰减开关：打开后注入顺序按「置信度 × 半衰期衰减」排，关掉就退回纯 confidence 排序。 */
+    private boolean memoryDecayEnabled = true;
+
+    /** stable 记忆的半衰期（天）：半年不被用到，权重减半。 */
+    private int memoryDecayHalfLifeStable = 180;
+
+    /** dynamic 记忆的半衰期（天）：临时偏好的遗忘速度要快得多。 */
+    private int memoryDecayHalfLifeDynamic = 30;
+
     /** P1 固定时区，启动时校验只允许 Asia/Shanghai。 */
     private String taskZone = "Asia/Shanghai";
 
@@ -116,6 +125,30 @@ public class MindButlerProperties {
 
     public void setMemoryInjectMaxChars(int memoryInjectMaxChars) {
         this.memoryInjectMaxChars = memoryInjectMaxChars;
+    }
+
+    public boolean isMemoryDecayEnabled() {
+        return memoryDecayEnabled;
+    }
+
+    public void setMemoryDecayEnabled(boolean memoryDecayEnabled) {
+        this.memoryDecayEnabled = memoryDecayEnabled;
+    }
+
+    public int getMemoryDecayHalfLifeStable() {
+        return memoryDecayHalfLifeStable;
+    }
+
+    public void setMemoryDecayHalfLifeStable(int memoryDecayHalfLifeStable) {
+        this.memoryDecayHalfLifeStable = memoryDecayHalfLifeStable;
+    }
+
+    public int getMemoryDecayHalfLifeDynamic() {
+        return memoryDecayHalfLifeDynamic;
+    }
+
+    public void setMemoryDecayHalfLifeDynamic(int memoryDecayHalfLifeDynamic) {
+        this.memoryDecayHalfLifeDynamic = memoryDecayHalfLifeDynamic;
     }
 
     public String getTaskZone() {
