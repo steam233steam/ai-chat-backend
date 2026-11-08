@@ -272,14 +272,14 @@ mvn test -Dtest=FullFlowIntegrationTest
 ## 文档
 ## 文档
 
-**先看 [`docs/README.md`](docs/README.md)（文档索引，15 份 + 迁移脚本 + 评测集）**，按目的挑：
+**先看 [`docs/README.md`](docs/README.md)（文档索引，16 份 + 迁移脚本 + 评测集）**，按目的挑：
 
 | 目的 | 文档 |
 |---|---|
 | 跑起来 | [`docs/本地启动.md`](docs/本地启动.md) |
 | 读代码 | [`docs/啃代码路线.md`](docs/啃代码路线.md)（五条主线 + 30 个自测题） |
 | 面试 / 简历 | [`docs/简历与演示.md`](docs/简历与演示.md) |
-| 排期与取舍 | [`docs/路线图.md`](docs/路线图.md) |
+| 排期与取舍 | [`docs/路线图.md`](docs/路线图.md) · [`docs/后续开发计划.md`](docs/后续开发计划.md) |
 | 整体设计 | [`docs/MindButler-P1设计.md`](docs/MindButler-P1设计.md) · [`docs/聊天持久化设计.md`](docs/聊天持久化设计.md) |
 | 记忆 | [`docs/memory-decay.md`](docs/memory-decay.md) · [`docs/memory-change.md`](docs/memory-change.md) |
 | MCP 工具 | [`docs/mcp.md`](docs/mcp.md) · [`docs/mcp-design.md`](docs/mcp-design.md) |
