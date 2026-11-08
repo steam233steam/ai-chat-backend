@@ -1,5 +1,6 @@
 package com.aichat.Service.impl;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -12,6 +13,8 @@ import com.aichat.Dto.ConfirmResult;
 import com.aichat.Dto.IntentExtractionResult;
 import com.aichat.Dto.IntentOutcome;
 import com.aichat.Dto.MemoryCandidate;
+import com.aichat.Dto.MemoryChange;
+import com.aichat.Dto.MemoryVO;
 import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
 import com.aichat.Dto.UserDto;
@@ -29,6 +32,7 @@ import com.aichat.utils.IntentPayloadCodec;
 import com.aichat.utils.IntentQueryReplyBuilder;
 import com.aichat.utils.IntentReplyFormatter;
 import com.aichat.utils.MbMarkers;
+import com.aichat.utils.MemoryChangeParser;
 import com.aichat.utils.SensitiveContentFilter;
 import com.aichat.utils.TaskCapabilityGuard;
 import com.aichat.utils.UserHolder;
@@ -55,7 +59,8 @@ public class IntentServiceImpl implements IntentService {
     private static final String NO_PENDING_FALLBACK =
             "当前没有待确认的内容。如果要记住或提醒，请先说出具体内容。";
     private static final String UPDATE_FALLBACK =
-            "P1 暂不支持通过聊天修改或删除任务；如果你已经在任务列表操作，以任务列表为准。需要改/删请到任务列表。";
+            "聊天里目前可以改或删记忆，比如“把目标改成明年考公”“把作息的记忆删掉”。"
+                    + "任务的时间、重复规则要改，请到任务列表操作。";
     private static final String TASK_CLARIFY_FALLBACK =
             "我没识别出具体任务。你想让我提醒你什么？大概几点？";
     private static final String SENSITIVE_FALLBACK =
@@ -79,6 +84,9 @@ public class IntentServiceImpl implements IntentService {
         this.memoryService = memoryService;
     }
 
+    /** 记忆变更时扫描的候选条数上限；只读生效记忆，100 是 mapper 的硬上限。 */
+    private static final int MEMORY_CHANGE_SCAN_LIMIT = 50;
+
     /** QUERY 回复里最多展示的任务/记忆条数（超出提示"列表里翻看"）。 */
     private static final int QUERY_SHOW_LIMIT = 10;
 
@@ -97,7 +105,7 @@ public class IntentServiceImpl implements IntentService {
             case NONE -> handleNone(sessionId, message, sourceMessageId);
             case CONFIRM -> confirm(pending);
             case REJECT -> reject(pending);
-            case UPDATE -> update(pending);
+            case UPDATE -> update(pending, sessionId, message, sourceMessageId);
             case NO_PENDING -> IntentOutcome.replyOnly(NO_PENDING_FALLBACK);
             case QUERY -> query(sessionId, message);
             case MEMORY, TASK -> extract(intent, sessionId, message, sourceMessageId);
@@ -283,8 +291,17 @@ public class IntentServiceImpl implements IntentService {
         return IntentOutcome.confirmed(result, IntentReplyFormatter.buildConfirmResultReply(result));
     }
 
-    /** P1 不支持改任务；如果当前还有 pending，先让它失效，避免用户之后误确认旧提案。 */
-    private IntentOutcome update(PendingActionVO pending) {
+    /**
+     * 用户说“把 X 改成 Y”“把 X 删掉”。
+     *
+     * 先用规则在已有记忆里定位目标（MemoryChangeParser），定位到就发一条 memory_change 提案，
+     * 走和新建相同的确认弹窗；定位不到或有多条候选就追问，不猜、不落库。
+     *
+     * 任务改造/删除不在这一步：任务还牵涉改时间、重复规则，留到 P1.5 余下部分。
+     * 如果有未确认的旧提案，先作废，避免用户之后误确认。
+     */
+    private IntentOutcome update(PendingActionVO pending, String sessionId, String message,
+            Long sourceMessageId) {
         if (pending != null) {
             try {
                 pendingActionService.reject(pending.getId());
@@ -292,7 +309,38 @@ public class IntentServiceImpl implements IntentService {
                 log.info("update 前清理 pending 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
             }
         }
-        return IntentOutcome.replyOnly(UPDATE_FALLBACK);
+        // 改后的内容也可能含密码/证件号，先过敏感信息闸门，别把它写进 pending payload
+        if (SensitiveContentFilter.detectSensitiveData(message) != null) {
+            return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
+        }
+        // 说的是任务（改时间/删任务）：这轮还没做，明确引导走任务列表，别回“没找到记忆”
+        if (MemoryChangeParser.looksLikeTaskChange(message)) {
+            return IntentOutcome.replyOnly(UPDATE_FALLBACK);
+        }
+        MemoryChangeParser.Resolution resolution =
+                MemoryChangeParser.parse(message, memoryService.list(MEMORY_CHANGE_SCAN_LIMIT));
+        if (!resolution.resolved()) {
+            return IntentOutcome.replyOnly(resolution.clarify());
+        }
+
+        MemoryChangeParser.Plan plan = resolution.plan();
+        List<MemoryChange> changes = new ArrayList<>();
+        for (MemoryVO target : plan.targets()) {
+            changes.add(new MemoryChange(target.getId(),
+                    plan.isDelete() ? "DELETE" : "UPDATE", target.getContent(), plan.after()));
+        }
+        long pendingId;
+        try {
+            pendingId = pendingActionService.create(sessionId, "memory_change",
+                    IntentPayloadCodec.buildChangePayload(changes, plan.preview(), message),
+                    sourceMessageId);
+        } catch (BusinessException e) {
+            log.warn("记忆变更写 pending 失败（{}）: session={}", e.getMessage(), sessionId);
+            return IntentOutcome.replyOnly("刚才的提案发生冲突，请再试一次。");
+        }
+        log.info("记忆变更提案: session={}, pendingId={}, action={}, targets={}", sessionId, pendingId,
+                plan.action(), plan.targets().size());
+        return IntentOutcome.extracted(MbMarkers.pendingOnly(pendingId), pendingId);
     }
 
     private IntentOutcome reject(PendingActionVO pending) {

@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS tb_pending_action (
   id                BIGINT       NOT NULL AUTO_INCREMENT,
   user_id           VARCHAR(32)  NOT NULL,
   session_id        VARCHAR(64)  NOT NULL,
-  action_type       ENUM('memory','task','mixed') NOT NULL,
+  action_type       VARCHAR(32)  NOT NULL COMMENT '提案类型：memory/task/mixed/memory_change',
   payload           JSON         NOT NULL COMMENT '提案内容（memories + tasks），限制 16KB',
   status            ENUM('pending','confirmed','rejected','expired') NOT NULL DEFAULT 'pending',
   expires_at        DATETIME     NOT NULL,

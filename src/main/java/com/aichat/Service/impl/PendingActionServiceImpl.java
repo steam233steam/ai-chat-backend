@@ -19,6 +19,8 @@ import com.aichat.Config.MindButlerProperties;
 import com.aichat.Dto.ConfirmResult;
 import com.aichat.Dto.CreateTaskRequest;
 import com.aichat.Dto.MemoryCandidate;
+import com.aichat.Dto.UpdateMemoryRequest;
+import com.aichat.Dto.MemoryChange;
 import com.aichat.Dto.MemoryVO;
 import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
@@ -61,8 +63,9 @@ public class PendingActionServiceImpl implements PendingActionService {
         if (sessionId.length() > 64) {
             throw new BusinessException("sessionId 长度不能超过 64");
         }
-        if (!"memory".equals(actionType) && !"task".equals(actionType) && !"mixed".equals(actionType)) {
-            throw new BusinessException("actionType 只能是 memory/task/mixed");
+        if (!"memory".equals(actionType) && !"task".equals(actionType) && !"mixed".equals(actionType)
+                && !"memory_change".equals(actionType)) {
+            throw new BusinessException("actionType 只能是 memory/task/mixed/memory_change");
         }
         if (payload == null || payload.isBlank()) {
             throw new BusinessException("待确认内容不能为空");
@@ -73,7 +76,7 @@ public class PendingActionServiceImpl implements PendingActionService {
             throw new BusinessException("待确认内容过长");
         }
         // 不要把 confirm 必然拒绝的空/非法 proposal 写进 pending。
-        ensureConfirmablePayload(payload);
+        ensureConfirmablePayload(actionType, payload);
 
         PendingAction action = new PendingAction();
         action.setUserId(userId);
@@ -175,16 +178,27 @@ public class PendingActionServiceImpl implements PendingActionService {
 
         // 成功抢到状态迁移后再校验 payload。这样并发重复确认会先走 alreadyConfirmed 幂等分支，
         // 而空/非法 payload 会抛异常让事务回滚，不会出现“确认成功但什么都没创建”。
-        ensureConfirmablePayload(action.getPayload());
+        List<Map<String, Object>> memoryResults = new ArrayList<>();
+        List<Map<String, Object>> taskResults = new ArrayList<>();
+        String receipt = null;
+        if ("memory_change".equals(action.getActionType())) {
+            // 改/删走另一条落库路径：payload 里是 changes，不是 memories/tasks
+            ChangeApplyResult applied = applyChanges(action);
+            memoryResults = applied.memories();
+            receipt = applied.receipt();
+        } else {
+            ensureConfirmablePayload(action.getActionType(), action.getPayload());
 
-        // 按 payload 实际内容落库（memories + tasks，可能都为空则只确认不建）
-        // P1.1 会话隔离：记忆按候选自带的 scope 决定落库 session（session 级 = 本会话，global = 全局）
-        List<Map<String, Object>> memoryResults = applyMemories(action);
-        List<Map<String, Object>> taskResults = applyTasks(action);
+            // 按 payload 实际内容落库（memories + tasks，可能都为空则只确认不建）
+            // P1.1 会话隔离：记忆按候选自带的 scope 决定落库 session（session 级 = 本会话，global = 全局）
+            memoryResults = applyMemories(action);
+            taskResults = applyTasks(action);
+        }
         log.info("pending 确认: userId={}, id={}, memories={}, tasks={}",
                 userId, id, memoryResults.size(), taskResults.size());
         ConfirmResult result = new ConfirmResult(false, memoryResults, taskResults);
         result.setSessionId(action.getSessionId());
+        result.setReceipt(receipt);
 
         // 聊天历史由聊天链路负责，PendingActionService 只负责状态机 + 业务落库。
         // 弹窗确认已经有 success 状态；如果这里再写一条 assistant 消息，
@@ -234,7 +248,17 @@ public class PendingActionServiceImpl implements PendingActionService {
      * 解析失败、空数组、只有 P1 不支持的 update/delete 候选都直接 400，
      * 不能把 pending 置 confirmed 后返回“都帮你设好了”。
      */
-    private void ensureConfirmablePayload(String payload) {
+    private void ensureConfirmablePayload(String actionType, String payload) {
+        if ("memory_change".equals(actionType)) {
+            boolean hasChange = IntentPayloadCodec.parseChanges(payload).stream()
+                    .anyMatch(c -> c != null && c.getId() != null
+                            && ("DELETE".equalsIgnoreCase(c.getAction())
+                                    || "UPDATE".equalsIgnoreCase(c.getAction())));
+            if (!hasChange) {
+                throw new BusinessException("待确认内容为空或已失效，请重新发起");
+            }
+            return;
+        }
         boolean hasMemory = IntentPayloadCodec
                 .parseCandidates(payload, "memories", MemoryCandidate.class).stream()
                 .anyMatch(c -> c != null && c.getKey() != null && c.getValue() != null
@@ -306,6 +330,50 @@ public class PendingActionServiceImpl implements PendingActionService {
         return results;
     }
 
+    /** 变更落库结果：memories 里放每个操作的摘要（供前端/日志看），receipt 是回给用户的一句话。 */
+    private record ChangeApplyResult(List<Map<String, Object>> memories, String receipt) {
+    }
+
+    /**
+     * 执行记忆的改/删。逐条处理：单条失败（例如已被别处删掉）只跳过并记日志，
+     * 但乐观锁冲突要抛出去 —— 那说明用户看到的内容已经变了，不能悄悄覆盖。
+     */
+    private ChangeApplyResult applyChanges(PendingAction action) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        List<String> said = new ArrayList<>();
+        for (MemoryChange change : IntentPayloadCodec.parseChanges(action.getPayload())) {
+            if (change == null || change.getId() == null || change.getAction() == null) {
+                continue;
+            }
+            boolean delete = "DELETE".equalsIgnoreCase(change.getAction());
+            MemoryVO current = memoryService.get(change.getId());
+            if (current == null) {
+                log.info("变更跳过：记忆已不存在, id={}", change.getId());
+                continue;
+            }
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", current.getId());
+            row.put("memKey", current.getMemKey());
+            row.put("before", current.getContent());
+            if (delete) {
+                memoryService.delete(current.getId());
+                row.put("action", "deleted");
+                results.add(row);
+                said.add("已删掉「" + current.getContent() + "」");
+                continue;
+            }
+            UpdateMemoryRequest request = new UpdateMemoryRequest();
+            request.setContent(change.getAfter());
+            request.setVersion(current.getVersion());
+            MemoryVO updated = memoryService.update(current.getId(), request);
+            row.put("action", "updated");
+            row.put("after", updated.getContent());
+            results.add(row);
+            said.add("「" + current.getContent() + "」改成「" + updated.getContent() + "」");
+        }
+        String receipt = said.isEmpty() ? "这几条记忆已经不在了，没有改动。" : String.join("；", said);
+        return new ChangeApplyResult(results, receipt);
+    }
     private PendingActionVO toVO(PendingAction action, LocalDateTime now) {
         PendingActionVO vo = new PendingActionVO();
         vo.setId(action.getId());
@@ -317,7 +385,12 @@ public class PendingActionServiceImpl implements PendingActionService {
                 action.getPayload(), "memories", MemoryCandidate.class));
         vo.setTasks(IntentPayloadCodec.parseCandidates(
                 action.getPayload(), "tasks", TaskCandidate.class));
-        vo.setPreview(buildPreview(vo.getMemories(), vo.getTasks()));
+        if ("memory_change".equals(action.getActionType())) {
+            // 变更提案没有"新建几条"的概念，文案直接用 payload 里生成好的那句话
+            vo.setPreview(IntentPayloadCodec.parsePreview(action.getPayload()));
+        } else {
+            vo.setPreview(buildPreview(vo.getMemories(), vo.getTasks()));
+        }
         return vo;
     }
 

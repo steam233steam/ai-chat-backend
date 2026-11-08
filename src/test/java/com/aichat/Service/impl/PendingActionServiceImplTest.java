@@ -27,6 +27,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.aichat.Config.MindButlerProperties;
+import com.aichat.Dto.ConfirmResult;
 import com.aichat.Dto.CreateTaskRequest;
 import com.aichat.Dto.MemoryCandidate;
 import com.aichat.Dto.MemoryVO;
@@ -438,6 +439,55 @@ class PendingActionServiceImplTest {
         assertThatThrownBy(() -> service.reject(99L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不存在");
+    }
+
+    // ---------- 记忆变更（改/删） ----------
+
+    @Test
+    void shouldApplyMemoryChangeOnConfirm() {
+        String payload = "{\"changes\":[{\"id\":5,\"action\":\"UPDATE\",\"before\":\"今年考研\",\"after\":\"明年考公\"}],"
+                + "\"preview\":\"要把这条记忆改成：「明年考公」。\"}";
+        PendingAction p = pending(11L, payload, NOW.plusMinutes(10));
+        p.setActionType("memory_change");
+        when(mapper.selectById(11L, UID)).thenReturn(p);
+        when(mapper.markConfirmed(11L, UID)).thenReturn(1);
+
+        MemoryVO current = new MemoryVO();
+        current.setId(5L);
+        current.setMemKey("goal");
+        current.setContent("今年考研");
+        current.setVersion(3);
+        when(memoryService.get(5L)).thenReturn(current);
+        MemoryVO updated = new MemoryVO();
+        updated.setId(5L);
+        updated.setContent("明年考公");
+        when(memoryService.update(eq(5L), any())).thenReturn(updated);
+
+        ConfirmResult result = service.confirm(11L);
+
+        assertThat(result.getReceipt()).contains("明年考公").contains("今年考研");
+        assertThat(result.getMemories()).hasSize(1);
+        verify(memoryService).update(eq(5L), any());
+    }
+
+    @Test
+    void shouldApplyMemoryDeleteOnConfirm() {
+        String payload = "{\"changes\":[{\"id\":6,\"action\":\"DELETE\",\"before\":\"喜欢简洁\"}],"
+                + "\"preview\":\"要删掉这条记忆。\"}";
+        PendingAction p = pending(12L, payload, NOW.plusMinutes(10));
+        p.setActionType("memory_change");
+        when(mapper.selectById(12L, UID)).thenReturn(p);
+        when(mapper.markConfirmed(12L, UID)).thenReturn(1);
+        MemoryVO current = new MemoryVO();
+        current.setId(6L);
+        current.setMemKey("style");
+        current.setContent("喜欢简洁");
+        when(memoryService.get(6L)).thenReturn(current);
+
+        ConfirmResult result = service.confirm(12L);
+
+        assertThat(result.getReceipt()).contains("已删掉").contains("喜欢简洁");
+        verify(memoryService).delete(6L);
     }
 
     // ---------- 工具 ----------

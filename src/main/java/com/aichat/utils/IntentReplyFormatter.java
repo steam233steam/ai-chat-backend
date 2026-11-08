@@ -13,8 +13,9 @@ public final class IntentReplyFormatter {
     private IntentReplyFormatter() {
     }
 
-    /** 文本确认后的短回执：按产品要求固定为“已经定好”，不重复详情。 */
+    /** 文本确认后的短回执：默认固定为"已经定好"；记忆变更等场景用业务层给的具体那句话。 */
     public static String buildConfirmResultReply(ConfirmResult result) {
-        return "已经定好";
+        String receipt = result.getReceipt();
+        return receipt == null || receipt.isBlank() ? "已经定好" : receipt;
     }
 }

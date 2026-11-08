@@ -264,24 +264,27 @@ class IntentServiceImplTest {
     }
 
     @Test
-    void shouldRejectDeleteClaimWithoutCallingChatModel() {
+    void shouldNotEchoDeleteClaimAndNeverCallChatModel() {
         when(pendingActionService.current("s-1")).thenReturn(null);
+        when(memoryService.list(anyInt())).thenReturn(List.of());
 
         IntentOutcome o = service.handle("s-1", "可是我已经删除了", 12L);
 
+        // 用户说“已经删除了”时库里没有可删的记忆：要如实说没找到，不能附和“好的已删除”
         assertThat(o.shouldContinueChat()).isFalse();
-        assertThat(o.getReply()).contains("暂不支持", "删除");
+        assertThat(o.getReply()).contains("没找到");
         verify(intentExtractor, never()).extract(any(), anyString());
+        verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
     @Test
-    void shouldReturnUpdateFallbackWithoutCallingExtractor() {
+    void shouldGuideToTaskListWhenUserWantsToRescheduleTask() {
         when(pendingActionService.current("s-1")).thenReturn(null);
 
         IntentOutcome o = service.handle("s-1", "算了延后十分钟吧", 12L);
 
         assertThat(o.shouldContinueChat()).isFalse();
-        assertThat(o.getReply()).contains("暂不支持");
+        assertThat(o.getReply()).contains("任务列表").contains("改");
         verify(intentExtractor, never()).extract(any(), anyString());
         verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
@@ -296,7 +299,7 @@ class IntentServiceImplTest {
         IntentOutcome o = service.handle("s-1", "延后十分钟", 12L);
 
         assertThat(o.shouldContinueChat()).isFalse();
-        assertThat(o.getReply()).contains("暂不支持");
+        assertThat(o.getReply()).contains("任务列表");
         verify(pendingActionService).reject(99L);
         verify(intentExtractor, never()).extract(any(), anyString());
     }
@@ -519,6 +522,39 @@ class IntentServiceImplTest {
         assertThat(o.getReply()).contains("简洁");
         verify(memoryService).list(100, "s-1");
         verify(memoryService, never()).listForInjection(anyInt(), anyInt(), anyString());
+    }
+
+    @Test
+    void shouldCreateMemoryChangePendingWhenTargetResolved() {
+        when(pendingActionService.current("s-1")).thenReturn(null);
+        com.aichat.Dto.MemoryVO memory = new com.aichat.Dto.MemoryVO();
+        memory.setId(7L);
+        memory.setMemKey("goal");
+        memory.setContent("今年考研");
+        memory.setStatus("active");
+        when(memoryService.list(anyInt())).thenReturn(List.of(memory));
+        when(pendingActionService.create(eq("s-1"), eq("memory_change"), anyString(), anyLong()))
+                .thenReturn(77L);
+
+        IntentOutcome o = service.handle("s-1", "把目标改成明年考公", 31L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("[[MB:pending=77]]");
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(pendingActionService).create(eq("s-1"), eq("memory_change"), payload.capture(), eq(31L));
+        assertThat(payload.getValue()).contains("\"after\":\"明年考公\"").contains("\"id\":7");
+    }
+
+    @Test
+    void shouldAskInsteadOfGuessingWhenNoMemoryMatches() {
+        when(pendingActionService.current("s-1")).thenReturn(null);
+        when(memoryService.list(anyInt())).thenReturn(List.of());
+
+        IntentOutcome o = service.handle("s-1", "把目标删掉", 32L);
+
+        assertThat(o.shouldContinueChat()).isFalse();
+        assertThat(o.getReply()).contains("没找到");
+        verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
 }
