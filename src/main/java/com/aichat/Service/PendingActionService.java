@@ -22,6 +22,15 @@ public interface PendingActionService {
      */
     long create(String sessionId, String actionType, String payload, Long sourceMessageId);
 
+    /**
+     * 静默保存记忆（不建 pending、不打扰用户）。
+     *
+     * 记忆已经从产品上收进后台：只用来当上下文，不再让用户确认或管理，
+     * 所以这里直接落库，不占用 pending 槽位、不影响已有待确认的任务。
+     */
+    void saveMemoriesQuietly(String sessionId, java.util.List<com.aichat.Dto.MemoryCandidate> memories,
+                             Long sourceMessageId);
+
     /** 查当前 session 的 pending；没有/已过期返回 null（过期会顺手置 expired）。 */
     PendingActionVO current(String sessionId);
 

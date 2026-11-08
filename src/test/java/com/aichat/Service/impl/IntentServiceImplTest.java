@@ -149,33 +149,30 @@ class IntentServiceImplTest {
     @Test
     void shouldReturnFallbackWhenPendingCreateConflicts() {
         when(pendingActionService.current("s-1")).thenReturn(null);
-        when(intentExtractor.extract(eq(Intent.MEMORY), anyString())).thenReturn(memoryOnly());
+        when(intentExtractor.extract(eq(Intent.TASK), anyString())).thenReturn(taskOnly());
         when(pendingActionService.create(anyString(), anyString(), anyString(), anyLong()))
                 .thenThrow(new BusinessException(409, "待确认动作正在更新，请重试"));
 
-        IntentOutcome o = service.handle("s-1", "记住我喜欢简洁", 3L);
+        IntentOutcome o = service.handle("s-1", "明天 9 点交作业", 3L);
 
         assertThat(o.shouldContinueChat()).isFalse();
         assertThat(o.getReply()).contains("冲突");
     }
 
-    // ---------- 提取 → 写 pending → 确认文案 ----------
+    // ---------- 提取 → 记忆静默落库 / 任务写 pending ----------
 
     @Test
-    void shouldExtractMemoryAndCreatePending() {
+    void shouldSaveMemoryQuietlyWithoutPending() {
         when(pendingActionService.current("s-1")).thenReturn(null);
         when(intentExtractor.extract(eq(Intent.MEMORY), eq("记住我喜欢简洁"))).thenReturn(memoryOnly());
-        when(pendingActionService.create(eq("s-1"), eq("memory"), anyString(), eq(7L))).thenReturn(11L);
 
         IntentOutcome o = service.handle("s-1", "记住我喜欢简洁", 7L);
 
-        assertThat(o.isExtracted()).isTrue();
-        assertThat(o.shouldContinueChat()).isFalse();
-        // 聊天流只返回机器标记，不再插入“已识别到 N 条”的 AI 气泡
-        assertThat(o.getReply()).isEqualTo("[[MB:pending=11]]");
-        assertThat(MbMarkers.strip(o.getReply())).isEmpty();
-        assertThat(o.getPendingId()).isEqualTo(11L);
-        verify(pendingActionService).create(eq("s-1"), eq("memory"), anyString(), eq(7L));
+        // 记忆不再弹确认窗：直接静默保存，这一句继续走普通聊天
+        assertThat(o.shouldContinueChat()).isTrue();
+        assertThat(o.isExtracted()).isFalse();
+        verify(pendingActionService).saveMemoriesQuietly(eq("s-1"), anyList(), eq(7L));
+        verify(pendingActionService, never()).create(anyString(), anyString(), anyString(), anyLong());
     }
 
     @Test
@@ -374,13 +371,14 @@ class IntentServiceImplTest {
                 List.of(new MemoryCandidate("style", "第一条", "stable", 0.9, null),
                         new MemoryCandidate("fact", "第二条", "stable", 0.9, null)),
                 List.of()));
-        when(pendingActionService.create(eq("s-1"), eq("memory"), anyString(), eq(7L))).thenReturn(11L);
 
         service.handle("s-1", "记住我喜欢简洁", 7L);
 
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        verify(pendingActionService).create(eq("s-1"), eq("memory"), payload.capture(), eq(7L));
-        assertThat(payload.getValue()).contains("第一条").doesNotContain("第二条");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<MemoryCandidate>> captured = ArgumentCaptor.forClass(List.class);
+        verify(pendingActionService).saveMemoriesQuietly(eq("s-1"), captured.capture(), eq(7L));
+        assertThat(captured.getValue()).hasSize(1);
+        assertThat(captured.getValue().get(0).getValue()).isEqualTo("第一条");
     }
 
     // ---------- 确认 / 拒绝 ----------

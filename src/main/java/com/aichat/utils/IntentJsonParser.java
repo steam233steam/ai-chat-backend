@@ -88,6 +88,13 @@ public final class IntentJsonParser {
             c.setTimezone(textOrNull(node.get("timezone")));
             c.setRecurrence(textOrNull(node.get("recurrence")));
             c.setRecurrenceRule(textOrNull(node.get("recurrenceRule")));
+            c.setTool(textOrNull(node.get("tool")));
+            JsonNode args = node.get("toolArgs");
+            if (args != null && args.isObject()) {
+                java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+                args.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue().asText()));
+                c.setToolArgs(map);
+            }
             out.add(c);
         }
     }

@@ -561,4 +561,44 @@ class TaskServiceImplTest {
                 .hasMessageContaining("动作类型只支持");
     }
 
+    @Test
+    void shouldStoreMcpAction() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("每天九点查天气");
+        req.setRecurrence("daily");
+        req.setDueAt(NOW.plusDays(1));
+        req.setActionType("mcp");
+        req.setActionConfig("{\"tool\":\"mcp_info_weather\",\"args\":{\"city\":\"北京\"}}");
+
+        UserTask saved = captureCreated(req);
+
+        assertThat(saved.getActionType()).isEqualTo("mcp");
+        assertThat(saved.getActionConfig()).contains("mcp_info_weather");
+    }
+
+    @Test
+    void shouldRejectMcpToolWithoutPrefix() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("查天气");
+        req.setActionType("mcp");
+        req.setActionConfig("{\"tool\":\"weather\"}");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("mcp_");
+        verify(mapper, never()).insert(any(UserTask.class));
+    }
+
+    @Test
+    void shouldRejectMcpConfigThatIsNotJson() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("查天气");
+        req.setActionType("mcp");
+        req.setActionConfig("查北京天气");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("合法 JSON");
+    }
+
 }

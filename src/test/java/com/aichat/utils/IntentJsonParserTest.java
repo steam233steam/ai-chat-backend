@@ -28,8 +28,18 @@ class IntentJsonParserTest {
     }
 
     @Test
-    void shouldStripJsonFence() {
-        String fenced = "```json\n{\"tasks\":[{\"title\":\"买牛奶\"}]}\n```";
+    void shouldParseTaskToolAndArgs() {
+        String json = "{\"tasks\":[{\"action\":\"create\",\"title\":\"每天九点查天气\","
+                + "\"dueAt\":\"2026-11-09T09:00:00\",\"recurrence\":\"daily\","
+                + "\"tool\":\"weather\",\"toolArgs\":{\"city\":\"北京\"}}]}";
+        IntentExtractionResult p = IntentJsonParser.parse(json);
+        assertThat(p.getTasks()).hasSize(1);
+        assertThat(p.getTasks().get(0).getTool()).isEqualTo("weather");
+        assertThat(p.getTasks().get(0).getToolArgs()).containsEntry("city", "北京");
+    }
+
+    @Test
+    void shouldStripJsonFence() {        String fenced = "```json\n{\"tasks\":[{\"title\":\"买牛奶\"}]}\n```";
         IntentExtractionResult p = IntentJsonParser.parse(fenced);
         assertThat(p.getTasks()).hasSize(1);
         assertThat(p.getTasks().get(0).getTitle()).isEqualTo("买牛奶");

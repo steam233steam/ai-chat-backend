@@ -389,8 +389,11 @@ public class TaskServiceImpl implements TaskService {
     private static final java.util.regex.Pattern WEBHOOK_URL =
             java.util.regex.Pattern.compile("\"url\"\\s*:\\s*\"([^\"]+)\"");
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     /**
-     * 到点做什么：notify（站内提醒）/ webhook（回调地址）。
+     * 到点做什么：notify（站内提醒）/ webhook（回调地址）/ mcp（让 AI 查一次外部信息）。
      * create 时 current 为 null；update 时未传 actionType 就沿用旧值（partial update 语义）。
      */
     private void applyAction(UserTask task, String actionType, String actionConfig, UserTask current) {
@@ -399,8 +402,8 @@ public class TaskServiceImpl implements TaskService {
         if (type == null || type.isEmpty()) {
             type = "notify";
         }
-        if (!"notify".equals(type) && !"webhook".equals(type)) {
-            throw new BusinessException("动作类型只支持 notify / webhook");
+        if (!"notify".equals(type) && !"webhook".equals(type) && !"mcp".equals(type)) {
+            throw new BusinessException("动作类型只支持 notify / webhook / mcp");
         }
         String config = actionConfig != null ? actionConfig.trim()
                 : (actionType == null && current != null ? current.getActionConfig() : null);
@@ -415,6 +418,20 @@ public class TaskServiceImpl implements TaskService {
             String url = m.group(1).trim();
             if (!url.startsWith("http://") && !url.startsWith("https://")) {
                 throw new BusinessException("webhook 地址必须以 http:// 或 https:// 开头");
+            }
+        } else if ("mcp".equals(type)) {
+            if (config == null || config.isEmpty()) {
+                throw new BusinessException("MCP 动作需要填写 {\"tool\":\"mcp_info_weather\",\"args\":{...}}");
+            }
+            String tool;
+            try {
+                com.fasterxml.jackson.databind.JsonNode node = MAPPER.readTree(config);
+                tool = node.path("tool").asText("");
+            } catch (Exception e) {
+                throw new BusinessException("MCP 动作的参数不是合法 JSON");
+            }
+            if (!tool.startsWith("mcp_")) {
+                throw new BusinessException("MCP 工具名应以 mcp_ 开头，例如 mcp_info_weather");
             }
         } else {
             config = null;

@@ -164,8 +164,18 @@ public class IntentServiceImpl implements IntentService {
 
         List<MemoryCandidate> memories = candidateSanitizer.sanitizeMemories(extracted.getMemories());
         List<TaskCandidate> tasks = candidateSanitizer.sanitizeTasks(extracted.getTasks());
+        if (!tasks.isEmpty() && !memories.isEmpty()) {
+            // 一句话已经变成任务，就不再同时存记忆：否则「明天上早八」这种会在任务和记忆里各出现一次。
+            log.info("本句已产出 {} 条任务，丢弃同时抽到的 {} 条记忆候选", tasks.size(), memories.size());
+            memories = List.of();
+        }
         if (memories.isEmpty() && tasks.isEmpty()) {
             return null; // 净化后无有效候选，走正常聊天
+        }
+        if (tasks.isEmpty()) {
+            // 记忆不再弹确认窗：静默存下当后台上下文，这一句继续当普通聊天处理。
+            pendingActionService.saveMemoriesQuietly(sessionId, memories, sourceMessageId);
+            return null;
         }
 
         String actionType = (memories.isEmpty() ? "task" : tasks.isEmpty() ? "memory" : "mixed");
@@ -258,6 +268,12 @@ public class IntentServiceImpl implements IntentService {
             }
             return IntentOutcome.replyOnly(
                     intent == Intent.TASK ? TASK_CLARIFY_FALLBACK : EXTRACT_FALLBACK);
+        }
+
+        if (tasks.isEmpty()) {
+            // 只有记忆、没有任务：静默保存，不弹确认窗（记忆只当后台上下文用）。
+            pendingActionService.saveMemoriesQuietly(sessionId, memories, sourceMessageId);
+            return IntentOutcome.chat();
         }
 
         String actionType = (memories.isEmpty() ? "task" : tasks.isEmpty() ? "memory" : "mixed");

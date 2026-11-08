@@ -24,6 +24,10 @@ public class IntentCandidateSanitizer {
     private static final Logger log = LoggerFactory.getLogger(IntentCandidateSanitizer.class);
 
     private static final int MEMORY_CONTENT_MAX = 256;
+    /** 允许被定时任务调用的信息查询类工具（文件读写等有副作用的工具不在内）。 */
+    private static final java.util.Set<String> QUERY_TOOLS =
+            java.util.Set.of("weather", "search", "now", "fetch_url");
+
     private static final int TASK_TITLE_MAX = 128;
 
     private final MindButlerProperties props;
@@ -48,6 +52,11 @@ public class IntentCandidateSanitizer {
             String key = c.getKey().trim().toLowerCase(Locale.ROOT);
             if (!MemoryKey.isValid(key)) {
                 continue; // 非法/缺 key 的候选丢弃
+            }
+            if (MemoryKey.SCHEDULE.getValue().equals(key)) {
+                // 「下周三开会」「明天上早八」这类一律走任务，不再存成记忆：
+                // 日程记忆和任务语义完全重叠，两边各存一份用户只会看到重复。
+                continue;
             }
             String value = SensitiveContentFilter.stripControlChars(c.getValue());
             if (value.isEmpty()) {
@@ -166,6 +175,13 @@ public class IntentCandidateSanitizer {
             if (!"Asia/Shanghai".equals(timezone)) {
                 continue; // P1 固定单时区
             }
+            // 到点调什么：只放行信息查询类工具，未识别的降级成站内提醒
+            String tool = c.getTool() == null ? null : c.getTool().trim().toLowerCase(Locale.ROOT);
+            if (tool != null && !QUERY_TOOLS.contains(tool)) {
+                log.warn("未知 MCP 工具，降级为站内提醒: {}", tool);
+                tool = null;
+            }
+            c.setTool(tool);
             c.setAction("create");
             c.setTitle(title);
             c.setRecurrence(recurrence);

@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -121,6 +122,8 @@ class MindButlerEvalRunnerTest {
         for (EvalCase c : cases) {
             // 每条用例给独立 session（pending 隔离，互不干扰）
             String session = "eval_" + c.id;
+            // 记忆已改为静默落库，逐条清掉上一条用例留下的记忆，避免误判
+            jdbc.update("DELETE FROM tb_user_memory WHERE user_id = ?", userId);
             Long sourceMessageId = insertMessage(c.input, session);
 
             // 桩模式：把期望 JSON 喂给提取器；真模型：不 stub，让真实 LLM 出候选
@@ -131,7 +134,14 @@ class MindButlerEvalRunnerTest {
 
             IntentOutcome outcome = intentService.handle(session, c.input, sourceMessageId);
 
-            boolean ok = assertCase(c, outcome);
+            boolean ok;
+            try {
+                ok = assertCase(c, outcome);
+            } catch (AssertionError e) {
+                // 单条断言失败不要让整个评测中断，记成未命中并带上原因
+                ok = false;
+                misses.add("case#" + c.id + " 断言失败: " + e.getMessage());
+            }
             if (ok) {
                 hit++;
             } else {
@@ -169,7 +179,23 @@ class MindButlerEvalRunnerTest {
 
     private boolean assertCase(EvalCase c, IntentOutcome outcome) {
         switch (c.type) {
-            case "memory", "task", "mixed" -> {
+            case "memory" -> {
+                // 记忆已收进后台：静默落库、不建 pending，这一句继续走普通聊天
+                PendingActionVO pending = pendingActionService.current("eval_" + c.id);
+                assertThat(pending).isNull();
+                List<Map<String, Object>> rows = jdbc.queryForList(
+                        "SELECT mem_key, content FROM tb_user_memory WHERE user_id = ? AND status = 'active'",
+                        userId);
+                assertThat(rows).isNotEmpty();
+                if (c.expectKey != null) {
+                    assertThat(String.valueOf(rows.get(0).get("mem_key"))).isEqualTo(c.expectKey);
+                }
+                if (c.expectValueContains != null) {
+                    assertThat(String.valueOf(rows.get(0).get("content"))).contains(c.expectValueContains);
+                }
+                return outcome.shouldContinueChat();
+            }
+            case "task", "mixed" -> {
                 // 应提取出候选并写 pending
                 if (!outcome.isExtracted()) {
                     return false;

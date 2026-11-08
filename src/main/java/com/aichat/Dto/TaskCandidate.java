@@ -14,6 +14,10 @@ public class TaskCandidate {
     private String timezone;
     private String recurrence;
     private String recurrenceRule;
+    /** 到点要调用的 MCP 工具短名（weather/search/now/fetch_url）；为空表示站内提醒。 */
+    private String tool;
+    /** MCP 工具参数，例如 {"city":"北京"}、{"q":"AI 新闻"}。 */
+    private java.util.Map<String, Object> toolArgs;
 
     public TaskCandidate() {
     }
@@ -74,5 +78,21 @@ public class TaskCandidate {
 
     public void setRecurrenceRule(String recurrenceRule) {
         this.recurrenceRule = recurrenceRule;
+    }
+
+    public String getTool() {
+        return tool;
+    }
+
+    public void setTool(String tool) {
+        this.tool = tool;
+    }
+
+    public java.util.Map<String, Object> getToolArgs() {
+        return toolArgs;
+    }
+
+    public void setToolArgs(java.util.Map<String, Object> toolArgs) {
+        this.toolArgs = toolArgs;
     }
 }

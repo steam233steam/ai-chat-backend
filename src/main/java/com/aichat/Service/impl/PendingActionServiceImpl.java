@@ -39,6 +39,9 @@ import com.aichat.utils.UserHolder;
 public class PendingActionServiceImpl implements PendingActionService {
     private static final Logger log = LoggerFactory.getLogger(PendingActionServiceImpl.class);
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final PendingActionMapper pendingActionMapper;
     private final MemoryService memoryService;
     private final TaskService taskService;
@@ -274,6 +277,29 @@ public class PendingActionServiceImpl implements PendingActionService {
 
     // 落库
 
+    @Override
+    public void saveMemoriesQuietly(String sessionId, List<MemoryCandidate> memories, Long sourceMessageId) {
+        if (memories == null || memories.isEmpty()) {
+            return;
+        }
+        int saved = 0;
+        for (MemoryCandidate c : memories) {
+            if (c == null || c.getKey() == null || c.getValue() == null) {
+                continue;
+            }
+            try {
+                String sessionScope = "session".equals(c.getScope()) ? sessionId : null;
+                memoryService.createWithReplaces(c.getKey(), c.getValue(), c.getMemType(),
+                        c.getConfidence(), c.getReplacesId(), sourceMessageId, sessionScope);
+                saved++;
+            } catch (RuntimeException e) {
+                // 静默保存失败不影响这一轮聊天
+                log.warn("静默保存记忆失败（key={}）: {}", c.getKey(), e.getMessage());
+            }
+        }
+        log.info("静默保存记忆 {} 条: session={}", saved, sessionId);
+    }
+
     private List<Map<String, Object>> applyMemories(PendingAction action) {
         List<Map<String, Object>> results = new ArrayList<>();
         List<MemoryCandidate> memories = IntentPayloadCodec.parseCandidates(action.getPayload(), "memories",
@@ -316,6 +342,11 @@ public class PendingActionServiceImpl implements PendingActionService {
             req.setDueAt(c.getDueAt());
             req.setRecurrence(c.getRecurrence());
             req.setRecurrenceRule(c.getRecurrenceRule());
+            // AI 想让它到点去查东西（天气/搜索/时间/抓网页）时，带上 MCP 动作
+            if (c.getTool() != null && !c.getTool().isBlank()) {
+                req.setActionType("mcp");
+                req.setActionConfig(buildMcpActionConfig(c.getTool(), c.getToolArgs()));
+            }
             // P1.5：记录任务从哪个会话发起（溯源），可见性仍全账号
             TaskVO vo = taskService.createFromPending(req, action.getSessionId());
             Map<String, Object> r = new HashMap<>();
@@ -330,8 +361,20 @@ public class PendingActionServiceImpl implements PendingActionService {
         return results;
     }
 
-    /** 变更落库结果：memories 里放每个操作的摘要（供前端/日志看），receipt 是回给用户的一句话。 */
-    private record ChangeApplyResult(List<Map<String, Object>> memories, String receipt) {
+    /** 把「天气/搜索/时间/抓网页」的短工具名拼成调度器认的 action_config。 */
+    private String buildMcpActionConfig(String tool, Map<String, Object> toolArgs) {
+        Map<String, Object> config = new HashMap<>();
+        config.put("tool", "mcp_info_" + tool);
+        config.put("args", toolArgs == null ? Map.of() : toolArgs);
+        try {
+            return MAPPER.writeValueAsString(config);
+        } catch (Exception e) {
+            log.warn("拼 MCP 动作参数失败，降级为站内提醒: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 变更落库结果：memories 里放每个操作的摘要（供前端/日志看），receipt 是回给用户的一句话。 */    private record ChangeApplyResult(List<Map<String, Object>> memories, String receipt) {
     }
 
     /**
