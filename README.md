@@ -124,7 +124,8 @@ mvn spring-boot:run
 |------|------|------|
 | GET | `/chat/models` | 可用模型白名单 |
 | POST | `/chat/ask` | 同步对话（含 MindButler 意图拦截：命中记忆/任务意图直接返回确认文案，不调聊天模型） |
-| GET | `/chat/ask-stream` | 流式对话 (SSE) |
+| POST | `/chat/ask-stream` | 流式对话（SSE），JSON body：`{sessionid, question, modelName}` —— **前端用这个** |
+| GET | `/chat/ask-stream` | 同上，query 传参；已标 `@Deprecated`，仅兼容旧集成测试 |
 | GET | `/chat/history` | 会话历史（可选 `beforeId` + `limit` 分页） |
 | GET | `/chat/sessions` | 会话列表 |
 | PUT | `/chat/title` | 更新标题 |
@@ -158,7 +159,7 @@ mvn spring-boot:run
 
 工具实现见 `mcp-servers/info-server.mjs`，配置与扩展方式见 [`docs/mcp.md`](docs/mcp.md)。
 
-完整接口文档见 `docs/API.md` §13。
+接口清单以 **`/swagger-ui/index.html`**（springdoc 自动生成）为准；上面这张表只列常用入口。
 
 ## 架构设计
 
@@ -269,19 +270,20 @@ mvn test -Dtest=FullFlowIntegrationTest
 | `app.mindbutler.intent.max-tasks` | `5` | 单条消息最多任务候选 |
 
 ## 文档
+## 文档
 
-**先看 [`docs/README.md`](docs/README.md)（文档索引）**，再按需点下面：
+**先看 [`docs/README.md`](docs/README.md)（文档索引，15 份 + 迁移脚本 + 评测集）**，按目的挑：
 
-- [`docs/路线图.md`](docs/路线图.md) — 当前排期：先做什么、为什么、明确不做什么
-- [`docs/MindButler-P1设计.md`](docs/MindButler-P1设计.md) — P1 施工版设计（记忆 + 口语化任务 + 确认状态机）
-- [`docs/P1-上线验收清单.md`](docs/P1-上线验收清单.md) — 上线范围、配置、12 个人工验收用例与执行记录
-- [`docs/聊天持久化设计.md`](docs/聊天持久化设计.md) — 持久化、缓存一致性与面试讲点
-- [`docs/P1-代码结构.md`](docs/P1-代码结构.md) — 包职责、意图链路与复盘顺序
-- [`docs/Task-Capability.md`](docs/Task-Capability.md) — 任务能力边界（能做/不能做）
-- [`docs/API.md`](docs/API.md) — 接口文档（以 `/swagger-ui.html` 为准）
-- [`docs/schema.sql`](docs/schema.sql) — 当前全量表结构；增量脚本在 `docs/migration/`
-- [`docs/eval/`](docs/eval/) — 意图提取评测集（40 条）
-- [`docs/本地启动.md`](docs/本地启动.md) — 本地运行指南（VirtualBox 虚拟机 + 端口映射）
-- [`docs/踩坑记录.md`](docs/踩坑记录.md) — 踩过的坑与结论
-- [`docs/学习笔记.md`](docs/学习笔记.md) — 开发笔记
-- [`PROJECT_STATUS.md`](PROJECT_STATUS.md) — 开发日志（按时间倒序，查"某天改了什么"）
+| 目的 | 文档 |
+|---|---|
+| 跑起来 | [`docs/本地启动.md`](docs/本地启动.md) |
+| 读代码 | [`docs/啃代码路线.md`](docs/啃代码路线.md)（五条主线 + 30 个自测题） |
+| 面试 / 简历 | [`docs/简历与演示.md`](docs/简历与演示.md) |
+| 排期与取舍 | [`docs/路线图.md`](docs/路线图.md) |
+| 整体设计 | [`docs/MindButler-P1设计.md`](docs/MindButler-P1设计.md) · [`docs/聊天持久化设计.md`](docs/聊天持久化设计.md) |
+| 记忆 | [`docs/memory-decay.md`](docs/memory-decay.md) · [`docs/memory-change.md`](docs/memory-change.md) |
+| MCP 工具 | [`docs/mcp.md`](docs/mcp.md) · [`docs/mcp-design.md`](docs/mcp-design.md) |
+| 任务能力边界 | [`docs/Task-Capability.md`](docs/Task-Capability.md) |
+| 验收记录 | [`docs/P1-上线验收清单.md`](docs/P1-上线验收清单.md) |
+| 变更日志 / 踩坑 | [`docs/开发日志.md`](docs/开发日志.md) · [`docs/踩坑记录.md`](docs/踩坑记录.md) |
+| 表结构 | [`docs/schema.sql`](docs/schema.sql) + [`docs/migration/`](docs/migration/) |

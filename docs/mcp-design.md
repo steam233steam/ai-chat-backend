@@ -160,7 +160,7 @@ src/main/java/com/aichat/mcp/
     └── ListDueTasksTool.java
 ```
 
-**复用而非重写**：三个工具内部只调 `MemoryService` / `TaskService`，不碰 Mapper，保持四层架构不被打破（`P1-代码结构.md` 的约定）。
+**复用而非重写**：三个工具内部只调 `MemoryService` / `TaskService`，不碰 Mapper，保持四层架构不被打破（见 [`啃代码路线.md`](啃代码路线.md) 附录「包职责边界」）。
 
 **启动方式**（stdout 只出协议，日志必须让路）：
 
