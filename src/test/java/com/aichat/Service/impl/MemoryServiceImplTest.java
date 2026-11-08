@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -296,6 +297,92 @@ class MemoryServiceImplTest {
                 any(LocalDateTime.class), eq("s-1"), anyInt());
         verify(mapper).selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
                 any(LocalDateTime.class), eq("s-1"), anyInt());
+    }
+
+    @Test
+    void shouldRankInjectionByDecayInsteadOfConfidenceOnly() {
+        // 固定时钟到 NOW，权重才可算：新鲜但置信度低的应该排在「很久没用到的高置信度」前面
+        service = new MemoryServiceImpl(mapper, props, null);
+        ReflectionTestUtils.setField(service, "clock",
+                Clock.fixed(NOW.atZone(SHANGHAI).toInstant(), SHANGHAI));
+
+        UserMemory fresh = mem(1L, "style", "最近常用的偏好", "stable", "active", null, NOW);
+        fresh.setConfidence(new BigDecimal("0.60"));
+        fresh.setLastUsedAt(NOW.minusDays(1));   // 0.60 * 0.5^(1/180) ≈ 0.598
+
+        UserMemory stale = mem(2L, "goal", "一年多没碰的目标", "stable", "active", null,
+                NOW.minusDays(400));
+        stale.setConfidence(new BigDecimal("0.95"));
+        stale.setLastUsedAt(NOW.minusDays(400)); // 0.95 * 0.5^(400/180) ≈ 0.204
+
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of(stale, fresh)); // 故意把高置信度的旧的放前面
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of());
+
+        List<MemoryVO> vos = service.listForInjection(5, 5);
+
+        assertThat(vos).hasSize(2);
+        assertThat(vos.get(0).getMemKey()).isEqualTo("style"); // 衰减后新鲜的赢了
+        assertThat(vos.get(1).getMemKey()).isEqualTo("goal");
+    }
+
+    @Test
+    void shouldFallBackToUpdateTimeForNeverUsedMemory() {
+        service = new MemoryServiceImpl(mapper, props, null);
+        ReflectionTestUtils.setField(service, "clock",
+                Clock.fixed(NOW.atZone(SHANGHAI).toInstant(), SHANGHAI));
+
+        UserMemory oldButHigh = mem(3L, "goal", "旧的高置信度", "stable", "active", null,
+                NOW.minusDays(400));
+        oldButHigh.setConfidence(new BigDecimal("0.90"));
+        UserMemory newAndHigh = mem(4L, "style", "新的高置信度", "stable", "active", null, NOW);
+        newAndHigh.setConfidence(new BigDecimal("0.90"));
+
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of(oldButHigh, newAndHigh));
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of());
+
+        List<MemoryVO> vos = service.listForInjection(5, 5);
+
+        // 两条都没被用过，confidence 相同 → 以 update_time 起算，新的排前面
+        assertThat(vos.get(0).getMemKey()).isEqualTo("style");
+    }
+
+    @Test
+    void shouldRecordUsageForInjectedMemories() {
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of(mem(11L, "style", "简洁", "stable", "active", null, NOW)));
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of(mem(12L, "goal", "备考", "dynamic", "active", null, NOW)));
+
+        service.listForInjection(5, 5);
+
+        verify(mapper).touchUsage(eq("USER_ID_1234567890"),
+                argThat(ids -> ids.size() == 2 && ids.containsAll(List.of(11L, 12L))),
+                any(LocalDateTime.class));
+    }
+
+    @Test
+    void shouldNotFailInjectionWhenUsageUpdateFails() {
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of(mem(13L, "style", "简洁", "stable", "active", null, NOW)));
+        when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"),
+                any(LocalDateTime.class), eq(null), anyInt()))
+                .thenReturn(List.of());
+        when(mapper.touchUsage(anyString(), any(), any(LocalDateTime.class)))
+                .thenThrow(new RuntimeException("db is down"));
+
+        // 记使用时间失败只影响权重，不能把整轮聊天搞挂
+        assertThat(service.listForInjection(5, 5)).hasSize(1);
     }
 
     @Test

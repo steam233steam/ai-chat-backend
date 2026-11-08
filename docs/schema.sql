@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS tb_user_memory (
   replaces_id       BIGINT       NULL COMMENT '替换的旧记忆 id（旧条置 superseded，可追溯）',
   expires_at        DATETIME     NULL COMMENT 'dynamic 过期时间；stable 为 NULL',
   version           INT          NOT NULL DEFAULT 0 COMMENT '乐观锁',
+  last_used_at      DATETIME     NULL COMMENT '上次被注入进提示词的时间（时间衰减用）',
+  use_count         INT          NOT NULL DEFAULT 0 COMMENT '被注入进提示词的次数（时间衰减用）',
   create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),

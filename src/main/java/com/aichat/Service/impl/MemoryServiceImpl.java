@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -24,6 +25,7 @@ import com.aichat.Entity.UserMemory;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.UserMemoryMapper;
 import com.aichat.Service.MemoryService;
+import com.aichat.utils.MemoryDecay;
 import com.aichat.utils.MemoryKey;
 import com.aichat.utils.SensitiveContentFilter;
 import com.aichat.utils.UserHolder;
@@ -57,16 +59,65 @@ public class MemoryServiceImpl implements MemoryService {
         int stableLimitCap = Math.max(0, Math.min(stableLimit, 100));
         int dynamicLimitCap = Math.max(0, Math.min(dynamicLimit, 100));
 
-        List<UserMemory> stable = userMemoryMapper.selectActiveByUserAndType(
-                userId, "stable", now, sessionScope, stableLimitCap);
-        List<UserMemory> dynamic = userMemoryMapper.selectActiveByUserAndType(
-                userId, "dynamic", now, sessionScope, dynamicLimitCap);
+        // 候选池比最终配额大 3 倍：如果先按旧的 ORDER BY 取前 N 再排衰减，
+        // 久未使用但相关度高的记忆会被直接截掉，衰减就没机会把它捞回来
+        int pool = Math.min(Math.max(stableLimitCap + dynamicLimitCap, 5) * 3, 100);
+
+        List<UserMemory> stable = rank(
+                userMemoryMapper.selectActiveByUserAndType(userId, "stable", now, sessionScope, pool),
+                now, props.getMemoryDecayHalfLifeStable(), stableLimitCap);
+        List<UserMemory> dynamic = rank(
+                userMemoryMapper.selectActiveByUserAndType(userId, "dynamic", now, sessionScope, pool),
+                now, props.getMemoryDecayHalfLifeDynamic(), dynamicLimitCap);
 
         // stable 优先；总数受 inject-max 控制（这里由调用方传配额，M1 简化为 stable+dynamic 各 cap）
         List<MemoryVO> result = new ArrayList<>(stableLimitCap + dynamicLimitCap);
-        stable.stream().filter(m -> !expired(m, now)).forEach(m -> result.add(toVO(m, now)));
-        dynamic.stream().filter(m -> !expired(m, now)).forEach(m -> result.add(toVO(m, now)));
+        stable.forEach(m -> result.add(toVO(m, now)));
+        dynamic.forEach(m -> result.add(toVO(m, now)));
+
+        touchUsage(userId, stable, dynamic, now);
         return result;
+    }
+
+    /** 过滤过期 → 按衰减权重排序 → 取配额。关掉衰减时退回原来的 confidence/update_time 顺序。 */
+    private List<UserMemory> rank(List<UserMemory> candidates, LocalDateTime now, int halfLifeDays, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        List<UserMemory> alive = candidates.stream().filter(m -> !expired(m, now)).toList();
+        if (!props.isMemoryDecayEnabled()) {
+            return alive.stream().limit(limit).toList();
+        }
+        return alive.stream()
+                .sorted(Comparator
+                        .comparingDouble((UserMemory m) -> MemoryDecay.score(
+                                m.getConfidence(), effectiveLastUsed(m), now, halfLifeDays))
+                        .reversed()
+                        // 权重相同时新的优先，避免同一批记忆每次注入顺序都变
+                        .thenComparing(UserMemory::getUpdateTime, Comparator.reverseOrder()))
+                .limit(limit)
+                .toList();
+    }
+
+    /** 从没用过的记忆以 update_time 起算：刚写进来的记忆不该因为「还没被用过」而吃亏。 */
+    private static LocalDateTime effectiveLastUsed(UserMemory memory) {
+        return memory.getLastUsedAt() != null ? memory.getLastUsedAt() : memory.getUpdateTime();
+    }
+
+    /** 记一次使用，供下次衰减计算。写失败只影响权重不涨，不能让它把整轮对话搞挂。 */
+    private void touchUsage(String userId, List<UserMemory> stable, List<UserMemory> dynamic,
+            LocalDateTime now) {
+        if (stable.isEmpty() && dynamic.isEmpty()) {
+            return;
+        }
+        List<Long> ids = new ArrayList<>(stable.size() + dynamic.size());
+        stable.forEach(m -> ids.add(m.getId()));
+        dynamic.forEach(m -> ids.add(m.getId()));
+        try {
+            userMemoryMapper.touchUsage(userId, ids, now);
+        } catch (RuntimeException e) {
+            log.warn("更新记忆使用时间失败（不影响本次注入）：{}", e.getMessage());
+        }
     }
 
     @Override

@@ -26,7 +26,7 @@ public interface UserMemoryMapper {
 
     // 查当前用户某条记忆（带归属校验，跨用户查不到 → 上层返回 404）
     @Select("SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
-            "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
+            "source_message_id, replaces_id, expires_at, version, last_used_at, use_count, create_time, update_time " +
             "FROM tb_user_memory WHERE id = #{id} AND user_id = #{userId}")
     UserMemory selectById(@Param("id") long id, @Param("userId") String userId);
 
@@ -34,7 +34,7 @@ public interface UserMemoryMapper {
     // 会话隔离（P1.1）：sessionScope 非空时只取"全局(NULL) + 该会话"的记忆；sessionScope=null 取全部
     @Select("<script>" +
             "SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
-            "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
+            "source_message_id, replaces_id, expires_at, version, last_used_at, use_count, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' " +
             "AND (mem_type = #{memType} OR mem_type IS NULL) " +
@@ -52,7 +52,7 @@ public interface UserMemoryMapper {
     // 会话隔离（P1.1）：sessionScope 非空时只取"全局(NULL) + 该会话"的记忆
     @Select("<script>" +
             "SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
-            "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
+            "source_message_id, replaces_id, expires_at, version, last_used_at, use_count, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' " +
             "AND (expires_at IS NULL OR expires_at > #{now}) " +
@@ -66,7 +66,7 @@ public interface UserMemoryMapper {
 
     // 全量导出（含 superseded，排除 deleted），供用户查看/迁移
     @Select("SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
-            "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
+            "source_message_id, replaces_id, expires_at, version, last_used_at, use_count, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status != 'deleted' " +
             "ORDER BY mem_type, mem_key, update_time DESC")
@@ -83,7 +83,7 @@ public interface UserMemoryMapper {
     // 去重范围与 sessionScope 一致：会话级记忆只在同会话去重，全局记忆跨会话去重
     @Select("<script>" +
             "SELECT id, user_id, session_id, mem_key, content, mem_type, status, confidence, source, " +
-            "source_message_id, replaces_id, expires_at, version, create_time, update_time " +
+            "source_message_id, replaces_id, expires_at, version, last_used_at, use_count, create_time, update_time " +
             "FROM tb_user_memory " +
             "WHERE user_id = #{userId} AND status = 'active' AND content = #{content} " +
             "AND (expires_at IS NULL OR expires_at > #{now}) " +
@@ -118,6 +118,18 @@ public interface UserMemoryMapper {
 
     @Delete("DELETE FROM tb_user_memory WHERE user_id = #{userId}")
     int deleteByUser(@Param("userId") String userId);
+
+    /**
+     * 记一次「被注入」：时间衰减靠 last_used_at 现算权重，所以每次真正进提示词都要更新这里。
+     * 批量一条 SQL，避免 N 次往返；失败不致命（只是权重不涨），调用方吞掉异常。
+     */
+    @Update("<script>" +
+            "UPDATE tb_user_memory SET last_used_at = #{now}, use_count = use_count + 1 " +
+            "WHERE user_id = #{userId} AND status = 'active' AND id IN " +
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>" +
+            "</script>")
+    int touchUsage(@Param("userId") String userId, @Param("ids") List<Long> ids,
+            @Param("now") java.time.LocalDateTime now);
 
     /** P1.3 级联清理：软删某会话绑定的记忆（session_id 精确匹配）。全局记忆（session_id=NULL）不受影响。 */
     @Update("UPDATE tb_user_memory SET status = 'deleted', version = version + 1, update_time = NOW() " +
