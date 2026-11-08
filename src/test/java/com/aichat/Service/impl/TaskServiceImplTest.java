@@ -653,4 +653,31 @@ class TaskServiceImplTest {
                 .hasMessageContaining("推送地址");
     }
 
+    @Test
+    void shouldStoreServerChanPushAction() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("每天九点交作业");
+        req.setRecurrence("daily");
+        req.setDueAt(NOW.plusDays(1));
+        req.setActionType("push");
+        req.setActionConfig("{\"channel\":\"serverchan\",\"sendkey\":\"SCT123456Tabcdef\"}");
+
+        UserTask saved = captureCreated(req);
+
+        assertThat(saved.getActionType()).isEqualTo("push");
+        assertThat(saved.getActionConfig()).contains("serverchan").contains("SCT123456Tabcdef");
+    }
+
+    @Test
+    void shouldRejectServerChanWithoutSendkey() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("交作业");
+        req.setActionType("push");
+        req.setActionConfig("{\"channel\":\"serverchan\"}");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("SendKey");
+    }
+
 }

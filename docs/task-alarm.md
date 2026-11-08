@@ -73,21 +73,30 @@
 
 | 通道 | 适用 | 怎么办 |
 |---|---|---|
-| `ntfy`（安卓，推荐） | 免费、不用注册、5 分钟配好 | 装 ntfy App → 订阅一个主题（如 `mindbutler-233`）→ 任务里填同一个主题 |
+| `serverchan`（微信，最省事） | 不用装 App，微信收消息 | 微信扫码登录 [sct.ftqq.com](https://sct.ftqq.com) → 复制 SendKey（`SCT` 开头）→ 填 `sendkey` |
+| `pushplus`（微信） | 同上，另一家 | 微信扫码登录 [pushplus.plus](https://www.pushplus.plus) → 复制 token |
+| `ntfy`（安卓 App） | 免费、不用注册 | 装 ntfy App → 订阅一个主题（如 `mindbutler-233`）→ 任务里填同一个主题 |
 | `bark`（iOS） | App Store 免费 | 装 Bark → 复制 App 给的地址 → 填进 `target` |
 | `wecom` | 企业微信群 | 群里加「群机器人」→ 复制 webhook → 填进 `target` |
 
-`action_config` 三种写法：
+`action_config` 写法：
 
 ```json
+{"channel":"serverchan","sendkey":"SCT123456Tabcdef"}
+{"channel":"pushplus","token":"你的token"}
 {"channel":"ntfy","server":"https://ntfy.sh","topic":"mindbutler-233"}
 {"channel":"bark","target":"https://api.day.app/你的KEY"}
 {"channel":"wecom","target":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."}
 ```
 
 实现要点：ntfy 走 JSON 发布接口，`priority: 4` 才会以**横幅**弹出（3 只进通知栏）；
-三个通道的报文格式不同（ntfy `{topic,title,message}` / Bark `{title,body}` / 企微 `{msgtype,text}`），
-所以由 `PushTaskAction` 统一适配，任务表只存一种抽象配置。
+Server酱走 `https://sctapi.ftqq.com/{sendkey}.send` 的表单接口，PushPlus 走 JSON；
+这几家的报文格式各不相同（ntfy `{topic,title,message}` / Bark `{title,body}` / 企微 `{msgtype,text}`
+/ Server酱 `title+desp` 表单 / PushPlus `{token,title,content}`），所以由 `PushTaskAction` 统一适配，
+任务表只存一种抽象配置。
+
+**注意**：Server酱 / PushPlus 都用 HTTP 200 包一个业务码，`PushTaskAction` 会把 `code != 0 && != 200`
+翻译成失败，执行记录里能看到具体错误码，不会出现"显示成功但其实没发出去"。
 
 **已验证**：线上建一条 `push` 任务，10 秒内执行，`tb_task_run.detail` 记 `已推送到手机（ntfy，200）`。
 

@@ -90,6 +90,57 @@ class PushTaskActionTest {
     @DisplayName("动作名固定为 push，调度器按它查表")
     void shouldExposeActionName() {
         assertThat(action.name()).isEqualTo("push");
-        assertThat(PushTaskAction.CHANNELS).containsExactlyInAnyOrder("ntfy", "bark", "wecom");
+        assertThat(PushTaskAction.CHANNELS)
+                .containsExactlyInAnyOrder("ntfy", "bark", "wecom", "serverchan", "pushplus");
+    }
+
+    @Test
+    @DisplayName("Server酱（微信）：表单报文只有 title 与 desp，且做 URL 编码")
+    void shouldBuildServerChanForm() {
+        Map<String, Object> payload = PushTaskAction.serverChanPayload("交作业", "到点了，计划时间 11月9日 09:00");
+
+        assertThat(payload).containsEntry("title", "交作业");
+        String form = PushTaskAction.encodeForm(payload);
+        assertThat(form).startsWith("title=").contains("&desp=");
+        assertThat(form).doesNotContain(" ").doesNotContain("，");
+    }
+
+    @Test
+    @DisplayName("PushPlus：JSON 报文带 token/title/content/template")
+    void shouldBuildPushPlusPayload() {
+        Map<String, Object> payload = PushTaskAction.pushPlusPayload("tok123", "交作业", "到点了");
+
+        assertThat(payload).containsEntry("token", "tok123")
+                .containsEntry("title", "交作业")
+                .containsEntry("content", "到点了")
+                .containsEntry("template", "txt");
+    }
+
+    @Test
+    @DisplayName("业务码非 0/200 视为失败（Server酱、PushPlus 都是 HTTP 200 包错误）")
+    void shouldThrowOnBusinessErrorCode() throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
+        assertThatThrownBy(() -> PushTaskAction.assertBusinessOk("serverchan",
+                mapper.readTree("{\"code\":40001,\"message\":\"bad sendkey\"}")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("40001")
+                .hasMessageContaining("bad sendkey");
+
+        // code=0 与 code=200 都算成功
+        PushTaskAction.assertBusinessOk("serverchan", mapper.readTree("{\"code\":0}"));
+        PushTaskAction.assertBusinessOk("pushplus", mapper.readTree("{\"code\":200}"));
+    }
+
+    @Test
+    @DisplayName("Server酱缺少 sendkey：抛异常")
+    void shouldRejectServerChanWithoutKey() {
+        UserTask task = new UserTask();
+        task.setTitle("交作业");
+        task.setActionConfig("{\"channel\":\"serverchan\"}");
+
+        assertThatThrownBy(() -> action.run(task, LocalDateTime.now()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("sendkey");
     }
 }

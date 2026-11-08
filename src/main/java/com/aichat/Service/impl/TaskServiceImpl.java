@@ -444,10 +444,21 @@ public class TaskServiceImpl implements TaskService {
                 throw new BusinessException("推送动作的参数不是合法 JSON");
             }
             String channel = node.path("channel").asText("").trim().toLowerCase();
-            if (!"ntfy".equals(channel) && !"bark".equals(channel) && !"wecom".equals(channel)) {
-                throw new BusinessException("推送通道只支持 ntfy（安卓）/ bark（iOS）/ wecom（企业微信）");
+            if (!"ntfy".equals(channel) && !"bark".equals(channel) && !"wecom".equals(channel)
+                    && !"serverchan".equals(channel) && !"pushplus".equals(channel)) {
+                throw new BusinessException("推送通道只支持 serverchan / pushplus（微信）、ntfy（安卓）、bark（iOS）、wecom（企业微信）");
             }
-            if ("ntfy".equals(channel)) {
+            if ("serverchan".equals(channel)) {
+                String sendkey = node.path("sendkey").asText("").trim();
+                if (!sendkey.matches("[A-Za-z0-9]{6,64}")) {
+                    throw new BusinessException("Server酱需要填写 SCT 开头的 SendKey，在 sct.ftqq.com 微信扫码就能拿到");
+                }
+            } else if ("pushplus".equals(channel)) {
+                String token = node.path("token").asText("").trim();
+                if (!token.matches("[A-Za-z0-9]{6,64}")) {
+                    throw new BusinessException("PushPlus 需要填写 token，在 pushplus.plus 微信扫码就能拿到");
+                }
+            } else if ("ntfy".equals(channel)) {
                 String topic = node.path("topic").asText("").trim();
                 if (topic.isEmpty()) {
                     throw new BusinessException("ntfy 通道需要填写 topic，例如 mindbutler-你的名字");

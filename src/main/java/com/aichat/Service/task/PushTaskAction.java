@@ -45,7 +45,13 @@ public class PushTaskAction implements TaskAction {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("M月d日 HH:mm");
 
     /** 允许的通道。 */
-    public static final Set<String> CHANNELS = Set.of("ntfy", "bark", "wecom");
+    public static final Set<String> CHANNELS = Set.of("ntfy", "bark", "wecom", "serverchan", "pushplus");
+
+    /** Server酱：sendkey 直接拼在路径里，POST 表单。 */
+    static final String SERVERCHAN_ENDPOINT = "https://sctapi.ftqq.com/%s.send";
+
+    /** PushPlus：POST JSON。 */
+    static final String PUSHPLUS_ENDPOINT = "https://www.pushplus.plus/send";
 
     private final ObjectMapper mapper;
     private final HttpClient client;
@@ -97,20 +103,66 @@ public class PushTaskAction implements TaskAction {
                 url = target;
                 payload = wecomPayload(title, message);
             }
+            case "serverchan" -> {
+                String sendkey = config.path("sendkey").asText("").trim();
+                if (sendkey.isEmpty()) {
+                    throw new IllegalStateException("Server酱通道缺少 sendkey（SCT 开头）");
+                }
+                url = SERVERCHAN_ENDPOINT.formatted(sendkey);
+                payload = serverChanPayload(title, message);
+            }
+            case "pushplus" -> {
+                String token = config.path("token").asText("").trim();
+                if (token.isEmpty()) {
+                    throw new IllegalStateException("PushPlus 通道缺少 token");
+                }
+                url = PUSHPLUS_ENDPOINT;
+                payload = pushPlusPayload(token, title, message);
+            }
             default -> throw new IllegalStateException("不支持的推送通道：" + channel);
         }
 
+        boolean form = "serverchan".equals(channel);
+        String body = form ? encodeForm(payload) : mapper.writeValueAsString(payload);
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(6))
-                .header("Content-Type", "application/json; charset=utf-8")
-                .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)))
+                .header("Content-Type", form
+                        ? "application/x-www-form-urlencoded; charset=utf-8"
+                        : "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() / 100 != 2) {
             throw new IllegalStateException("推送通道 " + channel + " 返回 " + response.statusCode());
         }
+        if ("serverchan".equals(channel) || "pushplus".equals(channel)) {
+            assertBusinessOk(channel, readJson(response.body()));
+        }
         log.info("任务推送已发送 taskId={} channel={} status={}", task.getId(), channel, response.statusCode());
         return "已推送到手机（" + channel + "，" + response.statusCode() + "）";
+    }
+
+    private JsonNode readJson(String body) {
+        try {
+            return body == null || body.isBlank() ? null : mapper.readTree(body);
+        } catch (Exception e) {
+            log.warn("推送响应不是 JSON：{}", body);
+            return null;
+        }
+    }
+
+    /** Map -> a=1&b=2（application/x-www-form-urlencoded）。 */
+    static String encodeForm(Map<String, Object> data) {
+        StringBuilder sb = new StringBuilder();
+        data.forEach((k, v) -> {
+            if (sb.length() > 0) {
+                sb.append('&');
+            }
+            sb.append(java.net.URLEncoder.encode(k, java.nio.charset.StandardCharsets.UTF_8))
+                    .append('=')
+                    .append(java.net.URLEncoder.encode(v == null ? "" : v.toString(), java.nio.charset.StandardCharsets.UTF_8));
+        });
+        return sb.toString();
     }
 
     /** ntfy 的 JSON 发布格式；priority=4 才会以横幅形式弹出（3 只会进通知栏）。 */
@@ -142,6 +194,36 @@ public class PushTaskAction implements TaskAction {
         body.put("msgtype", "text");
         body.put("text", text);
         return body;
+    }
+
+    /** Server酱（微信推送）的表单报文：title + desp。 */
+    static Map<String, Object> serverChanPayload(String title, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("title", title);
+        body.put("desp", message);
+        return body;
+    }
+
+    /** PushPlus（微信公众号推送）的 JSON 报文。 */
+    static Map<String, Object> pushPlusPayload(String token, String title, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("token", token);
+        body.put("title", title);
+        body.put("content", message);
+        body.put("template", "txt");
+        return body;
+    }
+
+    /** Server酱 / PushPlus 都用 HTTP 200 包一个业务码，这里把它翻译成异常。 */
+    static void assertBusinessOk(String channel, JsonNode response) {
+        if (response == null) {
+            return;
+        }
+        int code = response.path("code").asInt(0);
+        if (code != 0 && code != 200) {
+            String msg = response.path("message").asText(response.path("msg").asText(""));
+            throw new IllegalStateException(channel + " 返回错误码 " + code + (msg.isBlank() ? "" : "：" + msg));
+        }
     }
 
     /** 通知正文：把任务本身的信息写清楚，锁屏上一眼能看懂。 */
