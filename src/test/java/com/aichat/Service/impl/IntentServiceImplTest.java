@@ -67,7 +67,7 @@ class IntentServiceImplTest {
         candidateSanitizer = new IntentCandidateSanitizer(props);
         clarifyStore = mock(MemoryChangeClarifyStore.class);
         service = new IntentServiceImpl(pendingActionService, intentExtractor, candidateSanitizer,
-                intentDailyLimiter, props, null, memoryService, clarifyStore);
+                intentDailyLimiter, props, null, memoryService, clarifyStore, null);
         UserDto user = new UserDto();
         user.setId("USER_ID_TEST");
         UserHolder.saveUser(user);

@@ -8,9 +8,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.aichat.Dto.MemoryCandidate;
+import com.aichat.mcp.McpToolCatalog;
 import com.aichat.Dto.TaskCandidate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,6 +60,16 @@ public class IntentToolCatalog {
             }
             """;
 
+    private final ObjectProvider<McpToolCatalog> mcpProvider;
+
+    public IntentToolCatalog() {
+        this(null);
+    }
+
+    @Autowired
+    public IntentToolCatalog(ObjectProvider<McpToolCatalog> mcpProvider) {
+        this.mcpProvider = mcpProvider;
+    }
     /** 内置动作 + 状态收集器 → 本次请求可用的工具列表 */
     public List<org.springframework.ai.model.function.FunctionCallback> build(IntentPlan plan) {
         List<org.springframework.ai.model.function.FunctionCallback> tools = new ArrayList<>();

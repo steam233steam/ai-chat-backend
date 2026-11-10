@@ -20,6 +20,7 @@ import com.aichat.Dto.TaskCandidate;
 import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Service.IntentExtractor;
+import com.aichat.Service.intent.IntentToolEngine;
 import com.aichat.Service.IntentService;
 import com.aichat.Service.PendingActionService;
 import com.aichat.Service.MemoryService;
@@ -69,6 +70,8 @@ public class IntentServiceImpl implements IntentService {
 
     private final PendingActionService pendingActionService;
     private final IntentExtractor intentExtractor;
+    /** 工具调用引擎（app.intent.engine=tools 时使用）；影子阶段仍默认走旧引擎 */
+    private final IntentToolEngine intentToolEngine;
     private final IntentCandidateSanitizer candidateSanitizer;
     private final IntentDailyLimiter intentDailyLimiter;
     private final MindButlerProperties props;
@@ -76,9 +79,10 @@ public class IntentServiceImpl implements IntentService {
     private final MemoryService memoryService;
     private final MemoryChangeClarifyStore clarifyStore;
 
-    public IntentServiceImpl(PendingActionService pendingActionService, IntentExtractor intentExtractor, IntentCandidateSanitizer candidateSanitizer, IntentDailyLimiter intentDailyLimiter, MindButlerProperties props, TaskService taskService, MemoryService memoryService, MemoryChangeClarifyStore clarifyStore) {
+    public IntentServiceImpl(PendingActionService pendingActionService, IntentExtractor intentExtractor, IntentCandidateSanitizer candidateSanitizer, IntentDailyLimiter intentDailyLimiter, MindButlerProperties props, TaskService taskService, MemoryService memoryService, MemoryChangeClarifyStore clarifyStore, IntentToolEngine intentToolEngine) {
         this.pendingActionService = pendingActionService;
         this.intentExtractor = intentExtractor;
+        this.intentToolEngine = intentToolEngine;
         this.candidateSanitizer = candidateSanitizer;
         this.intentDailyLimiter = intentDailyLimiter;
         this.props = props;
@@ -141,6 +145,17 @@ public class IntentServiceImpl implements IntentService {
      * 宽松 LLM 提取：让 LLM 自由判断"这句有没有可提取的记忆/人设/任务"，不预设侧重。
      * 提取到非空候选 → 走 pending 确认流程；提取为空 → 返回 null（上层走 chat）。
      */
+    /**
+     * 按 app.intent.engine 选引擎：
+     * prompt=旧的「大提示词 + 固定 JSON」；tools=模型直接调工具（新增 MCP 不用改代码）。
+     */
+    private IntentExtractionResult extractCandidates(Intent intent, String message) {
+        if ("tools".equalsIgnoreCase(props.getIntentEngine()) && intentToolEngine != null) {
+            return intentToolEngine.extract(intent, message);
+        }
+        return intentExtractor.extract(intent, message);
+    }
+
     private IntentOutcome extractLoose(String sessionId, String message, Long sourceMessageId) {
         // 先过能力边界：QQ/微信/短信等当前没有通道的请求，不要交给提取模型生成假任务。
         String capabilityReply = TaskCapabilityGuard.unsupportedReason(message);
@@ -157,7 +172,7 @@ public class IntentServiceImpl implements IntentService {
             return null; // 限额用完，走正常聊天
         }
         // P1.4：不再固定传 MEMORY 侧重；让 LLM 自行判断"这句是记忆、人设、任务还是混合"
-        IntentExtractionResult extracted = intentExtractor.extract(null, message);
+        IntentExtractionResult extracted = extractCandidates(null, message);
         if (extracted == null || extracted.isEmpty()) {
             return null; // LLM 没识别出可提取内容，走正常聊天
         }
@@ -246,7 +261,7 @@ public class IntentServiceImpl implements IntentService {
             return IntentOutcome.replyOnly("今天的意图识别次数已用完，明天再试。");
         }
 
-        IntentExtractionResult extracted = intentExtractor.extract(intent, message);
+        IntentExtractionResult extracted = extractCandidates(intent, message);
         if (extracted == null || extracted.isEmpty()) {
             // 提取器可能按 prompt 规则主动不提取敏感信息；这时仍要给用户明确提示
             if ((intent == Intent.MEMORY || intent == Intent.TASK)

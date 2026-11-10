@@ -176,9 +176,11 @@ public class IntentCandidateSanitizer {
                 continue; // P1 固定单时区
             }
             // 到点调什么：只放行信息查询类工具，未识别的降级成站内提醒
+            // 工具名不再写死白名单：MCP 目录随时可增删，这里只做格式兜底，
+            // 真正的工具是否存在由 PendingActionServiceImpl 对着 McpToolCatalog 解析。
             String tool = c.getTool() == null ? null : c.getTool().trim().toLowerCase(Locale.ROOT);
-            if (tool != null && !QUERY_TOOLS.contains(tool)) {
-                log.warn("未知 MCP 工具，降级为站内提醒: {}", tool);
+            if (tool != null && !tool.matches("[a-z0-9_-]{1,40}")) {
+                log.warn("工具名格式不合法，降级为站内提醒: {}", tool);
                 tool = null;
             }
             c.setTool(tool);

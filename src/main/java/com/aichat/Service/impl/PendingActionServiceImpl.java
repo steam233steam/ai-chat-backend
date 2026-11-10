@@ -29,6 +29,7 @@ import com.aichat.Dto.UserDto;
 import com.aichat.Entity.PendingAction;
 import com.aichat.Exception.BusinessException;
 import com.aichat.Mapper.PendingActionMapper;
+import com.aichat.mcp.McpToolCatalog;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.PendingActionService;
 import com.aichat.Service.TaskService;
@@ -48,6 +49,13 @@ public class PendingActionServiceImpl implements PendingActionService {
     private final MindButlerProperties props;
     private final Clock clock;
 
+    /** MCP 工具目录（可选：单测里没有 Spring 容器时为 null，退回旧的前缀拼法）。 */
+    private McpToolCatalog mcpToolCatalog;
+
+    @Autowired(required = false)
+    void setMcpToolCatalog(McpToolCatalog mcpToolCatalog) {
+        this.mcpToolCatalog = mcpToolCatalog;
+    }
     public PendingActionServiceImpl(PendingActionMapper pendingActionMapper, MemoryService memoryService, TaskService taskService, MindButlerProperties props, Clock clock) {
         this.pendingActionMapper = pendingActionMapper;
         this.memoryService = memoryService;
@@ -361,10 +369,15 @@ public class PendingActionServiceImpl implements PendingActionService {
         return results;
     }
 
-    /** 把「天气/搜索/时间/抓网页」的短工具名拼成调度器认的 action_config。 */
+    /**
+     * 把模型给的短工具名解析成 MCP 目录里的公共名，再拼成调度器认的 action_config。
+     *
+     * <p>解析顺序：完全等于公共名 → 完全等于服务端原始工具名 → 公共名以 «_短名» 结尾。
+     * 都匹配不上才退回旧约定（mcp_info_前缀），这样新增一个 MCP 服务器不用改这里。
+     */
     private String buildMcpActionConfig(String tool, Map<String, Object> toolArgs) {
         Map<String, Object> config = new HashMap<>();
-        config.put("tool", "mcp_info_" + tool);
+        config.put("tool", resolveMcpToolName(tool));
         config.put("args", toolArgs == null ? Map.of() : toolArgs);
         try {
             return MAPPER.writeValueAsString(config);
@@ -372,6 +385,36 @@ public class PendingActionServiceImpl implements PendingActionService {
             log.warn("拼 MCP 动作参数失败，降级为站内提醒: {}", e.getMessage());
             return null;
         }
+    }
+
+    String resolveMcpToolName(String tool) {
+        if (tool == null || tool.isBlank()) {
+            return "mcp_info_" + tool;
+        }
+        if (mcpToolCatalog != null) {
+            try {
+                mcpToolCatalog.ensureStarted();
+                var infos = mcpToolCatalog.toolInfos();
+                for (McpToolCatalog.McpToolInfo info : infos) {
+                    if (tool.equals(info.name())) {
+                        return info.name();
+                    }
+                }
+                for (McpToolCatalog.McpToolInfo info : infos) {
+                    if (tool.equals(info.tool())) {
+                        return info.name();
+                    }
+                }
+                for (McpToolCatalog.McpToolInfo info : infos) {
+                    if (info.name().endsWith("_" + tool)) {
+                        return info.name();
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.warn("解析 MCP 工具名失败，退回默认前缀: {}", e.getMessage());
+            }
+        }
+        return "mcp_info_" + tool;
     }
 
     /** 变更落库结果：memories 里放每个操作的摘要（供前端/日志看），receipt 是回给用户的一句话。 */    private record ChangeApplyResult(List<Map<String, Object>> memories, String receipt) {
