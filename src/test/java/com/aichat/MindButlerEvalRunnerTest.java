@@ -28,6 +28,7 @@ import com.aichat.Dto.TaskCandidate;
 import com.aichat.Entity.ChatMessage;
 import com.aichat.Mapper.ChatMessageMapper;
 import com.aichat.Service.IntentService;
+import com.aichat.Service.intent.IntentToolEngine;
 import com.aichat.utils.IntentDetector;
 import com.aichat.utils.UserHolder;
 
@@ -51,7 +52,7 @@ class MindButlerEvalRunnerTest {
     private static final String EVAL_RESOURCE = "eval/mindbutler-intent-eval.json";
 
     @MockBean
-    private com.aichat.Service.IntentExtractor intentExtractor;
+    private IntentToolEngine intentExtractor;
 
     @Autowired
     private IntentService intentService;

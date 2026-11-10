@@ -19,7 +19,7 @@ import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
 import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
-import com.aichat.Service.IntentExtractor;
+import com.aichat.Service.intent.IntentToolEngine;
 import com.aichat.Service.intent.IntentToolEngine;
 import com.aichat.Service.IntentService;
 import com.aichat.Service.PendingActionService;
@@ -44,7 +44,7 @@ import com.aichat.utils.UserHolder;
  *
  * 职责边界：
  * - IntentDetector：粗筛意图；
- * - IntentExtractor：一次 LLM 调用 + 超时；
+ * - IntentToolEngine：一次带工具的 LLM 调用（模型自己调 create_task / remember）；
  * - IntentCandidateSanitizer：候选校验/截断/敏感词；
  * - IntentPayloadCodec：pending payload 编解码；
  * - IntentReplyFormatter：确认/结果文案；
@@ -69,8 +69,7 @@ public class IntentServiceImpl implements IntentService {
             "这段内容包含密码/Token/证件/银行卡等敏感信息，我不会保存。请不要在聊天中发送密码或密钥。";
 
     private final PendingActionService pendingActionService;
-    private final IntentExtractor intentExtractor;
-    /** 工具调用引擎（app.intent.engine=tools 时使用）；影子阶段仍默认走旧引擎 */
+    /** 工具调用引擎：模型自己决定调 create_task / remember，不再拼 JSON 提示词 */
     private final IntentToolEngine intentToolEngine;
     private final IntentCandidateSanitizer candidateSanitizer;
     private final IntentDailyLimiter intentDailyLimiter;
@@ -79,9 +78,8 @@ public class IntentServiceImpl implements IntentService {
     private final MemoryService memoryService;
     private final MemoryChangeClarifyStore clarifyStore;
 
-    public IntentServiceImpl(PendingActionService pendingActionService, IntentExtractor intentExtractor, IntentCandidateSanitizer candidateSanitizer, IntentDailyLimiter intentDailyLimiter, MindButlerProperties props, TaskService taskService, MemoryService memoryService, MemoryChangeClarifyStore clarifyStore, IntentToolEngine intentToolEngine) {
+    public IntentServiceImpl(PendingActionService pendingActionService, IntentCandidateSanitizer candidateSanitizer, IntentDailyLimiter intentDailyLimiter, MindButlerProperties props, TaskService taskService, MemoryService memoryService, MemoryChangeClarifyStore clarifyStore, IntentToolEngine intentToolEngine) {
         this.pendingActionService = pendingActionService;
-        this.intentExtractor = intentExtractor;
         this.intentToolEngine = intentToolEngine;
         this.candidateSanitizer = candidateSanitizer;
         this.intentDailyLimiter = intentDailyLimiter;
@@ -146,14 +144,13 @@ public class IntentServiceImpl implements IntentService {
      * 提取到非空候选 → 走 pending 确认流程；提取为空 → 返回 null（上层走 chat）。
      */
     /**
-     * 按 app.intent.engine 选引擎：
-     * prompt=旧的「大提示词 + 固定 JSON」；tools=模型直接调工具（新增 MCP 不用改代码）。
+     * 一次抽取：模型直接调 create_task / remember 工具，引擎把调用记录还原成候选。
      */
     private IntentExtractionResult extractCandidates(Intent intent, String message) {
-        if ("tools".equalsIgnoreCase(props.getIntentEngine()) && intentToolEngine != null) {
-            return intentToolEngine.extract(intent, message);
+        if (intentToolEngine == null) {
+            return new IntentExtractionResult(List.of(), List.of());
         }
-        return intentExtractor.extract(intent, message);
+        return intentToolEngine.extract(intent, message);
     }
 
     private IntentOutcome extractLoose(String sessionId, String message, Long sourceMessageId) {

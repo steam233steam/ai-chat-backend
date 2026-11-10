@@ -32,7 +32,7 @@ import com.aichat.Exception.BusinessException;
 import com.aichat.Service.support.IntentCandidateSanitizer;
 import com.aichat.Service.support.IntentDailyLimiter;
 import com.aichat.Service.support.MemoryChangeClarifyStore;
-import com.aichat.Service.IntentExtractor;
+import com.aichat.Service.intent.IntentToolEngine;
 import com.aichat.Service.MemoryService;
 import com.aichat.Service.PendingActionService;
 import com.aichat.utils.IntentDetector.Intent;
@@ -47,7 +47,7 @@ import com.aichat.utils.UserHolder;
 class IntentServiceImplTest {
 
     private PendingActionService pendingActionService;
-    private IntentExtractor intentExtractor;
+    private IntentToolEngine intentExtractor;
     private IntentDailyLimiter intentDailyLimiter;
     private MemoryService memoryService;
     private IntentCandidateSanitizer candidateSanitizer;
@@ -58,7 +58,7 @@ class IntentServiceImplTest {
     @BeforeEach
     void setUp() {
         pendingActionService = mock(PendingActionService.class);
-        intentExtractor = mock(IntentExtractor.class);
+        intentExtractor = mock(IntentToolEngine.class);
         intentDailyLimiter = mock(IntentDailyLimiter.class);
         when(intentDailyLimiter.tryAcquire(anyString())).thenReturn(true);
         memoryService = mock(MemoryService.class);
@@ -66,8 +66,8 @@ class IntentServiceImplTest {
         props.setEnabled(true);
         candidateSanitizer = new IntentCandidateSanitizer(props);
         clarifyStore = mock(MemoryChangeClarifyStore.class);
-        service = new IntentServiceImpl(pendingActionService, intentExtractor, candidateSanitizer,
-                intentDailyLimiter, props, null, memoryService, clarifyStore, null);
+        service = new IntentServiceImpl(pendingActionService, candidateSanitizer,
+                intentDailyLimiter, props, null, memoryService, clarifyStore, intentExtractor);
         UserDto user = new UserDto();
         user.setId("USER_ID_TEST");
         UserHolder.saveUser(user);

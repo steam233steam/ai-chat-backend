@@ -78,10 +78,10 @@
 | 阶段 | 内容 | 产出 | 预估 |
 |---|---|---|---|
 | S0 ✅ 2026-11-10 | 打 tag `intent-refactor-base`；影子通道：新引擎实现但默认不启用，只在评测里跑 | **已完成**：40 条评测，旧 35/40（87.5%）、新 35/40（87.5%），逐条差异见 `target/surefire-reports` | 0.5 天 |
-| S1 | 工具集 + 引擎落地，`app.intent.engine=tools` 可在本地切 | 本地 40 条评测跑通 | 1 天 |
-| S2 | 灰度切换默认引擎，保留 `prompt` 兜底开关 1 个版本 | 线上验证 | 0.5 天 |
-| S3 | 删死代码 + 测试重写 + 文档 | 全量测试绿 | 0.5 天 |
-| S4 | 动作链（原 P1）：`create_task` 的 action 支持数组，`search` 自动读正文 | 「查完再发」可用 | 1 天 |
+| S1 ✅ 2026-11-10 | 工具集 + 引擎落地（原用 `app.intent.engine` 切换） | 40 条评测跑通；`52e23e3` | 1 天 |
+| S2 ✅ 2026-11-10 | 线上灰度：`APP_MINDBUTLER_INTENT_ENGINE=tools` 单开 | 线上冒烟通过（日志 `意图工具引擎: 工具调用=[create_task]`） | 0.5 天 |
+| S3 ✅ 2026-11-10 | 删死代码 + 测试重写 + 文档 | 删 5 个类（`IntentPrompts`/`IntentJsonParser`/`IntentExtractor`/`IntentExtractorImpl` + 两个测试），构造器 9→8 参，全量 355 绿 | 0.5 天 |
+| S4 ⏳ | 动作链（原 P1）：`create_task` 的 action 支持数组/步骤，`search` 自动读正文 | 「查完再发」可用 | 1 天 |
 
 ## 5. 风险与兜底
 
@@ -103,5 +103,5 @@
 
 ## 7. 回滚
 
-- 代码：`git reset --hard <tag>`，或把 `app.mindbutler.intent.engine` 改回 `prompt`（S3 之前有效）
+- 代码：`git reset --hard intent-refactor-base`（S3 之后配置开关已删除，只能用 git 回滚）
 - 数据：payload 兼容旧格式，无需回滚

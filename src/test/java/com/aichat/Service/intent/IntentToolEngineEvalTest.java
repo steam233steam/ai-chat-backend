@@ -16,14 +16,12 @@ import org.springframework.core.env.Environment;
 import com.aichat.Dto.IntentExtractionResult;
 import com.aichat.Dto.MemoryCandidate;
 import com.aichat.Dto.TaskCandidate;
-import com.aichat.Service.IntentExtractor;
 import com.aichat.utils.IntentDetector;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * S0 影子评测：同一批 40 条口语，分别喂给旧引擎（提示词 + 固定 JSON）和新引擎（工具调用），
- * 比较「候选抽取」这一步的准确率。
+ * 工具引擎评测：40 条口语喂给「模型直接调工具」的引擎，看候选抽取准确率。
  *
  * <p>只在 {@code app.mindbutler.eval.real-model=true} 且配了真实 key 时跑，否则整类跳过——
  * 它要真调模型，花 token、耗时几十秒，不适合每次都跑。
@@ -40,8 +38,6 @@ class IntentToolEngineEvalTest {
     @Autowired
     private IntentToolEngine toolEngine;
     @Autowired
-    private IntentExtractor promptExtractor;
-    @Autowired
     private Environment environment;
 
     private boolean realModel;
@@ -57,13 +53,12 @@ class IntentToolEngineEvalTest {
     }
 
     @Test
-    void shouldCompareToolEngineWithPromptEngine() throws Exception {
+    void shouldMeetBaselineAccuracy() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeTrue(realModel,
                 "需要真模型：-Dapp.mindbutler.eval.real-model=true 且配 spring.ai.openai.api-key");
 
         List<JsonNode> cases = loadCases();
-        int oldHit = 0;
-        int newHit = 0;
+        int hit = 0;
         List<String> rows = new ArrayList<>();
 
         for (JsonNode c : cases) {
@@ -71,32 +66,23 @@ class IntentToolEngineEvalTest {
             String input = c.path("input").asText();
             IntentDetector.Intent intent = IntentDetector.detect(input, false);
 
-            IntentExtractionResult oldResult = promptExtractor.extract(intent, input);
-            IntentExtractionResult newResult = toolEngine.extract(intent, input);
-
-            boolean oldOk = matches(c, oldResult);
-            boolean newOk = matches(c, newResult);
-            if (oldOk) {
-                oldHit++;
+            boolean ok = matches(c, toolEngine.extract(intent, input));
+            if (ok) {
+                hit++;
             }
-            if (newOk) {
-                newHit++;
-            }
-            rows.add(String.format("#%02d %-16s 旧:%s 新:%s  %s", id, c.path("type").asText(),
-                    oldOk ? "OK  " : "MISS", newOk ? "OK  " : "MISS", input));
+            rows.add(String.format("#%02d %-16s %s  %s", id, c.path("type").asText(),
+                    ok ? "OK  " : "MISS", input));
         }
 
         int total = cases.size();
-        double oldRate = total == 0 ? 0 : (double) oldHit / total;
-        double newRate = total == 0 ? 0 : (double) newHit / total;
-        System.out.println("\n========== S0 影子评测：旧引擎 vs 工具引擎 ==========");
+        double rate = total == 0 ? 0 : (double) hit / total;
+        System.out.println("\n========== 工具引擎评测 ==========");
         rows.forEach(System.out::println);
         System.out.println("-----------------------------------------------------");
-        System.out.printf("总用例 %d | 旧引擎 %d (%.1f%%) | 新引擎 %d (%.1f%%)%n",
-                total, oldHit, oldRate * 100, newHit, newRate * 100);
+        System.out.printf("总用例 %d | 命中 %d (%.1f%%)%n", total, hit, rate * 100);
 
-        // 门槛：先允许小幅落后，等 S2 切默认前必须追平
-        assertThat(newRate).isGreaterThanOrEqualTo(oldRate - 0.05);
+        // 门槛：不低于切换前实测的 87.5%（35/40）
+        assertThat(rate).isGreaterThanOrEqualTo(0.85);
     }
 
     private List<JsonNode> loadCases() throws Exception {

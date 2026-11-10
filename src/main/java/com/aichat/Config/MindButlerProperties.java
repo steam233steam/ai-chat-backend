@@ -266,19 +266,8 @@ public class MindButlerProperties {
         taskZone = zone;
     }
 
-    /** 意图引擎：prompt=旧的提示词+固定 JSON；tools=工具调用（新增 MCP 不用改代码）。 */
-    private String intentEngine = "prompt";
-
     /** 工具调用模式下最多允许模型连续调几次工具（一句话多件事时放宽）。 */
     private int intentToolMaxSteps = 8;
-
-    public String getIntentEngine() {
-        return intentEngine;
-    }
-
-    public void setIntentEngine(String intentEngine) {
-        this.intentEngine = intentEngine;
-    }
 
     public int getIntentToolMaxSteps() {
         return intentToolMaxSteps;

@@ -62,7 +62,7 @@ class MindButlerFlowIntegrationTest {
 
     /** 只 mock LLM 提取器；其余全走真实实现 + 真实 MySQL。 */
     @MockBean
-    private com.aichat.Service.IntentExtractor intentExtractor;
+    private com.aichat.Service.intent.IntentToolEngine intentExtractor;
 
     @Autowired
     private PendingActionService pendingActionService;
