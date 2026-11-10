@@ -23,6 +23,9 @@ public class McpTaskAction implements TaskAction {
 
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(McpTaskAction.class);
 
+    /** 执行记录里保留的最大字符数：够放下一次搜索结果，又不至于把库撑爆 */
+    private static final int MAX_DETAIL_CHARS = 4000;
+
     private final McpToolCatalog catalog;
     private final ObjectMapper mapper;
 
@@ -55,11 +58,12 @@ public class McpTaskAction implements TaskAction {
                 : "{}";
         catalog.ensureStarted();
         String result = catalog.invoke(tool, args);
-        String flat = result == null ? "" : result.replaceAll("\\s+", " ").trim();
-        if (flat.length() > 300) {
-            flat = flat.substring(0, 300) + "…";
+        // 执行记录要能看：保留换行（前端 pre-wrap 展示），只压缩连续空格与空行
+        String kept = result == null ? "" : result.replace("\r\n", "\n").replaceAll("[ \\t]+", " ").replaceAll("\n{3,}", "\n\n").trim();
+        if (kept.length() > MAX_DETAIL_CHARS) {
+            kept = kept.substring(0, MAX_DETAIL_CHARS) + "\n…（超出 " + MAX_DETAIL_CHARS + " 字已截断）";
         }
-        log.info("任务 {} 调用 MCP 工具 {}，返回 {} 字", task.getId(), tool, flat.length());
-        return task.getTitle() + "：" + flat;
+        log.info("任务 {} 调用 MCP 工具 {}，返回 {} 字", task.getId(), tool, kept.length());
+        return task.getTitle() + "：\n" + kept;
     }
 }

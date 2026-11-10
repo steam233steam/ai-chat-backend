@@ -30,7 +30,7 @@ class McpTaskActionTest {
 
         String detail = action.run(task, NOW);
 
-        assertThat(detail).isEqualTo("看天气：北京: 晴 +8°C");
+        assertThat(detail).isEqualTo("看天气：\n北京: 晴 +8°C");
         verify(catalog).ensureStarted();
     }
 
@@ -56,9 +56,9 @@ class McpTaskActionTest {
     }
 
     @Test
-    void shouldTruncateLongResult() throws Exception {
+    void shouldKeepLongResultUpToDetailLimit() throws Exception {
         StringBuilder longText = new StringBuilder();
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 2000; i++) {
             longText.append("很长的结果");
         }
         when(catalog.invoke(anyString(), anyString())).thenReturn(longText.toString());
@@ -66,9 +66,21 @@ class McpTaskActionTest {
 
         String detail = action.run(task, NOW);
 
-        // 标题 + 冒号 + 300 字 + 省略号
-        assertThat(detail.length()).isLessThanOrEqualTo("看天气：".length() + 301);
-        assertThat(detail).endsWith("…");
+        // 现在保留完整结果到 4000 字上限，超出才截断
+        assertThat(detail).contains("看天气：");
+        assertThat(detail).contains("已截断");
+        assertThat(detail.length()).isLessThanOrEqualTo("看天气：\n".length() + 4000 + 40);
+    }
+
+    @Test
+    void shouldKeepNewlinesForReadableDetail() throws Exception {
+        when(catalog.invoke(anyString(), anyString())).thenReturn("标题一\n摘要一\n\n标题二\n摘要二");
+        UserTask task = task("{\"tool\":\"mcp_info_search\",\"args\":{\"q\":\"考研\"}}");
+
+        String detail = action.run(task, NOW);
+
+        assertThat(detail).contains("标题一\n摘要一");
+        assertThat(detail).doesNotContain("标题一 摘要一");
     }
 
     private UserTask task(String actionConfig) {
