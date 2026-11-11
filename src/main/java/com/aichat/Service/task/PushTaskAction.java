@@ -70,10 +70,16 @@ public class PushTaskAction implements TaskAction {
 
     @Override
     public String run(UserTask task, LocalDateTime now) throws Exception {
-        JsonNode config = parseConfig(task);
-        String channel = config.path("channel").asText("").trim().toLowerCase();
-        String message = messageOf(task);
         String title = task.getTitle() == null ? "任务提醒" : task.getTitle();
+        return send(parseConfig(task), title, messageOf(task), task.getId());
+    }
+
+    /**
+     * 按配置发一条推送。单独抽出来是给动作链复用——链路里第二步推送的内容来自第一步的查询结果，
+     * 不是任务标题，所以不能只吃 UserTask。
+     */
+    public String send(JsonNode config, String title, String message, Long taskId) throws Exception {
+        String channel = config.path("channel").asText("").trim().toLowerCase();
 
         String url;
         Map<String, Object> payload;
@@ -138,7 +144,7 @@ public class PushTaskAction implements TaskAction {
         if ("serverchan".equals(channel) || "pushplus".equals(channel)) {
             assertBusinessOk(channel, readJson(response.body()));
         }
-        log.info("任务推送已发送 taskId={} channel={} status={}", task.getId(), channel, response.statusCode());
+        log.info("任务推送已发送 taskId={} channel={} status={}", taskId, channel, response.statusCode());
         return "已推送到手机（" + channel + "，" + response.statusCode() + "）";
     }
 

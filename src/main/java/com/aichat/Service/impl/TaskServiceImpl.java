@@ -396,14 +396,52 @@ public class TaskServiceImpl implements TaskService {
      * 到点做什么：notify（站内提醒）/ webhook（回调地址）/ mcp（让 AI 查一次外部信息）。
      * create 时 current 为 null；update 时未传 actionType 就沿用旧值（partial update 语义）。
      */
+    /** 动作链校验：1~5 步，每步只能是 mcp（取数）或 push（推送）。 */
+    private void validateChain(String config) {
+        if (config == null || config.isEmpty()) {
+            throw new BusinessException("动作链需要填写 {\"steps\":[...]}");
+        }
+        com.fasterxml.jackson.databind.JsonNode steps;
+        try {
+            steps = MAPPER.readTree(config).path("steps");
+        } catch (Exception e) {
+            throw new BusinessException("动作链的参数不是合法 JSON");
+        }
+        if (!steps.isArray() || steps.isEmpty()) {
+            throw new BusinessException("动作链至少要有一个步骤");
+        }
+        if (steps.size() > 5) {
+            throw new BusinessException("动作链最多 5 步");
+        }
+        for (int i = 0; i < steps.size(); i++) {
+            com.fasterxml.jackson.databind.JsonNode step = steps.get(i);
+            String stepType = step.path("type").asText("").trim().toLowerCase();
+            if ("mcp".equals(stepType)) {
+                String tool = step.path("tool").asText("").trim();
+                if (!tool.startsWith("mcp_")) {
+                    throw new BusinessException("第 " + (i + 1) + " 步：MCP 工具名应以 mcp_ 开头");
+                }
+            } else if ("push".equals(stepType)) {
+                String channel = step.path("channel").asText("").trim().toLowerCase();
+                if (!"ntfy".equals(channel) && !"bark".equals(channel) && !"wecom".equals(channel)
+                        && !"serverchan".equals(channel) && !"pushplus".equals(channel)) {
+                    throw new BusinessException("第 " + (i + 1) + " 步：推送通道不合法");
+                }
+            } else {
+                throw new BusinessException("第 " + (i + 1) + " 步：步骤类型只支持 mcp / push");
+            }
+        }
+    }
+
     private void applyAction(UserTask task, String actionType, String actionConfig, UserTask current) {
         String type = actionType != null ? actionType.trim().toLowerCase()
                 : (current != null ? current.getActionType() : null);
         if (type == null || type.isEmpty()) {
             type = "notify";
         }
-        if (!"notify".equals(type) && !"webhook".equals(type) && !"mcp".equals(type) && !"push".equals(type)) {
-            throw new BusinessException("动作类型只支持 notify / webhook / mcp / push");
+        if (!"notify".equals(type) && !"webhook".equals(type) && !"mcp".equals(type)
+                && !"push".equals(type) && !"chain".equals(type)) {
+            throw new BusinessException("动作类型只支持 notify / webhook / mcp / push / chain");
         }
         String config = actionConfig != null ? actionConfig.trim()
                 : (actionType == null && current != null ? current.getActionConfig() : null);
@@ -433,6 +471,8 @@ public class TaskServiceImpl implements TaskService {
             if (!tool.startsWith("mcp_")) {
                 throw new BusinessException("MCP 工具名应以 mcp_ 开头，例如 mcp_info_weather");
             }
+        } else if ("chain".equals(type)) {
+            validateChain(config);
         } else if ("push".equals(type)) {
             if (config == null || config.isEmpty()) {
                 throw new BusinessException("推送动作需要填写 {\"channel\":\"ntfy\",\"topic\":\"你的主题\"}");
