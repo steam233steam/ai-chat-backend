@@ -32,6 +32,11 @@ public class IntentCandidateSanitizer {
 
     private final MindButlerProperties props;
 
+    /** 模型偶尔会编出「news」「web」这类名字：先映射到最近的能力，映射不上再降级为站内提醒。 */
+    private static final java.util.Map<String, String> TOOL_ALIASES = java.util.Map.of(
+            "news", "search", "web", "search", "google", "search", "bing", "search",
+            "time", "now", "clock", "now", "weather_report", "weather", "url", "fetch_url");
+
     public IntentCandidateSanitizer(MindButlerProperties props) {
         this.props = props;
     }
@@ -179,6 +184,9 @@ public class IntentCandidateSanitizer {
             // 工具名不再写死白名单：MCP 目录随时可增删，这里只做格式兜底，
             // 真正的工具是否存在由 PendingActionServiceImpl 对着 McpToolCatalog 解析。
             String tool = c.getTool() == null ? null : c.getTool().trim().toLowerCase(Locale.ROOT);
+            if (tool != null) {
+                tool = TOOL_ALIASES.getOrDefault(tool, tool);
+            }
             if (tool != null && !tool.matches("[a-z0-9_-]{1,40}")) {
                 log.warn("工具名格式不合法，降级为站内提醒: {}", tool);
                 tool = null;

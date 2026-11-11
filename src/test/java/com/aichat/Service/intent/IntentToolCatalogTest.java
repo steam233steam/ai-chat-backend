@@ -55,12 +55,24 @@ class IntentToolCatalogTest {
     }
 
     @Test
-    void shouldRejectWhenDueAtMissing() {
+    void shouldAcceptTaskWithoutDueAt() {
+        IntentPlan plan = new IntentPlan();
+        String ack = tool(plan, "create_task").call("{\"title\":\"买牛奶\"}");
+
+        assertThat(ack).contains("未设置时间");
+        assertThat(plan.getTasks()).hasSize(1);
+        assertThat(plan.getTasks().get(0).getDueAt()).isNull();
+        assertThat(plan.getTasks().get(0).getRecurrence()).isEqualTo("once");
+    }
+
+    @Test
+    void shouldRejectUnparsableDueAt() {
         IntentPlan plan = new IntentPlan();
         String ack = tool(plan, "create_task").call("{\"title\":\"交作业\",\"dueAt\":\"明天早上\"}");
 
-        assertThat(ack).contains("参数不合法");
-        assertThat(plan.getTasks()).isEmpty();
+        assertThat(ack).contains("未设置时间");
+        assertThat(plan.getTasks()).hasSize(1);
+        assertThat(plan.getTasks().get(0).getDueAt()).isNull();
     }
 
     @Test

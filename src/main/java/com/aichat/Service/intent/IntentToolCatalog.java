@@ -36,14 +36,14 @@ public class IntentToolCatalog {
               "type": "object",
               "properties": {
                 "title": {"type": "string", "description": "任务标题，动宾短语，不要包含时间，例如「交作业」"},
-                "dueAt": {"type": "string", "description": "首次触发时间，ISO-8601 本地时间，例如 2026-11-11T09:00:00；拿不准就用今天之后最近的合理时间"},
+                "dueAt": {"type": "string", "description": "首次触发时间，ISO-8601 本地时间，例如 2026-11-11T09:00:00；用户没说时间就不要填，这条会变成待办"},
                 "recurrence": {"type": "string", "enum": ["once", "daily", "weekly"], "description": "一次性/每天/每周"},
                 "recurrenceRule": {"type": "string", "description": "weekly 时填 BYDAY=MO 这种格式，其余留空"},
                 "action": {"type": "string", "enum": ["notify", "mcp", "push"], "description": "到点做什么：站内提醒/调 MCP 工具查一次/推到手机"},
                 "tool": {"type": "string", "description": "action=mcp 时填要查的工具短名，例如 weather、search、now"},
                 "toolArgs": {"type": "object", "description": "action=mcp 时该工具的参数，键值对形式，例如 city=北京"}
               },
-              "required": ["title", "dueAt", "recurrence"]
+              "required": ["title"]
             }
             """;
 
@@ -88,10 +88,9 @@ public class IntentToolCatalog {
         if (title.isBlank()) {
             throw new IllegalArgumentException("title 不能为空");
         }
+        // 时间可以不填：用户常说的是「提醒我买牛奶」这种没有时间的待办，
+        // 以前这里直接报错，模型就把整件事丢了。
         LocalDateTime dueAt = parseDue(text(node, "dueAt"));
-        if (dueAt == null) {
-            throw new IllegalArgumentException("dueAt 需要 ISO-8601 时间，例如 2026-11-11T09:00:00");
-        }
         String recurrence = normalizeRecurrence(text(node, "recurrence"));
 
         TaskCandidate task = new TaskCandidate();
@@ -120,7 +119,8 @@ public class IntentToolCatalog {
         }
         plan.addTask(task);
         plan.record("create_task");
-        return "已记为待确认任务：" + task.getTitle() + "（" + MINUTE.format(dueAt) + "）";
+        return "已记为待确认任务：" + task.getTitle()
+                + (dueAt == null ? "（未设置时间）" : "（" + MINUTE.format(dueAt) + "）");
     }
 
     private String remember(IntentPlan plan, String args) {
