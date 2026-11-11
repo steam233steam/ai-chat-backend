@@ -52,12 +52,14 @@ const TOOLS = [
   },
   {
     name: 'search',
-    description: '用必应搜索网页，返回标题、链接和摘要。用于查实时信息（新闻、价格、赛事、政策等），需要网址时再配合 fetch_url 读正文。',
+    description: '用必应搜索网页，返回标题、链接和摘要，并默认抓取第一条结果的正文件（fetch_top=true）。用于查实时信息（新闻、价格、赛事、政策等）。',
     inputSchema: {
       type: 'object',
       properties: {
         q: { type: 'string', description: '搜索词，中文可直接用' },
         count: { type: 'integer', description: '返回条数，默认 5，最多 10' },
+        fetch_top: { type: 'boolean', description: '是否抓第一条结果的正文，默认 true；只要摘要时传 false' },
+        max_chars: { type: 'integer', description: '正文最多返回多少字，默认 1200，范围 300~4000' },
       },
       required: ['q'],
     },
@@ -159,6 +161,66 @@ function inlineText(html) {
   return decodeEntities(String(html).replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
 }
 
+// 抓网页正文：只接受 html/纯文本，其它类型（pdf、图片、json）直接判失败，
+// 交给调用方换下一条结果，避免把二进制当正文塞给模型。
+// 国内站点大量是 GBK/GB2312，直接 res.text() 按 UTF-8 解会整页乱码。
+// 这里先从响应头与 <meta charset> 猜编码，再用 TextDecoder 解。
+function decodePage(buffer, contentType) {
+  const head = new TextDecoder('latin1').decode(buffer.slice(0, 2048))
+  const fromHeader = /charset=([\w-]+)/i.exec(contentType || '')?.[1]
+  const fromMeta = /<meta[^>]+charset\s*=\s*["']?([\w-]+)/i.exec(head)?.[1]
+  const label = (fromHeader || fromMeta || 'utf-8').toLowerCase().replace('gb2312', 'gbk')
+  try {
+    return new TextDecoder(label).decode(buffer)
+  } catch {
+    return new TextDecoder('utf-8').decode(buffer)
+  }
+}
+
+// 中文没有空格，用「二字片段」估相关性：查询词与标题/摘要共有的片段越多越相关。
+// 典型收益：搜「2026诺贝尔文学奖 得主」时，能认出"2026年大事一览"其实不相关。
+function relevance(q, title, snippet) {
+  const norm = (s) => String(s || '').replace(/[\s\p{P}\p{S}]+/gu, '')
+  const wanted = new Set()
+  const qq = norm(q)
+  for (let i = 0; i + 2 <= qq.length; i++) wanted.add(qq.slice(i, i + 2))
+  if (!wanted.size) return 0
+  const hay = norm(title) + norm(snippet)
+  let hit = 0
+  for (const g of wanted) if (hay.includes(g)) hit++
+  return hit / wanted.size
+}
+
+function looksLikeHomepage(url, title, q) {
+  try {
+    const path = new URL(url).pathname.replace(/\/+$/, '')
+    const shallow = path === '' || path === '/' || /\/main(\.s?html?)?$/i.test(path)
+    const tokenHit = q.split(/\s+/).filter(Boolean).some((w) => w.length > 1 && title.includes(w))
+    return shallow && !tokenHit
+  } catch {
+    return true
+  }
+}
+
+async function fetchReadable(url, maxChars) {
+  const target = assertPublicUrl(url)
+  const res = await withTimeout(
+    (signal) => fetch(target, { signal, headers: { 'User-Agent': 'Mozilla/5.0 (aichat-mcp)' } }),
+    9000, '正文抓取')
+  if (!res.ok) throw new Error(`目标返回 ${res.status}`)
+  const contentType = (res.headers.get('content-type') || '').toLowerCase()
+  if (contentType && !/text\/html|text\/plain|application\/xhtml/.test(contentType)) {
+    throw new Error(`不是网页正文（${contentType}）`)
+  }
+  const text = stripHtml(decodePage(await res.arrayBuffer(), contentType))
+  if (!text) throw new Error('页面没有可读正文')
+  return {
+    text: text.length > maxChars ? `${text.slice(0, maxChars)}…` : text,
+    total: text.length,
+    finalUrl: res.url || String(target),
+  }
+}
+
 const handlers = {
   async now(args) {
     const tz = args.tz || 'Asia/Shanghai'
@@ -185,16 +247,10 @@ const handlers = {
   },
 
   async fetch_url(args) {
-    const url = assertPublicUrl(args.url || '')
     const maxChars = Number.isInteger(args.max_chars) ? Math.min(args.max_chars, 20000) : 4000
-    const res = await withTimeout(
-      (signal) => fetch(url, { signal, headers: { 'User-Agent': 'Mozilla/5.0 (aichat-mcp)' } }),
-      10000, '网页抓取')
-    if (!res.ok) throw new Error(`目标返回 ${res.status}`)
-    const raw = await res.text()
-    const text = stripHtml(raw)
-    const clipped = text.length > maxChars ? `${text.slice(0, maxChars)}…（已截断，共 ${text.length} 字）` : text
-    return textResult(clipped || '（页面没有可读正文）')
+    const r = await fetchReadable(args.url || '', maxChars)
+    const suffix = r.total > maxChars ? `（已截断，共 ${r.total} 字）` : ''
+    return textResult(`${r.text}${suffix}`)
   },
 
   async search(args) {
@@ -227,7 +283,36 @@ const handlers = {
     }
     if (!items.length) throw new Error('必应没有返回可解析的结果（页面结构可能变了）')
     const lines = items.map((it, i) => `${i + 1}. ${it.title}\n   ${it.link}${it.snippet ? `\n   ${it.snippet}` : ''}`)
-    return textResult(`搜索「${q}」共 ${items.length} 条：\n\n${lines.join('\n\n')}`)
+    const head = `搜索「${q}」共 ${items.length} 条：\n\n${lines.join('\n\n')}`
+
+    // 只给摘要时，模型经常只能看到「官网首页」这种废信息；
+    // 默认再抓前三条里第一条真正有正文的页面，失败就静默退回摘要。
+    const lowRelevance = relevance(q, items[0].title, items[0].snippet) < 0.15
+    const hint = lowRelevance
+      ? '\n\n（这几条结果和查询词关系不大，建议换更具体的关键词再搜一次，比如加上年份、赛事名或“结果/战报”）'
+      : ''
+    if (args.fetch_top === false) {
+      return textResult(head + hint)
+    }
+    const bodyChars = Math.min(Math.max(Number.isInteger(args.max_chars) ? args.max_chars : 1200, 300), 4000)
+    // 首页类结果正文全是导航和版权声明；同时按二字片段相关性排序，
+    // 避免「搜诺贝尔文学奖、抓回2026年大事」这种离谱匹配。
+    const scored = items
+      .map((it) => ({ it, rel: relevance(q, it.title, it.snippet) }))
+      .sort((a, b) => b.rel - a.rel)
+    const decent = scored.filter((s) => s.rel >= 0.15).map((s) => s.it)
+    const notHome = (decent.length ? decent : items).filter((it) => !looksLikeHomepage(it.link, it.title, q))
+    const ordered = notHome.length ? notHome : (decent.length ? decent : items)
+    for (const it of ordered.slice(0, 3)) {
+      try {
+        const r = await fetchReadable(it.link, bodyChars)
+        if (r.total < 200) continue
+        return textResult(`${head}\n\n—— 正文（第 1 条：${it.title}）——\n${r.text}`)
+      } catch {
+        // 换下一条
+      }
+    }
+    return textResult(`${head}${hint}\n\n（前三条都没有可读正文，只有上面的摘要）`)
   },
 }
 
