@@ -22,6 +22,8 @@ import com.aichat.Config.IntentExecutorConfig;
 import com.aichat.Config.MindButlerProperties;
 import com.aichat.Config.ModelRouter;
 import com.aichat.Dto.IntentExtractionResult;
+import com.aichat.Dto.MemoryCandidate;
+import com.aichat.Dto.TaskCandidate;
 import com.aichat.utils.IntentDetector;
 
 /**
@@ -79,12 +81,22 @@ public class IntentToolEngine {
             List<FunctionCallback> tools = catalog.build(plan);
             String system = buildSystemPrompt(intent);
 
-            callWithTimeout(() -> client.prompt()
+            // 注意：不要用 .options(ChatOptions) 覆盖默认选项——M5 里它会把工具调用配置一起换掉，
+            // 表现为「模型一次都不调工具」。抽取的确定性靠提示词与兜底，不靠 temperature。
+            FunctionCallback[] callbacks = tools.toArray(new FunctionCallback[0]);
+            boolean finished = callWithTimeout(() -> client.prompt()
                     .system(system)
                     .user(message)
-                    .functions(tools.toArray(new FunctionCallback[0]))
+                    .functions(callbacks)
                     .call()
                     .content(), props.getIntentTimeoutMs());
+
+            // 模型偶尔会「漏调」。再调一次模型会把延迟翻倍、还容易撞超时，
+            // 所以这里用确定性兜底：句子里有明显的「提醒/记得/待办」信号却什么都没抽到时，
+            // 直接按原话兜一条待办，宁可让用户改标题，也不静默丢掉。
+            if (finished && plan.isEmpty()) {
+                planRescue(plan, message, intent);
+            }
 
             log.info("意图工具引擎: 模型={}, 工具调用={}, 记忆={}, 任务={}",
                     model, plan.getCalls(), plan.getMemories().size(), plan.getTasks().size());
@@ -112,6 +124,110 @@ public class IntentToolEngine {
         return IMMEDIATE_CHAT.matcher(text).find();
     }
 
+    private static final java.util.regex.Pattern TODO_SIGNAL = java.util.regex.Pattern.compile(
+            "提醒我|提醒一下|记得|别忘了|帮我记|记一下|待办|回头|别忘了|要交|该交|要去做");
+
+    private static final java.util.regex.Pattern TIME_WORDS = java.util.regex.Pattern.compile(
+            "今天|明天|后天|今晚|明早|周[一二三四五六日天]|下周|下个?月|每天|每周|每月|\\d+点|\\d+号|\\d+日|早上|上午|中午|下午|晚上");
+
+    /** 只在有明确「以后要做」信号时兜底；问句和闲聊不兜。 */
+    static boolean looksLikeTodo(String message, IntentDetector.Intent intent) {
+        String text = message == null ? "" : message;
+        if (intent == IntentDetector.Intent.QUERY || looksLikeImmediateChat(text)) {
+            return false;
+        }
+        return TODO_SIGNAL.matcher(text).find();
+    }
+
+    /** 把「明天八点提醒我交作业」压成「交作业」这种能当标题的短语。 */
+    static String rescueTitle(String message) {
+        String title = message == null ? "" : message;
+        title = title.replaceAll("^(麻烦|帮我|请|那个)?(一下，?)?", "");
+        title = title.replaceAll("(提醒我|提醒一下|记得|别忘了|帮我记|记一下|待办)", "");
+        title = title.replaceAll(TIME_WORDS.pattern(), "");
+        title = title.replaceAll("[，,。！!？?、；;：:\\s]+", " ").trim();
+        if (title.isEmpty()) {
+            title = message == null ? "待办" : message.trim();
+        }
+        return title.length() > 40 ? title.substring(0, 40) : title;
+    }
+
+    /**
+     * 模型没调工具时的确定性兜底。
+     *
+     * <p>事实证明「模型这次没调」是常态而不是异常，靠提示词求它每次都调不现实。
+     * 这里只处理信号明确的三种句式：定时查东西、提醒我做某事、让我记住某事；
+     * 其余（含糊的、闲聊的）仍然交给聊天，避免乱建。
+     */
+    void planRescue(IntentPlan plan, String message, IntentDetector.Intent intent) {
+        String text = message == null ? "" : message;
+        if (intent == IntentDetector.Intent.QUERY || looksLikeImmediateChat(text)) {
+            return;
+        }
+        TaskCandidate task = null;
+        if (looksLikeScheduledQuery(text)) {
+            task = new TaskCandidate();
+            task.setTitle(rescueTitle(text));
+            task.setRecurrence(TIME_WORDS.matcher(text).find() && text.contains("每天") ? "daily" : "once");
+            task.setAction("mcp");
+            boolean weather = text.contains("天气") || text.contains("气温") || text.contains("下雨");
+            task.setTool(weather ? "weather" : "search");
+            task.setToolArgs(weather ? java.util.Map.of("city", cityOf(text))
+                    : java.util.Map.of("q", queryOf(text)));
+        } else if (looksLikeTodo(text, intent)) {
+            task = new TaskCandidate();
+            task.setTitle(rescueTitle(text));
+            task.setRecurrence("once");
+            task.setAction("create");
+        }
+        if (task != null) {
+            plan.addTask(task);
+            plan.record("rescue");
+            log.info("意图引擎兜底建任务: {}（{}）", task.getTitle(), task.getAction());
+            return;
+        }
+        if (MEMORY_SIGNAL.matcher(text).find()) {
+            MemoryCandidate memory = new MemoryCandidate();
+            memory.setKey(text.contains("叫我") || text.contains("称呼") ? "relation" : "fact");
+            memory.setValue(text.replaceAll("^(请|麻烦)?(帮我)?(记住|记一下|记下|记着)[，,：:]?", "").trim());
+            memory.setMemType("stable");
+            memory.setScope("global");
+            memory.setConfidence(0.8);
+            if (!memory.getValue().isBlank()) {
+                plan.addMemory(memory);
+                plan.record("rescue");
+                log.info("意图引擎兜底记记忆: {}", memory.getValue());
+            }
+        }
+    }
+
+    private static final java.util.regex.Pattern QUERY_SIGNAL = java.util.regex.Pattern.compile(
+            "查一下|查下|搜一下|搜下|看看|告诉我|播报|推给我|发我|推送");
+    private static final java.util.regex.Pattern MEMORY_SIGNAL = java.util.regex.Pattern.compile(
+            "记住|记一下|记下|记着");
+
+    /** 「每天/明天 + 查/搜/告诉我」这类定时取数的句子，模型经常漏调。 */
+    static boolean looksLikeScheduledQuery(String message) {
+        String text = message == null ? "" : message;
+        return TIME_WORDS.matcher(text).find() && QUERY_SIGNAL.matcher(text).find();
+    }
+
+    static String cityOf(String message) {
+        // 先去掉「查一下/看看」这类动作词，否则「查一下北京天气」会把「一下北京」当成城市
+        String text = message == null ? "" : message.replaceAll(
+                "(查一下|查下|搜一下|搜下|告诉我|播报|推给我|发我|推送|看看|一下)", " ");
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("([\\u4e00-\\u9fa5]{2,4}?)(?:市|区)?(?:的)?(?:天气|气温)").matcher(text);
+        return m.find() ? m.group(1) : "北京";
+    }
+
+    static String queryOf(String message) {
+        String q = message.replaceAll(TIME_WORDS.pattern(), "")
+                .replaceAll("(查一下|查下|搜一下|搜下|告诉我|播报|推给我|发我|推送|看看|一下)", "")
+                .replaceAll("[，,。！!？?、；;：:\\s]+", " ").trim();
+        return q.isBlank() ? message : q;
+    }
+
     String buildSystemPrompt(IntentDetector.Intent intent) {
         LocalDateTime now = LocalDateTime.now(clock);
         StringBuilder sb = new StringBuilder();
@@ -136,7 +252,8 @@ public class IntentToolEngine {
         return sb.toString();
     }
 
-    private void callWithTimeout(Callable<String> call, int timeoutMs) {
+    /** @return 是否在超时前完成（超时/中断返回 false，用于决定要不要重试） */
+    private boolean callWithTimeout(Callable<String> call, int timeoutMs) {
         Future<String> future = null;
         try {
             future = intentExecutor.submit(call);
@@ -145,14 +262,17 @@ public class IntentToolEngine {
             } else {
                 future.get();
             }
+            return true;
         } catch (TimeoutException e) {
             if (future != null) {
                 future.cancel(true);
             }
             log.warn("意图工具引擎超时（{}ms）", timeoutMs);
+            return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("意图工具引擎被中断");
+            return false;
         } catch (ExecutionException e) {
             throw new IllegalStateException("意图工具引擎执行失败: " + e.getCause(), e);
         }

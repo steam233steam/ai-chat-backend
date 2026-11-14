@@ -151,10 +151,11 @@ public class IntentCandidateSanitizer {
                 log.warn("跳过含{}的任务候选: title 已脱敏", sensitive);
                 continue;
             }
-            // P1 只允许 create（update/delete 留 P1.5）
+            // 聊天里只允许两种：create（到点提醒）与 mcp（到点查一次）。
+            // update/delete 留 P1.5；push/chain 需要用户私有 key，只能从任务页配置。
             String action = (c.getAction() == null || c.getAction().isBlank())
                     ? "create" : c.getAction().trim().toLowerCase(Locale.ROOT);
-            if (!"create".equals(action)) {
+            if (!"create".equals(action) && !"mcp".equals(action)) {
                 continue;
             }
             String recurrence = (c.getRecurrence() == null || c.getRecurrence().isBlank())
@@ -192,7 +193,9 @@ public class IntentCandidateSanitizer {
                 tool = null;
             }
             c.setTool(tool);
-            c.setAction("create");
+            // 有工具就到点去查（mcp），没工具就是普通提醒（create）。
+            // 注意：不能无条件写 create，否则 mcp 任务会在聊天链路上被静默吞掉。
+            c.setAction(tool != null ? "mcp" : "create");
             c.setTitle(title);
             c.setRecurrence(recurrence);
             c.setRecurrenceRule(rule);

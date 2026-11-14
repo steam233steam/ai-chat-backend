@@ -256,7 +256,7 @@ class MemoryServiceImplTest {
         when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("stable"), any(LocalDateTime.class), eq(null), anyInt()))
                 .thenReturn(List.of(mem(1L, "style", "简洁", "stable", "active", null, NOW)));
         when(mapper.selectActiveByUserAndType(eq("USER_ID_1234567890"), eq("dynamic"), any(LocalDateTime.class), eq(null), anyInt()))
-                .thenReturn(List.of(mem(2L, "fact", "备考", "dynamic", "active", NOW.plusDays(10), NOW)));
+                .thenReturn(List.of(mem(2L, "fact", "备考", "dynamic", "active", NOW.plusYears(1), NOW)));
 
         List<MemoryVO> vos = service.listForInjection(5, 5);
 
