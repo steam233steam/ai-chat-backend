@@ -34,8 +34,9 @@ const TOOLS = [
       type: 'object',
       properties: {
         city: { type: 'string', description: '城市名，如 北京 / Shanghai' },
+        location: { type: 'string', description: 'city 的别名，二选一' },
       },
-      required: ['city'],
+      required: [],
     },
   },
   {
@@ -45,9 +46,10 @@ const TOOLS = [
       type: 'object',
       properties: {
         url: { type: 'string', description: 'http/https 地址' },
+        link: { type: 'string', description: 'url 的别名，二选一' },
         max_chars: { type: 'integer', description: '最多返回多少字符，默认 4000' },
       },
-      required: ['url'],
+      required: [],
     },
   },
   {
@@ -57,11 +59,12 @@ const TOOLS = [
       type: 'object',
       properties: {
         q: { type: 'string', description: '搜索词，中文可直接用' },
+        query: { type: 'string', description: 'q 的别名，二选一' },
         count: { type: 'integer', description: '返回条数，默认 5，最多 10' },
         fetch_top: { type: 'boolean', description: '是否抓第一条结果的正文，默认 true；只要摘要时传 false' },
         max_chars: { type: 'integer', description: '正文最多返回多少字，默认 1200，范围 300~4000' },
       },
-      required: ['q'],
+      required: [],
     },
   },
 ]
@@ -237,7 +240,7 @@ const handlers = {
   },
 
   async weather(args) {
-    const city = (args.city || '').trim()
+    const city = (args.city || args.location || args['城市'] || '').trim()
     if (!city) throw new Error('缺少 city')
     const url = `https://wttr.in/${encodeURIComponent(city)}?format=3&lang=zh`
     const res = await withTimeout(
@@ -248,13 +251,14 @@ const handlers = {
 
   async fetch_url(args) {
     const maxChars = Number.isInteger(args.max_chars) ? Math.min(args.max_chars, 20000) : 4000
-    const r = await fetchReadable(args.url || '', maxChars)
+    const r = await fetchReadable(args.url || args.link || args.href || '', maxChars)
     const suffix = r.total > maxChars ? `（已截断，共 ${r.total} 字）` : ''
     return textResult(`${r.text}${suffix}`)
   },
 
   async search(args) {
-    const q = (args.q || '').trim()
+    // 模型经常把搜索词写成 query/keyword，这里全部兼容，别让它因为参数名不同就失败
+    const q = (args.q || args.query || args.keyword || args.搜索词 || '').trim()
     if (!q) throw new Error('缺少 q')
     const count = Math.min(Math.max(Number.isInteger(args.count) ? args.count : 5, 1), 10)
     const url = `https://cn.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-hans`
