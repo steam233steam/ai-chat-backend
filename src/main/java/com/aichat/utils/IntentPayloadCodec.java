@@ -24,7 +24,11 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  */
 public final class IntentPayloadCodec {
     private static final Logger log = LoggerFactory.getLogger(IntentPayloadCodec.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper().registerModule(new JavaTimeModule());
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            // payload 里时间统一存 ISO 字符串（默认会存成 [2026,11,15,9,0] 数组，
+            // 既不好读，算差异时也取不到文本）
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private IntentPayloadCodec() {
     }
