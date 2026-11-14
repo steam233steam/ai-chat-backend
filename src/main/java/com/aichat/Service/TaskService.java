@@ -49,4 +49,7 @@ public interface TaskService {
 
     /** 某条任务的执行记录（闹钟响过几次、成没成），新的在前；不存在或非本人 404。 */
     List<TaskRunVO> runs(long id, int limit);
+
+    /** 手动「立即运行一次」：真跑一次动作并写执行记录，不动定时；不存在或非本人 404。 */
+    TaskRunVO runNow(long id);
 }

@@ -116,7 +116,16 @@ public class TaskAlarmScheduler {
         return handled;
     }
 
+    /** 手动「立即运行一次」：真跑动作、写记录，但不改定时（不动 last_notified_at）。 */
+    public TaskRun runNow(UserTask task) {
+        return fire(task, LocalDateTime.now(clock), "manual", false);
+    }
+
     private void fire(UserTask task, LocalDateTime now) {
+        fire(task, now, "scheduled", true);
+    }
+
+    private TaskRun fire(UserTask task, LocalDateTime now, String triggerType, boolean markNotified) {
         String actionType = task.getActionType() == null || task.getActionType().isBlank()
                 ? "notify"
                 : task.getActionType();
@@ -125,7 +134,7 @@ public class TaskAlarmScheduler {
         run.setTaskId(task.getId());
         run.setUserId(task.getUserId());
         run.setActionType(actionType);
-        run.setTriggerType("scheduled");
+        run.setTriggerType(triggerType);
         run.setStartedAt(now);
 
         try {
@@ -145,10 +154,13 @@ public class TaskAlarmScheduler {
         run.setFinishedAt(LocalDateTime.now(clock));
         try {
             taskRunMapper.insert(run);
-            userTaskMapper.markNotified(task.getId(), now);
+            if (markNotified) {
+                userTaskMapper.markNotified(task.getId(), now);
+            }
         } catch (Exception e) {
             log.warn("任务 {} 写执行记录失败：{}", task.getId(), e.getMessage());
         }
+        return run;
     }
 
     private boolean acquire(String token) {

@@ -105,6 +105,11 @@ public class TaskController {
 
     @Operation(summary = "任务执行记录",
             description = "闹钟每次响都会写一条：动作、状态、摘要；新的在前，最多 100 条")
+    @PostMapping("/{id}/run")
+    public Result<TaskRunVO> runNow(@PathVariable long id) {
+        return Result.success(taskService.runNow(id));
+    }
+
     @GetMapping("/{id}/runs")
     public Result<List<TaskRunVO>> runs(@PathVariable long id,
             @RequestParam(defaultValue = "20") int limit) {

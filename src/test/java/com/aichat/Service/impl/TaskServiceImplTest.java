@@ -55,6 +55,7 @@ class TaskServiceImplTest {
     private TaskRunMapper taskRunMapper;
     private MindButlerProperties props;
     private TaskServiceImpl service;
+    private com.aichat.Service.support.TaskAlarmScheduler alarmScheduler;
 
     @BeforeEach
     void setUp() {
@@ -62,7 +63,8 @@ class TaskServiceImplTest {
         taskRunMapper = mock(TaskRunMapper.class);
         props = new MindButlerProperties();
         props.setTaskZone("Asia/Shanghai");
-        service = new TaskServiceImpl(mapper, taskRunMapper, props, FIXED_CLOCK);
+        alarmScheduler = mock(com.aichat.Service.support.TaskAlarmScheduler.class);
+        service = new TaskServiceImpl(mapper, taskRunMapper, props, FIXED_CLOCK, alarmScheduler);
         login("USER_ID_1234567890");
     }
 
@@ -492,6 +494,49 @@ class TaskServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("任务不存在");
         verify(taskRunMapper, never()).selectByTask(any(Long.class), any(), any(Integer.class));
+    }
+
+    @Test
+    void shouldRunTaskImmediately() {
+        when(mapper.selectById(5L, "USER_ID_1234567890"))
+                .thenReturn(task(5L, "交作业", "once", null, NOW, "pending"));
+        TaskRun run = new TaskRun();
+        run.setId(21L);
+        run.setTaskId(5L);
+        run.setUserId("USER_ID_1234567890");
+        run.setActionType("notify");
+        run.setTriggerType("manual");
+        run.setStatus("success");
+        run.setDetail("站内提醒：交作业");
+        run.setStartedAt(NOW);
+        run.setFinishedAt(NOW);
+        when(alarmScheduler.runNow(any(UserTask.class))).thenReturn(run);
+
+        TaskRunVO vo = service.runNow(5L);
+
+        assertThat(vo.id()).isEqualTo(21L);
+        assertThat(vo.triggerType()).isEqualTo("manual");
+        assertThat(vo.status()).isEqualTo("success");
+    }
+
+    @Test
+    void shouldRejectRunNowOfFinishedTask() {
+        when(mapper.selectById(5L, "USER_ID_1234567890"))
+                .thenReturn(task(5L, "交作业", "once", null, NOW, "done"));
+
+        assertThatThrownBy(() -> service.runNow(5L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("只能立即运行未完成的任务");
+        verify(alarmScheduler, never()).runNow(any(UserTask.class));
+    }
+
+    @Test
+    void should404WhenRunNowOthersTask() {
+        when(mapper.selectById(9L, "USER_ID_1234567890")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.runNow(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("任务不存在");
     }
 
     // ---------- 到点动作（notify / webhook） ----------

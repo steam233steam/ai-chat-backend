@@ -37,13 +37,16 @@ public class TaskServiceImpl implements TaskService {
     private final TaskRunMapper taskRunMapper;
     private final MindButlerProperties props;
     private final Clock clock;
+    private final com.aichat.Service.support.TaskAlarmScheduler taskAlarmScheduler;
 
     public TaskServiceImpl(UserTaskMapper userTaskMapper, TaskRunMapper taskRunMapper,
-            MindButlerProperties props, Clock clock) {
+            MindButlerProperties props, Clock clock,
+            com.aichat.Service.support.TaskAlarmScheduler taskAlarmScheduler) {
         this.userTaskMapper = userTaskMapper;
         this.taskRunMapper = taskRunMapper;
         this.props = props;
         this.clock = clock;
+        this.taskAlarmScheduler = taskAlarmScheduler;
     }
 
     @Override
@@ -227,6 +230,19 @@ public class TaskServiceImpl implements TaskService {
         }
         int cap = Math.max(1, Math.min(limit, 100));
         return taskRunMapper.selectByTask(id, userId, cap).stream().map(TaskServiceImpl::toRunVO).toList();
+    }
+
+    @Override
+    public TaskRunVO runNow(long id) {
+        String userId = currentUserId();
+        UserTask task = userTaskMapper.selectById(id, userId);
+        if (task == null) {
+            throw new BusinessException(404, "任务不存在或已删除");
+        }
+        if (!"pending".equals(task.getStatus())) {
+            throw new BusinessException(400, "只能立即运行未完成的任务");
+        }
+        return toRunVO(taskAlarmScheduler.runNow(task));
     }
 
     private static TaskRunVO toRunVO(TaskRun run) {
