@@ -277,7 +277,8 @@ public class PendingActionServiceImpl implements PendingActionService {
         boolean hasTask = IntentPayloadCodec
                 .parseCandidates(payload, "tasks", TaskCandidate.class).stream()
                 .anyMatch(c -> c != null && c.getTitle() != null && !c.getTitle().isBlank()
-                        && (c.getAction() == null || "create".equals(c.getAction())));
+                        && (c.getAction() == null || "create".equals(c.getAction())
+                            || ("mcp".equals(c.getAction()) && c.getTool() != null)));
         if (!hasMemory && !hasTask) {
             throw new BusinessException("待确认内容为空或已失效，请重新发起");
         }
@@ -340,14 +341,17 @@ public class PendingActionServiceImpl implements PendingActionService {
             if (c == null || c.getTitle() == null) {
                 continue;
             }
-            // P1 只允许 action=create（update/delete 留 P1.5）
-            if (c.getAction() != null && !"create".equals(c.getAction())) {
-                log.warn("跳过非 create 任务候选（P1 不支持）: action={}", c.getAction());
+            // 只支持 create（到点提醒）与 mcp（到点查一次）
+            boolean isMcp = "mcp".equals(c.getAction()) && c.getTool() != null && !c.getTool().isBlank();
+            if (c.getAction() != null && !"create".equals(c.getAction()) && !isMcp) {
+                log.warn("跳过不支持的任务候选（P1 只有 create/mcp）: action={}", c.getAction());
                 continue;
             }
             CreateTaskRequest req = new CreateTaskRequest();
             req.setTitle(c.getTitle());
-            req.setDueAt(c.getDueAt());
+            // 「查一下某事的现状」这类没有明确时间：默认一分钟后查一次，别让用户白等
+            req.setDueAt(c.getDueAt() != null ? c.getDueAt()
+                    : (isMcp ? LocalDateTime.now().plusMinutes(1) : null));
             req.setRecurrence(c.getRecurrence());
             req.setRecurrenceRule(c.getRecurrenceRule());
             // AI 想让它到点去查东西（天气/搜索/时间/抓网页）时，带上 MCP 动作

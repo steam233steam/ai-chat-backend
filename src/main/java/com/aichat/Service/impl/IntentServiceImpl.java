@@ -265,6 +265,11 @@ public class IntentServiceImpl implements IntentService {
                     && SensitiveContentFilter.detectSensitive(message) != null) {
                 return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
             }
+            // 「明天天气怎么样」这类带时间词的问句会被判成 TASK，但用户其实只想聊天。
+            // 直接交给聊天回答，别弹「你想让我提醒你什么」。
+            if (intent == Intent.TASK && IntentToolEngine.looksLikeImmediateChat(message)) {
+                return IntentOutcome.chat();
+            }
             return IntentOutcome.replyOnly(
                     intent == Intent.TASK ? TASK_CLARIFY_FALLBACK : EXTRACT_FALLBACK);
         }

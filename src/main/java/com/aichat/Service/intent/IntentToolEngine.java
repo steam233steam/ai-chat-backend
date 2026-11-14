@@ -112,7 +112,7 @@ public class IntentToolEngine {
                     + "|翻译|解释一下|解释下|总结一下|润色|改写|算一下");
 
     /** 「现在就想知道答案」的句子：问句，或让我立刻做一次文字处理。 */
-    static boolean looksLikeImmediateChat(String message) {
+    public static boolean looksLikeImmediateChat(String message) {
         String text = message == null ? "" : message.trim();
         if (text.isEmpty()) {
             return false;
