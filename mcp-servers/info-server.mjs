@@ -224,6 +224,78 @@ async function fetchReadable(url, maxChars) {
   }
 }
 
+
+const SEARCH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+
+async function bingSearch(q, count) {
+  const url = `https://cn.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-hans`
+  const res = await withTimeout((signal) => fetch(url, {
+    signal,
+    headers: { 'User-Agent': SEARCH_UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+  }), 10000, '必应搜索')
+  if (!res.ok) throw new Error(`必应返回 ${res.status}`)
+  const html = await res.text()
+  const items = []
+  for (const block of html.match(/<li class="b_algo"[\s\S]*?<\/li>/g) || []) {
+    const hit = block.match(/<h2[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/)
+    if (!hit) continue
+    items.push({
+      title: inlineText(hit[2]),
+      link: decodeBingLink(hit[1]),
+      snippet: inlineText(block.match(/<p[^>]*>([\s\S]*?)<\/p>/)?.[1] || ''),
+    })
+    if (items.length >= count) break
+  }
+  return items
+}
+
+// 360 搜索：必应对「赛事日程/比分」只给官网首页，360 的索引里常有战报正文摘要。
+async function so360Search(q, count) {
+  const url = `https://www.so.com/s?q=${encodeURIComponent(q)}`
+  const res = await withTimeout((signal) => fetch(url, {
+    signal,
+    headers: { 'User-Agent': SEARCH_UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'zh-CN,zh;q=0.9' },
+  }), 10000, '360搜索')
+  if (!res.ok) throw new Error(`360返回 ${res.status}`)
+  const html = await res.text()
+  const items = []
+  for (const block of html.split('<li class="res-list"').slice(1)) {
+    const hit = block.match(/<h3 class="res-title[^"]*"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/)
+    if (!hit) continue
+    const snippet = inlineText(
+      block.match(/<p class="res-desc"[^>]*>([\s\S]*?)<\/p>/)?.[1]
+      || block.match(/data-result-summary[^>]*>([\s\S]*?)<\/span>/)?.[1]
+      || '')
+    items.push({ title: inlineText(hit[2]), link: hit[1], snippet })
+    if (items.length >= count) break
+  }
+  return items
+}
+
+// 从候选里挑一条能读到正文的；跳过官网首页（正文只有导航和版权声明）
+async function pickReadable(q, items, bodyChars) {
+  const scored = items
+    .map((it) => ({ it, rel: relevance(q, it.title, it.snippet) }))
+    .sort((a, b) => b.rel - a.rel)
+  const decent = scored.filter((s) => s.rel >= 0.15 && !looksLikeHomepage(s.it.link, s.it.title, q)).map((s) => s.it)
+  const pool = decent.length ? decent : items.filter((it) => !looksLikeHomepage(it.link, it.title, q))
+  for (const it of pool.slice(0, 3)) {
+    try {
+      const r = await fetchReadable(it.link, bodyChars)
+      if (r.total < 200 || r.text.length < 150) continue
+      // 正文也要和查询词相关：必应常把「2026年诺贝尔文学奖」给成「2026年日历」，
+      // 页面能打开、字数也够，但内容完全跑题，这种必须判为没抓到。
+      const bodyRel = relevance(q, it.title, r.text.slice(0, 400))
+      if (bodyRel < 0.12) continue
+      return { item: it, text: r.text }
+    } catch {
+      // 换下一条
+    }
+  }
+  return null
+}
+
+
 const handlers = {
   async now(args) {
     const tz = args.tz || 'Asia/Shanghai'
@@ -261,72 +333,50 @@ const handlers = {
     const q = (args.q || args.query || args.keyword || args.搜索词 || '').trim()
     if (!q) throw new Error('缺少 q')
     const count = Math.min(Math.max(Number.isInteger(args.count) ? args.count : 5, 1), 10)
-    const url = `https://cn.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-hans`
-    const res = await withTimeout(
-      (signal) => fetch(url, {
-        signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml',
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        },
-      }), 10000, '搜索')
-    if (!res.ok) throw new Error(`必应返回 ${res.status}`)
-    const html = await res.text()
-    const blocks = html.match(/<li class="b_algo"[\s\S]*?<\/li>/g) || []
-    const items = []
-    for (const block of blocks) {
-      const hit = block.match(/<h2[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/)
-      if (!hit) continue
-      items.push({
-        title: inlineText(hit[2]),
-        link: decodeBingLink(hit[1]),
-        snippet: inlineText(block.match(/<p[^>]*>([\s\S]*?)<\/p>/)?.[1] || ''),
-      })
-      if (items.length >= count) break
-    }
-    if (!items.length) throw new Error('必应没有返回可解析的结果（页面结构可能变了）')
-    const lines = items.map((it, i) => `${i + 1}. ${it.title}\n   ${it.link}${it.snippet ? `\n   ${it.snippet}` : ''}`)
-    const head = `搜索「${q}」共 ${items.length} 条：\n\n${lines.join('\n\n')}`
-
-    // 只给摘要时，模型经常只能看到「官网首页」这种废信息；
-    // 默认再抓前三条里第一条真正有正文的页面，失败就静默退回摘要。
-    const lowRelevance = relevance(q, items[0].title, items[0].snippet) < 0.15
-    const hint = lowRelevance
-      ? '\n\n（这几条结果和查询词关系不大，建议换更具体的关键词再搜一次，比如加上年份、赛事名或“结果/战报”）'
-      : ''
-    if (args.fetch_top === false) {
-      return textResult(head + hint)
-    }
     const bodyChars = Math.min(Math.max(Number.isInteger(args.max_chars) ? args.max_chars : 1200, 300), 4000)
-    // 首页类结果正文全是导航和版权声明；同时按二字片段相关性排序，
-    // 避免「搜诺贝尔文学奖、抓回2026年大事」这种离谱匹配。
-    const scored = items
-      .map((it) => ({ it, rel: relevance(q, it.title, it.snippet) }))
-      .sort((a, b) => b.rel - a.rel)
-    const decent = scored.filter((s) => s.rel >= 0.15).map((s) => s.it)
-    // 官网首页的正文只有导航和版权声明，喂给模型等于喂垃圾：
-    // 全部结果都是首页时直接判失败，让上层的执行记录显示"没查到"，而不是假装成功。
-    const candidates = (decent.length ? decent : items).filter((it) => !looksLikeHomepage(it.link, it.title, q))
-    if (!candidates.length) {
-      return textResult(
-        `${head}\n\n没查到可核实的内容：这些结果都是官网首页或与查询无关。` +
-        `建议把问题说得更具体（加上日期、赛事名、队伍名），或者换一个信息源。`,
-        true)
-    }
-    for (const it of candidates.slice(0, 3)) {
+    const fetchTop = args.fetch_top !== false
+
+    // 两个引擎轮流试：一个给首页另一个可能给战报，索引差别比想象中大（实测 360 对赛事最有效）。
+    // 360 的摘要本身就是正文片段，读不到正文时仍然有信息量；必应的摘要常是导航文案，不能当真。
+    const engines = [
+      { name: '必应', run: bingSearch, trustSnippet: false },
+      { name: '360', run: so360Search, trustSnippet: true },
+    ]
+    const tried = []
+    let lastHead = ''
+    for (const engine of engines) {
+      let items = []
       try {
-        const r = await fetchReadable(it.link, bodyChars)
-        if (r.total < 200) continue
-        return textResult(`${head}\n\n—— 正文（第 1 条：${it.title}）——\n${r.text}`)
-      } catch {
-        // 换下一条
+        items = await engine.run(q, count)
+      } catch (err) {
+        tried.push(`${engine.name}不可用（${err.message}）`)
+        continue
       }
+      if (!items.length) { tried.push(`${engine.name}无结果`); continue }
+      const head = `搜索「${q}」（${engine.name}）共 ${items.length} 条：\n\n` +
+        items.map((it, i) => `${i + 1}. ${it.title}\n   ${it.link}${it.snippet ? `\n   ${it.snippet}` : ''}`).join('\n\n')
+      lastHead = head
+      if (!fetchTop) return textResult(head)
+      const picked = await pickReadable(q, items, bodyChars)
+      if (picked) {
+        return textResult(`${head}\n\n—— 正文（第 1 条：${picked.item.title}）——\n${picked.text}`)
+      }
+      if (engine.trustSnippet) {
+        const decent = items.filter((it) => relevance(q, it.title, it.snippet) >= 0.15)
+        if (decent.length) {
+          return textResult(`${head}\n\n（以上为搜索结果摘要，没能取到网页正文；摘要里通常已经包含答案）`)
+        }
+      }
+      tried.push(`${engine.name}只拿到首页/无关结果`)
     }
+
+    const detail = tried.length ? `（${tried.join('；')}）` : ''
     return textResult(
-      `${head}${hint}\n\n这几条都没能取到正文，只有上面的摘要——可能不是你要的答案，换个更具体的关键词再试。`,
+      `${lastHead}${lastHead ? '\n\n' : ''}没查到可核实的内容${detail}：这些结果都是官网首页或与查询无关。` +
+      '建议把问题说得更具体（加上日期、赛事名、队伍名），或者换一个信息源。',
       true)
   },
+
 }
 
 async function callTool(id, params) {

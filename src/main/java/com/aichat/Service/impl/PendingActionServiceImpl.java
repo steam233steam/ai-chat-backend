@@ -363,8 +363,15 @@ public class PendingActionServiceImpl implements PendingActionService {
             req.setRecurrenceRule(c.getRecurrenceRule());
             // AI 想让它到点去查东西（天气/搜索/时间/抓网页）时，带上 MCP 动作
             if (c.getTool() != null && !c.getTool().isBlank()) {
-                req.setActionType("mcp");
-                req.setActionConfig(buildMcpActionConfig(c.getTool(), c.getToolArgs()));
+                // 开放式检索（搜资料/查赛程）一次搜不到就废了，交给 agent 动作自己换词多搜几次再总结；
+                // 天气/时间/抓固定网页这类单次调用就够，仍然走 mcp，省一次模型调用。
+                if (isOpenEndedSearch(c.getTool())) {
+                    req.setActionType("agent");
+                    req.setActionConfig(null);
+                } else {
+                    req.setActionType("mcp");
+                    req.setActionConfig(buildMcpActionConfig(c.getTool(), c.getToolArgs()));
+                }
             }
             // P1.5：记录任务从哪个会话发起（溯源），可见性仍全账号
             TaskVO vo = taskService.createFromPending(req, action.getSessionId());
@@ -386,6 +393,12 @@ public class PendingActionServiceImpl implements PendingActionService {
      * <p>解析顺序：完全等于公共名 → 完全等于服务端原始工具名 → 公共名以 «_短名» 结尾。
      * 都匹配不上才退回旧约定（mcp_info_前缀），这样新增一个 MCP 服务器不用改这里。
      */
+    /** 开放式检索：需要模型自己换关键词、多次取资料才算完的那类工具。 */
+    private boolean isOpenEndedSearch(String tool) {
+        String name = tool == null ? "" : tool.trim().toLowerCase();
+        return "search".equals(name) || name.endsWith("_search") || name.equals("fetch_url");
+    }
+
     private String buildMcpActionConfig(String tool, Map<String, Object> toolArgs) {
         Map<String, Object> config = new HashMap<>();
         config.put("tool", resolveMcpToolName(tool));

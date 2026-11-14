@@ -622,6 +622,19 @@ class TaskServiceImplTest {
     }
 
     @Test
+    void shouldStoreAgentActionWithoutConfig() {
+        CreateTaskRequest req = new CreateTaskRequest();
+        req.setTitle("查 LOL 赛程");
+        req.setActionType("agent");
+        req.setActionConfig("{\"tool\":\"mcp_info_search\"}");
+
+        UserTask saved = captureCreated(req);
+
+        assertThat(saved.getActionType()).isEqualTo("agent");
+        assertThat(saved.getActionConfig()).isNull();
+    }
+
+    @Test
     void shouldRejectMcpToolWithoutPrefix() {
         CreateTaskRequest req = new CreateTaskRequest();
         req.setTitle("查天气");

@@ -456,8 +456,8 @@ public class TaskServiceImpl implements TaskService {
             type = "notify";
         }
         if (!"notify".equals(type) && !"webhook".equals(type) && !"mcp".equals(type)
-                && !"push".equals(type) && !"chain".equals(type)) {
-            throw new BusinessException("动作类型只支持 notify / webhook / mcp / push / chain");
+                && !"push".equals(type) && !"chain".equals(type) && !"agent".equals(type)) {
+            throw new BusinessException("动作类型只支持 notify / webhook / mcp / push / chain / agent");
         }
         String config = actionConfig != null ? actionConfig.trim()
                 : (actionType == null && current != null ? current.getActionConfig() : null);
@@ -487,6 +487,10 @@ public class TaskServiceImpl implements TaskService {
             if (!tool.startsWith("mcp_")) {
                 throw new BusinessException("MCP 工具名应以 mcp_ 开头，例如 mcp_info_weather");
             }
+        } else if ("agent".equals(type)) {
+            // 「AI 查询」的参数只有任务本身那句话，不需要额外配置
+            task.setActionConfig(null);
+            config = null;
         } else if ("chain".equals(type)) {
             validateChain(config);
         } else if ("push".equals(type)) {
