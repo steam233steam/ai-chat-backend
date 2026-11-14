@@ -97,6 +97,8 @@ public class IntentToolEngine {
             if (finished && plan.isEmpty()) {
                 planRescue(plan, message, intent);
             }
+            // 模型漏填时间时，用规则从原话里补一刀（「明天九点」这类它偶尔不填）
+            fillMissingDueAt(plan, message);
 
             log.info("意图工具引擎: 模型={}, 工具调用={}, 记忆={}, 任务={}",
                     model, plan.getCalls(), plan.getMemories().size(), plan.getTasks().size());
@@ -107,9 +109,22 @@ public class IntentToolEngine {
         }
     }
 
+    /** 模型没给 dueAt 的任务，用规则从原话里补时间；补不到就保持「未设置时间」。 */
+    private void fillMissingDueAt(IntentPlan plan, String message) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        for (var task : plan.getTasks()) {
+            if (task.getDueAt() == null) {
+                LocalDateTime parsed = IntentTimeParser.parse(message, now);
+                if (parsed != null) {
+                    task.setDueAt(parsed);
+                    log.info("时间由规则兜底: {} -> {}", message, parsed);
+                }
+            }
+        }
+    }
+
     /**
-     * 用户在改已有草案：给定当前草案 + 这句新说法，只产出「要改的字段」。
-     * 返回 null 表示模型没给出补丁（上层据此引导用户换个说法）。
+     * 用户在改已有草案：给定当前草案 + 这句新说法，只产出「要改的字段」。     * 返回 null 表示模型没给出补丁（上层据此引导用户换个说法）。
      */
     public IntentPlan revise(String draftPayload, String message) {
         try {

@@ -152,7 +152,7 @@ public final class IntentPayloadCodec {
             JsonNode a = after.path("tasks").path(0);
             List<String> lines = new ArrayList<>();
             diffLine(lines, "标题", b.path("title").asText(""), a.path("title").asText(""));
-            diffLine(lines, "时间", b.path("dueAt").asText(""), a.path("dueAt").asText(""));
+            diffLine(lines, "时间", humanTime(b.path("dueAt").asText("")), humanTime(a.path("dueAt").asText("")));
             diffLine(lines, "重复", b.path("recurrence").asText(""), a.path("recurrence").asText(""));
             diffLine(lines, "动作", b.path("action").asText(""), a.path("action").asText(""));
             diffLine(lines, "工具", b.path("tool").asText(""), a.path("tool").asText(""));
@@ -161,6 +161,15 @@ public final class IntentPayloadCodec {
             log.warn("对比草案差异失败: {}", e.getMessage());
             return "";
         }
+    }
+
+    /** ISO 时间转人话：2026-11-15T08:30:00 → 2026-11-15 08:30 */
+    private static String humanTime(String iso) {
+        if (iso == null || iso.isBlank()) {
+            return "";
+        }
+        String text = iso.replace('T', ' ');
+        return text.length() > 16 ? text.substring(0, 16) : text;
     }
 
     private static void diffLine(List<String> lines, String label, String before, String after) {
