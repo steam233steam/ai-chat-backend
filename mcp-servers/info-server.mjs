@@ -54,7 +54,7 @@ const TOOLS = [
   },
   {
     name: 'search',
-    description: '用必应搜索网页，返回标题、链接和摘要，并默认抓取第一条结果的正文件（fetch_top=true）。用于查实时信息（新闻、价格、赛事、政策等）。',
+    description: '用必应搜索网页，返回标题、链接和摘要，并默认抓取相关性最高结果的正文件（fetch_top=true）。注意：遇到赛事日程、比分这类数据，必应常只给官网首页，此时会明确返回“没查到可核实的内容”。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -305,9 +305,16 @@ const handlers = {
       .map((it) => ({ it, rel: relevance(q, it.title, it.snippet) }))
       .sort((a, b) => b.rel - a.rel)
     const decent = scored.filter((s) => s.rel >= 0.15).map((s) => s.it)
-    const notHome = (decent.length ? decent : items).filter((it) => !looksLikeHomepage(it.link, it.title, q))
-    const ordered = notHome.length ? notHome : (decent.length ? decent : items)
-    for (const it of ordered.slice(0, 3)) {
+    // 官网首页的正文只有导航和版权声明，喂给模型等于喂垃圾：
+    // 全部结果都是首页时直接判失败，让上层的执行记录显示"没查到"，而不是假装成功。
+    const candidates = (decent.length ? decent : items).filter((it) => !looksLikeHomepage(it.link, it.title, q))
+    if (!candidates.length) {
+      return textResult(
+        `${head}\n\n没查到可核实的内容：这些结果都是官网首页或与查询无关。` +
+        `建议把问题说得更具体（加上日期、赛事名、队伍名），或者换一个信息源。`,
+        true)
+    }
+    for (const it of candidates.slice(0, 3)) {
       try {
         const r = await fetchReadable(it.link, bodyChars)
         if (r.total < 200) continue
@@ -316,7 +323,9 @@ const handlers = {
         // 换下一条
       }
     }
-    return textResult(`${head}${hint}\n\n（前三条都没有可读正文，只有上面的摘要）`)
+    return textResult(
+      `${head}${hint}\n\n这几条都没能取到正文，只有上面的摘要——可能不是你要的答案，换个更具体的关键词再试。`,
+      true)
   },
 }
 
