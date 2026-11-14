@@ -314,11 +314,21 @@ const handlers = {
   async weather(args) {
     const city = (args.city || args.location || args['城市'] || '').trim()
     if (!city) throw new Error('缺少 city')
-    const url = `https://wttr.in/${encodeURIComponent(city)}?format=3&lang=zh`
+    // j1 是 JSON 格式，带今天+未来两天：只给当前值的话，"明天天气"根本答不了
+    const url = `https://wttr.in/${encodeURIComponent(city)}?format=j1&lang=zh`
     const res = await withTimeout(
-      (signal) => fetch(url, { signal, headers: { 'User-Agent': 'curl/8' } }), 8000, '天气查询')
+      (signal) => fetch(url, { signal, headers: { 'User-Agent': 'curl/8' } }), 9000, '天气查询')
     if (!res.ok) throw new Error(`wttr.in 返回 ${res.status}`)
-    return textResult((await res.text()).trim())
+    try {
+      const data = await res.json()
+      return textResult(formatWeather(city, data))
+    } catch {
+      // 有些地区返回的是纯文本，退回原来的单行格式
+      const plain = await withTimeout(
+        (signal) => fetch(`https://wttr.in/${encodeURIComponent(city)}?format=3&lang=zh`,
+          { signal, headers: { 'User-Agent': 'curl/8' } }), 8000, '天气查询')
+      return textResult((await plain.text()).trim())
+    }
   },
 
   async fetch_url(args) {
@@ -377,6 +387,25 @@ const handlers = {
       true)
   },
 
+}
+
+// wttr.in j1 → 中文三行：今天/明天/后天，带最高最低温和天气描述
+function formatWeather(city, data) {
+  const days = data.weather || []
+  const labels = ['今天', '明天', '后天']
+  const dateOf = (d) => (d && d.date) ? d.date : ''
+  const lines = []
+  days.slice(0, 3).forEach((d, i) => {
+    const hourly = d.hourly || []
+    const noon = hourly[Math.floor(hourly.length / 2)] || {}
+    const desc = (noon.lang_zh && noon.lang_zh[0] && noon.lang_zh[0].value)
+      || (noon.weatherDesc && noon.weatherDesc[0] && noon.weatherDesc[0].value)
+      || ''
+    lines.push(`${labels[i] || dateOf(d)}（${dateOf(d)}）${desc} ${d.mintempC || '?'}~${d.maxtempC || '?'}℃`)
+  })
+  const current = data.current_condition && data.current_condition[0]
+  const now = current ? `${city} 现在 ${current.temp_C}℃，${(current.lang_zh && current.lang_zh[0] && current.lang_zh[0].value) || (current.weatherDesc && current.weatherDesc[0] && current.weatherDesc[0].value) || ''}` : ''
+  return [now, ...lines].filter(Boolean).join('\n')
 }
 
 async function callTool(id, params) {

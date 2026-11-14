@@ -64,6 +64,35 @@ class AgentTaskActionTest {
     }
 
     @Test
+    void shouldParseStructuredAnswerWithConfidenceAndSources() {
+        AgentTaskAction a = action();
+        String out = a.formatAnswer("{\"answer\":\"决赛 11月15日凌晨3点\",\"sources\":[\"虎扑\",\"3DM\"],"
+                + "\"confidence\":\"高\",\"check\":\"两条来源一致\"}");
+        assertThat(out).contains("决赛 11月15日凌晨3点").contains("核对：高").contains("来源：虎扑、3DM");
+    }
+
+    @Test
+    void shouldKeepPlainTextWhenModelForgetsJson() {
+        AgentTaskAction a = action();
+        assertThat(a.formatAnswer("明天有决赛")).isEqualTo("明天有决赛");
+    }
+
+    @Test
+    void shouldAskForSecondLookWhenAnswerSaysNotFound() {
+        AgentTaskAction a = action();
+        assertThat(a.needsSecondLook("没查到可靠信息")).isTrue();
+        assertThat(a.needsSecondLook("决赛 11月15日 凌晨3点（多源）")).isFalse();
+    }
+
+    @Test
+    void shouldPickCityFromGoal() {
+        AgentTaskAction a = action();
+        assertThat(a.cityOf("明天北京天气怎么样")).isEqualTo("北京");
+        assertThat(a.cityOf("查一下明天上海天气")).isEqualTo("上海");
+        assertThat(a.cityOf("天气怎么样")).isEqualTo("北京");
+    }
+
+    @Test
     void shouldReportNoMaterialWhenEveryQueryFails() {
         when(catalog.invoke(anyString(), anyString())).thenThrow(new RuntimeException("工具执行失败: 没查到"));
         UserTask task = new UserTask();
