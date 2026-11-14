@@ -129,6 +129,13 @@ public class PendingActionServiceImpl implements PendingActionService {
     }
 
     @Override
+    public String payloadOf(long id) {
+        String userId = currentUserId();
+        PendingAction action = pendingActionMapper.selectById(id, userId);
+        return action == null ? null : action.getPayload();
+    }
+
+    @Override
     public PendingActionVO getById(long id) {
         String userId = currentUserId();
         PendingAction action = pendingActionMapper.selectById(id, userId);

@@ -110,4 +110,29 @@ class IntentToolCatalogTest {
         assertThat(plan.getTasks()).hasSize(1);
         assertThat(plan.isEmpty()).isFalse();
     }
+
+    @Test
+    void shouldNotOfferReviseToolUnlessRevisingDraft() {
+        IntentPlan plan = new IntentPlan();
+        assertThat(catalog.build(plan)).extracting(FunctionCallback::getName)
+                .doesNotContain("revise_draft");
+        assertThat(catalog.build(plan, true)).extracting(FunctionCallback::getName)
+                .contains("revise_draft");
+    }
+
+    @Test
+    void shouldCollectPatchOnlyForFieldsMentioned() {
+        IntentPlan plan = new IntentPlan();
+        FunctionCallback revise = catalog.build(plan, true).stream()
+                .filter(c -> "revise_draft".equals(c.getName())).findFirst().orElseThrow();
+        revise.call("{\"dueAt\":\"2026-11-16T08:30:00\"}");
+
+        assertThat(plan.hasPatch()).isTrue();
+        assertThat(plan.getPatch().getDueAt()).isEqualTo(LocalDateTime.of(2026, 11, 16, 8, 30));
+        // 用户没提到的字段必须保持 null（= 不改）
+        assertThat(plan.getPatch().getTitle()).isNull();
+        assertThat(plan.getPatch().getRecurrence()).isNull();
+        // 改草案不该产出新任务
+        assertThat(plan.getTasks()).isEmpty();
+    }
 }

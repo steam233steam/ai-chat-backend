@@ -42,6 +42,12 @@ public interface PendingActionService {
     PendingActionVO getById(long id);
 
     /**
+     * 取 pending 的原始 payload（改草案时要把旧草案给模型看）。
+     * 查不到返回 null。
+     */
+    String payloadOf(long id);
+
+    /**
      * 原子确认：仅 pending 可确认。
      * - 重复确认 → alreadyConfirmed=true（不重复建记忆/任务）
      * - 已过期/已拒绝 → 409 提示重新发起

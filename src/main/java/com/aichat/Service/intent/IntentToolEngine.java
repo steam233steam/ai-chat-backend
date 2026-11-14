@@ -107,6 +107,48 @@ public class IntentToolEngine {
         }
     }
 
+    /**
+     * 用户在改已有草案：给定当前草案 + 这句新说法，只产出「要改的字段」。
+     * 返回 null 表示模型没给出补丁（上层据此引导用户换个说法）。
+     */
+    public IntentPlan revise(String draftPayload, String message) {
+        try {
+            String model = modelRouter.resolve(props.getIntentExtractModel());
+            ChatClient client = modelRouter.client(model);
+            IntentPlan plan = new IntentPlan();
+            FunctionCallback[] callbacks = catalog.build(plan, true).toArray(new FunctionCallback[0]);
+            callWithTimeout(() -> client.prompt()
+                    .system(REVISE_SYSTEM)
+                    .user("当前草案 JSON：\n" + draftPayload + "\n\n用户新说法：" + message)
+                    .functions(callbacks)
+                    .call()
+                    .content(), props.getIntentTimeoutMs());
+            log.info("草案修改: 模型={}, 工具调用={}, 有补丁={}", model, plan.getCalls(), plan.hasPatch());
+            return plan;
+        } catch (RuntimeException e) {
+            log.warn("草案修改失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 修改草案的系统提示：只补差量。
+     * <p>要点：①只调 revise_draft，不调 create_task（否则会把改动变成一条新任务）
+     * ②用户没提到的字段不要填 ③拿不准时间就留空，让用户补。
+     */
+    private static final String REVISE_SYSTEM = """
+            你在帮用户修改一条「还没确认的任务草案」。用户会给出当前草案 JSON 和一句新说法。
+            规则：
+            1. 只调用 revise_draft 一次，只填用户这次明确要改的字段；用户没提到的字段一律不要填。
+            2. 不要调用 create_task 或 remember——这次只是在改草案，不是新建。
+            3. 时间用 ISO-8601 本地时间（例如 2026-11-11T09:00:00）；用户说的「明天九点」等相对时间，
+               基于开头给出的当前时间换算；换算不出来就留空。
+            4. 用户说「改成每天/每周」时填 recurrence（daily/weekly），weekly 还要填 recurrenceRule（BYDAY=MO）。
+            5. 用户说「改成查天气/查一下X」时填 action=mcp，并填 tool（weather/search）与 toolArgs。
+            6. 如果用户这句话不是在改草案（比如在闲聊或问问题），那就一个工具都不要调用。
+            """;
+
+
     private static final java.util.regex.Pattern IMMEDIATE_CHAT = java.util.regex.Pattern.compile(
             "[?？]|吗|呢|怎么样|为什么|什么|几点|多久|多少|在哪|哪里|谁|是不是|能不能|可不可以"
                     + "|翻译|解释一下|解释下|总结一下|润色|改写|算一下");

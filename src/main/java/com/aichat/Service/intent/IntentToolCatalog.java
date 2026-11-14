@@ -60,6 +60,23 @@ public class IntentToolCatalog {
             }
             """;
 
+    /** 修改草案：只填用户这次要改的字段，没提到的留空（=不改）。 */
+    private static final String REVISE_SCHEMA = """
+            {
+              "type": "object",
+              "properties": {
+                "title": {"type": "string", "description": "新的任务标题；用户没说就留空"},
+                "dueAt": {"type": "string", "description": "新的触发时间，ISO-8601 本地时间；用户没说就留空"},
+                "recurrence": {"type": "string", "enum": ["once", "daily", "weekly"], "description": "用户没说就留空"},
+                "recurrenceRule": {"type": "string", "description": "weekly 时填 BYDAY=MO，其余留空"},
+                "action": {"type": "string", "enum": ["notify", "mcp", "push"], "description": "用户没说就留空"},
+                "tool": {"type": "string", "description": "action=mcp 时的工具短名，例如 weather、search；用户没说就留空"},
+                "toolArgs": {"type": "object", "description": "工具参数，例如 city=北京；用户没说就留空"}
+              },
+              "required": []
+            }
+            """;
+
     private final ObjectProvider<McpToolCatalog> mcpProvider;
 
     public IntentToolCatalog() {
@@ -72,6 +89,15 @@ public class IntentToolCatalog {
     }
     /** 内置动作 + 状态收集器 → 本次请求可用的工具列表 */
     public List<org.springframework.ai.model.function.FunctionCallback> build(IntentPlan plan) {
+        return build(plan, false);
+    }
+
+    /**
+     * @param withRevise 是否挂「修改草案」工具。只有「已有草案、用户在改」时才挂，
+     *                   否则正常建任务时模型可能误调它。
+     */
+    public List<org.springframework.ai.model.function.FunctionCallback> build(IntentPlan plan,
+            boolean withRevise) {
         List<org.springframework.ai.model.function.FunctionCallback> tools = new ArrayList<>();
         tools.add(new IntentToolCallback("create_task",
                 "用户要求在某时间做某事、或要求定期做某事时调用。带时间安排的一律走这里，不要写进 remember。",
@@ -79,7 +105,53 @@ public class IntentToolCatalog {
         tools.add(new IntentToolCallback("remember",
                 "用户要求记住关于他自己的信息（偏好、风格、称呼关系、目标打算）时调用。",
                 REMEMBER_SCHEMA, args -> remember(plan, args)));
+        if (withRevise) {
+            tools.add(new IntentToolCallback("revise_draft",
+                    "用户在对已有草案提修改意见时调用。只填要改的字段，没提到的不要填。",
+                    REVISE_SCHEMA, args -> revise(plan, args)));
+        }
         return tools;
+    }
+
+    private String revise(IntentPlan plan, String args) {
+        JsonNode node = read(args);
+        TaskCandidate patch = new TaskCandidate();
+        boolean any = false;
+        if (node.hasNonNull("title") && !text(node, "title").isBlank()) {
+            patch.setTitle(text(node, "title"));
+            any = true;
+        }
+        if (node.hasNonNull("dueAt") && parseDue(text(node, "dueAt")) != null) {
+            patch.setDueAt(parseDue(text(node, "dueAt")));
+            any = true;
+        }
+        if (node.hasNonNull("recurrence") && !text(node, "recurrence").isBlank()) {
+            patch.setRecurrence(normalizeRecurrence(text(node, "recurrence")));
+            any = true;
+        }
+        if (node.hasNonNull("recurrenceRule") && !text(node, "recurrenceRule").isBlank()) {
+            patch.setRecurrenceRule(text(node, "recurrenceRule"));
+            any = true;
+        }
+        if (node.hasNonNull("action") && !text(node, "action").isBlank()) {
+            patch.setAction(text(node, "action"));
+            any = true;
+        }
+        if (node.hasNonNull("tool") && !text(node, "tool").isBlank()) {
+            patch.setTool(text(node, "tool"));
+            any = true;
+        }
+        JsonNode toolArgs = node.path("toolArgs");
+        if (toolArgs.isObject() && toolArgs.size() > 0) {
+            patch.setToolArgs(MAPPER.convertValue(toolArgs, Map.class));
+            any = true;
+        }
+        if (!any) {
+            throw new IllegalArgumentException("没有要修改的字段");
+        }
+        plan.setPatch(patch);
+        plan.record("revise_draft");
+        return "已按用户意见更新草案";
     }
 
     private String createTask(IntentPlan plan, String args) {

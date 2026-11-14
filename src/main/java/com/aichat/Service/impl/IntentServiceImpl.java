@@ -19,7 +19,7 @@ import com.aichat.Dto.PendingActionVO;
 import com.aichat.Dto.TaskCandidate;
 import com.aichat.Dto.UserDto;
 import com.aichat.Exception.BusinessException;
-import com.aichat.Service.intent.IntentToolEngine;
+import com.aichat.Service.intent.IntentPlan;
 import com.aichat.Service.intent.IntentToolEngine;
 import com.aichat.Service.IntentService;
 import com.aichat.Service.PendingActionService;
@@ -345,6 +345,14 @@ public class IntentServiceImpl implements IntentService {
      */
     private IntentOutcome update(PendingActionVO pending, String sessionId, String message,
             Long sourceMessageId) {
+        // 已有「任务草案」时，用户多半是在改它（时间/标题/重复/动作），先按补丁改草案；
+        // 改不动再落到记忆改删（memory_change），两条线互不干扰。
+        if (pending != null && !"memory_change".equals(pending.getActionType())) {
+            IntentOutcome revised = reviseDraft(pending, sessionId, message, sourceMessageId);
+            if (revised != null) {
+                return revised;
+            }
+        }
         if (pending != null) {
             try {
                 pendingActionService.reject(pending.getId());
@@ -394,6 +402,56 @@ public class IntentServiceImpl implements IntentService {
         log.info("记忆变更提案: session={}, pendingId={}, action={}, targets={}", sessionId, pendingId,
                 plan.action(), plan.targets().size());
         return IntentOutcome.extracted(MbMarkers.pendingOnly(pendingId), pendingId);
+    }
+
+    /**
+     * 改现有任务草案：把「当前草案 + 这句新说法」交给模型，只取回要改的字段，
+     * 合并成新草案后重新开一条 pending，并把「改了什么」直接说给用户听。
+     *
+     * <p>返回 null 表示这句不像在改草案，交给下游（记忆改删 / 普通聊天）。
+     */
+    private IntentOutcome reviseDraft(PendingActionVO pending, String sessionId, String message,
+            Long sourceMessageId) {
+        if (SensitiveContentFilter.detectSensitiveData(message) != null) {
+            return IntentOutcome.replyOnly(SENSITIVE_FALLBACK);
+        }
+        IntentToolEngine engine = intentToolEngine;
+        if (engine == null) {
+            return null;
+        }
+        String draft = pendingActionService.payloadOf(pending.getId());
+        if (draft == null || draft.isBlank()) {
+            return null;
+        }
+        IntentPlan plan = engine.revise(draft, message);
+        if (plan == null || !plan.hasPatch()) {
+            return null;
+        }
+        String newPayload;
+        try {
+            newPayload = IntentPayloadCodec.patchTaskPayload(draft, plan.getPatch());
+        } catch (BusinessException e) {
+            return IntentOutcome.replyOnly(e.getMessage());
+        }
+        String diff = IntentPayloadCodec.describeTaskChanges(draft, newPayload);
+
+        try {
+            pendingActionService.reject(pending.getId());
+        } catch (BusinessException e) {
+            log.info("改草案前清理旧 pending 失败（{}）: pendingId={}", e.getMessage(), pending.getId());
+        }
+        long pendingId;
+        try {
+            pendingId = pendingActionService.create(sessionId, pending.getActionType(), newPayload,
+                    sourceMessageId);
+        } catch (BusinessException e) {
+            log.warn("改草案写 pending 失败（{}）: session={}", e.getMessage(), sessionId);
+            return IntentOutcome.replyOnly("刚才的提案发生冲突，请再试一次。");
+        }
+        String text = diff.isEmpty() ? "草案已经是最新的了。" : "改好了：\n" + diff;
+        log.info("草案已修改: session={}, oldPending={}, newPending={}", sessionId, pending.getId(),
+                pendingId);
+        return IntentOutcome.extracted(text + "\n" + MbMarkers.pendingOnly(pendingId), pendingId);
     }
 
     /**

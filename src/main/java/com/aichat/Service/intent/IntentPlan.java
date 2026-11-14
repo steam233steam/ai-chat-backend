@@ -34,6 +34,24 @@ public class IntentPlan {
         calls.add(toolName);
     }
 
+    /**
+     * 修改草案时模型给出的「补丁」：只有用户这次提到的字段有值，其余保持 null 表示不改。
+     * 与 {@link #tasks} 分开存，避免和「新建任务」混在一起被当成新任务落库。
+     */
+    private TaskCandidate patch;
+
+    public void setPatch(TaskCandidate patch) {
+        this.patch = patch;
+    }
+
+    public TaskCandidate getPatch() {
+        return patch;
+    }
+
+    public boolean hasPatch() {
+        return patch != null;
+    }
+
     public List<MemoryCandidate> getMemories() {
         return memories;
     }
